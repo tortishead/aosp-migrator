@@ -108,4 +108,6 @@ migrate:
   min_change_lines: 40          # ...but always at least this many
 
 memory:
-  path: null
+  path: null                    # local clone of the memory repo; memory record creates it
+  brief_max_chars: 4000         # memory text per cluster in the agent's brief
+  max_lessons: 5                # lessons the curator may propose per run

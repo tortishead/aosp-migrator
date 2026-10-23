@@ -8,7 +8,7 @@ related patches (patch, fix, improvement, revert), migrates each cluster onto th
 tests. GitHub Copilot CLI is the only agent runtime; a deterministic orchestrator owns
 scheduling, the credit budget, builds and the migration ledger. Humans review every result.
 
-Status: **M8, publish, review and Jira export** (on top of M1 to M7). See the milestones below.
+Status: **M9, migration memory and pilot prep** (on top of M1 to M8). See the milestones below.
 
 ## Quick start
 
@@ -53,6 +53,8 @@ migrate status -c myproject/project.yaml
 | `patchmig/publish/` | GitHub REST client, branch push, one PR per cluster and repo |
 | `patchmig/review.py` | Review queues, human decisions, PR review sync |
 | `patchmig/jira_export.py` | Export of approved results to Jira (labels, links, one comment) |
+| `patchmig/memory/` | Migration memory: a git repo of patch histories, file mappings, decisions and lessons |
+| `patchmig/report.py` | Markdown summary of a run (`migrate report`) |
 | `patchmig/web/` | Read-only web front end: JSON API (FastAPI), UI (`static/`), static export |
 | `patchmig/mcp_server/` | Read-only MCP tools for agents: trees at the migration refs, ledger, knowledge, Jira cache |
 | `docs/spike-m3.md` | Steps to run the M3 spike on your machine |
@@ -60,6 +62,7 @@ migrate status -c myproject/project.yaml
 | `docs/migrate-m6.md` | How the migrate step works and how to try it on your trees |
 | `docs/verify-m7.md` | Preparing the build server and running builds and tests |
 | `docs/review-m8.md` | Publishing PRs, the review loop and the Jira export |
+| `docs/pilot-m9.md` | Runbook for a pilot migration end to end, and the migration memory |
 | `patchmig/templates/` | Example `project.yaml` used by `migrate init` |
 | `patchmig/cli.py` | The `migrate` command |
 | `tests/fixtures/scenario.py` | Generates small synthetic source/target trees with known migration cases |
@@ -171,6 +174,22 @@ cluster agent with the reviewer's words. `migrate jira-export` writes approved r
 Jira with labels, PR links and one marker comment per ticket, updated in place, and can
 create tracking tickets for untracked patches. See `docs/review-m8.md`.
 
+## Migration memory and run report
+
+The migration memory is a git repo (`memory.path`) that carries knowledge from one migration
+to the next. `migrate memory record` writes the approved results of a run: per patch (keyed
+by Change-Id, also found through `Original-Change-Id`) its outcome, strategy, intent, summary,
+PRs, decisions and reviewer feedback; the files that moved or disappeared upstream; and the
+human decisions. `migrate memory curate` makes one agent call that turns the run's feedback,
+decisions and build fixes into proposed lessons, which reach the cluster agent only after
+`migrate memory approve`. In the next migration, `migrate intents` reuses remembered intents
+without an agent call and the cluster agent's brief gets the patch history, mappings and the
+approved lessons for the paths it touches (capped by `memory.brief_max_chars`).
+
+`migrate report` writes a Markdown summary of a run: outcomes, deciding rungs, strategies,
+review queues, builds, tests, agent calls and credits, and what needs a person. See
+`docs/pilot-m9.md` for the pilot runbook.
+
 ## Front end
 
 `migrate serve` starts a read-only web app over the project's ledger: an overview of each run
@@ -209,6 +228,6 @@ dependency. `EXPECTED` in the module lists the verdict and cluster for each.
 | M4 | Knowledge bootstrap and analysis | Done |
 | M5 | Read-only front end | Done |
 | M6 | Cluster agent | Done |
-| M7 | Build and test over SSH | In review (#7) |
-| M8 | Publishing, review loop, Jira export | In review |
-| M9 | Migration memory and pilot | Planned |
+| M7 | Build and test over SSH | Done |
+| M8 | Publishing, review loop, Jira export | Done |
+| M9 | Migration memory and pilot | In review; pilot pending |

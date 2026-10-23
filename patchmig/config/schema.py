@@ -358,6 +358,10 @@ class MigrateConfig(Model):
 
 class MemoryConfig(Model):
     path: Path | None = Field(default=None, description="Local clone of the migration memory repo")
+    brief_max_chars: int = Field(
+        default=4000, ge=500, description="Memory text given to the cluster agent per cluster"
+    )
+    max_lessons: int = Field(default=5, ge=1, description="Lessons the curator may propose per run")
 
 
 class ProjectConfig(Model):

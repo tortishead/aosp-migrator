@@ -61,6 +61,7 @@ class ClusterContext:
     net_diff: str  # tree-relative
     fates: str
     review_feedback: str = ""  # what humans said about earlier attempts
+    memory: str = ""  # what earlier migrations learned (migration memory)
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -102,6 +103,11 @@ def cluster_brief(
         intent=ctx.intent,
         situation=situation,
         review_feedback=_feedback_section(ctx),
+        memory=(
+            f"\n## From earlier migrations (migration memory)\n\n{ctx.memory}\n"
+            if ctx.memory
+            else ""
+        ),
         fates=ctx.fates,
         net_diff=_truncate(ctx.net_diff, config.migrate.brief_max_diff_chars),
         feedback=feedback,

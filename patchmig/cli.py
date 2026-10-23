@@ -25,9 +25,11 @@ app = typer.Typer(help="Migrate OEM Android framework patches between Android ve
 config_app = typer.Typer(help="Inspect and validate the project configuration.")
 run_app = typer.Typer(help="Manage migration runs.")
 review_app = typer.Typer(help="Review queues and human decisions on clusters.")
+memory_app = typer.Typer(help="The migration memory: facts and lessons from earlier migrations.")
 app.add_typer(config_app, name="config")
 app.add_typer(run_app, name="run")
 app.add_typer(review_app, name="review")
+app.add_typer(memory_app, name="memory")
 
 ConfigOption = Annotated[
     Path, typer.Option("--config", "-c", help="Project config file", envvar="PATCHMIG_CONFIG")
@@ -170,6 +172,16 @@ def patches_cmd(
         )
 
 
+def _memory(cfg: ProjectConfig):
+    """The migration memory if configured and present; None otherwise."""
+    from patchmig.memory import Memory, MemoryRepoError
+
+    try:
+        return Memory.open(cfg) if cfg.memory.path else None
+    except MemoryRepoError:
+        return None
+
+
 def _latest_run_id(store: LedgerStore, run_id: int | None) -> int:
     run_id = run_id or getattr(store.latest_run(), "id", None)
     if run_id is None:
@@ -201,7 +213,7 @@ def intents_cmd(
     with store.session() as s:
         run = s.get(Run, rid)
     runner = None if dry_run else AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
-    report = write_intents(cfg, store, run, runner, limit=limit)
+    report = write_intents(cfg, store, run, runner, limit=limit, memory=_memory(cfg))
     typer.echo(
         f"Run {rid}: {report.written} written, {report.reused} reused, "
         f"{report.skipped} already had one; estimated credits {report.credits:.1f}"
@@ -329,6 +341,7 @@ def apply_cmd(
         cluster_ids=cluster,
         limit=limit,
         mcp=server_config(str(config.resolve()), rid),
+        memory=_memory(cfg),
     )
     if not report.outcomes:
         typer.echo(f"Run {rid}: no cluster to migrate (run migrate analyse first?)")
@@ -572,6 +585,107 @@ def jira_export_cmd(
         typer.secho(f"  error: {line}", fg=typer.colors.RED)
     if report.errors:
         raise typer.Exit(1)
+
+
+@app.command("report")
+def report_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+    out: Annotated[Path | None, typer.Option(help="Write the Markdown to this file")] = None,
+) -> None:
+    """A Markdown summary of a run: outcomes, strategies, queues, builds, credits."""
+    from patchmig.report import run_report
+
+    _, store, run = _open_run(config, run_id)
+    text = run_report(store, run.id)
+    if out:
+        out.write_text(text)
+        typer.echo(f"Report written to {out}")
+    else:
+        typer.echo(text, nl=False)
+
+
+def _open_memory(cfg: ProjectConfig, create: bool = False):
+    from patchmig.memory import Memory, MemoryRepoError
+
+    try:
+        return Memory.open(cfg, create=create)
+    except MemoryRepoError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+
+
+@memory_app.command("record")
+def memory_record(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
+    """Write the run's approved results, code mappings and decisions to the memory repo."""
+    cfg, store, run = _open_run(config, run_id)
+    mem = _open_memory(cfg, create=True)
+    r = mem.record(cfg, store, run)
+    typer.echo(f"Recorded {r.patches} patch(es), {r.mappings} mapping(s), {r.decisions} "
+               f"decision(s) in {mem.path}" + (f" (commit {r.commit[:12]})" if r.commit else
+                                               " (nothing new)"))  # fmt: skip
+
+
+@memory_app.command("curate")
+def memory_curate(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
+    """Ask the memory curator for lessons from this run's feedback and fixes (one agent call)."""
+    from patchmig.agents.curator import curate
+
+    cfg, store, run = _open_run(config, run_id)
+    mem = _open_memory(cfg, create=True)
+    runner = AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
+    r = curate(cfg, store, run, runner, mem)
+    if not r.signals:
+        typer.echo("Nothing to learn from in this run (no feedback, decisions or fixes).")
+        return
+    typer.echo(f"{len(r.proposed)} lesson(s) proposed from {r.signals} cluster(s); review them "
+               "with: migrate memory list --proposed")  # fmt: skip
+    for name in r.proposed:
+        typer.echo(f"  {name}")
+
+
+@memory_app.command("list")
+def memory_list(
+    config: ConfigOption = DEFAULT_CONFIG,
+    proposed: Annotated[bool, typer.Option("--proposed", help="Show proposed lessons")] = False,
+) -> None:
+    """Lessons in the memory (approved by default)."""
+    mem = _open_memory(_load(config))
+    lessons = mem.lessons("proposed" if proposed else "approved")
+    if not lessons:
+        typer.echo("No lessons.")
+    for lesson in lessons:
+        typer.echo(f"{lesson.name}: {lesson.title}")
+        typer.echo(f"    applies to: {', '.join(lesson.applies_to) or 'everything'}")
+        typer.echo("    " + lesson.text.replace("\n", "\n    "))
+
+
+@memory_app.command("approve")
+def memory_approve(name: str, by: ByOption, config: ConfigOption = DEFAULT_CONFIG) -> None:
+    """Approve a proposed lesson: from now on the cluster agent gets it where it applies."""
+    from patchmig.memory import MemoryRepoError
+
+    mem = _open_memory(_load(config))
+    try:
+        mem.approve(name, by)
+    except MemoryRepoError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"Lesson {name} approved.")
+
+
+@memory_app.command("reject")
+def memory_reject(name: str, by: ByOption, config: ConfigOption = DEFAULT_CONFIG) -> None:
+    """Drop a proposed lesson."""
+    from patchmig.memory import MemoryRepoError
+
+    mem = _open_memory(_load(config))
+    try:
+        mem.reject(name, by)
+    except MemoryRepoError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"Lesson {name} dropped.")
 
 
 @app.command("serve")
