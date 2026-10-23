@@ -112,10 +112,12 @@ def write_intents(
     run: Run,
     runner: AgentRunner | None,
     limit: int | None = None,
+    memory=None,
 ) -> IntentReport:
     """Give every patch of the run an intent: reuse an earlier one, else ask the agent.
 
-    With runner=None only reuse happens (a dry run that costs nothing).
+    Earlier intents come from this ledger (same patch-id) or from the migration memory
+    (same Change-Id in an earlier migration). With runner=None only reuse happens.
     """
     report = IntentReport()
     with store.session() as s:
@@ -128,6 +130,10 @@ def write_intents(
         if earlier := _reusable(store, patch):
             detail = {**earlier.intent_detail, "reused_from_patch": earlier.id}
             _save(store, patch.id, earlier.intent, detail)
+            report.reused += 1
+            continue
+        if memory is not None and (remembered := _from_memory(memory, patch)):
+            _save(store, patch.id, *remembered)
             report.reused += 1
             continue
         if runner is None or (limit is not None and asked >= limit):
@@ -157,6 +163,13 @@ def write_intents(
         _save(store, patch.id, render_intent(result), result.model_dump())
         report.written += 1
     return report
+
+
+def _from_memory(memory, patch: Patch) -> tuple[str, dict] | None:
+    for h in reversed((memory.history(patch) or {}).get("history", [])):
+        if h.get("intent"):
+            return h["intent"], {"source": "memory", "migration": h["migration"]}
+    return None
 
 
 def _save(store: LedgerStore, patch_id: int, text: str, detail: dict) -> None:

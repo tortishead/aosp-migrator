@@ -38,6 +38,7 @@ from patchmig.knowledge.trees import Trees
 from patchmig.knowledge.upstream import FileFate
 from patchmig.ledger import Cluster, KnowledgeItem, LedgerStore, Patch, Run, State
 from patchmig.ledger.states import DROPPED, MIGRATED
+from patchmig.memory import Memory
 from patchmig.migrate import guardrails, ladder
 from patchmig.migrate.workspace import ProjectWorktree, WorkspaceError, Workspaces, dirs_for
 
@@ -88,7 +89,9 @@ class Migrator:
         run: Run,
         runner: AgentRunner | None,
         mcp: dict | None = None,
+        memory: Memory | None = None,
     ):
+        self.memory = memory
         self.config = config
         self.store = store
         self.run = run
@@ -321,11 +324,18 @@ class Migrator:
             intent="\n\n".join(intents),
             net_diff="".join(tree_relative(d, p) for p, d in net.items()),
             fates="\n".join(fate_lines) or "(no upstream information)",
+            memory=self._memory_text(members, net),
             review_feedback="\n".join(
                 f"- {f['by']} ({f.get('source', 'review')}): {f['text']}"
                 for f in cluster.result.get("feedback", [])
             ),
         )
+
+    def _memory_text(self, members: list[Patch], changes: dict[str, str]) -> str:
+        if self.memory is None:
+            return ""
+        files = [(p, fd.path) for p, d in changes.items() for fd in split_diff(d)]
+        return self.memory.brief_for(members, files, self.config.memory.brief_max_chars)
 
     def _situation(self, projects: dict[str, dict], pending: dict[str, ladder.RungResult]) -> str:
         lines = []
@@ -591,6 +601,7 @@ def migrate(
     cluster_ids: list[int] | None = None,
     limit: int | None = None,
     mcp: dict | None = None,
+    memory: Memory | None = None,
 ) -> MigrateReport:
     """Migrate the run's needed clusters. With runner=None only the free rungs run."""
-    return Migrator(config, store, run, runner, mcp).migrate(cluster_ids, limit)
+    return Migrator(config, store, run, runner, mcp, memory).migrate(cluster_ids, limit)
