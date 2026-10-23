@@ -8,7 +8,7 @@ related patches (patch, fix, improvement, revert), migrates each cluster onto th
 tests. GitHub Copilot CLI is the only agent runtime; a deterministic orchestrator owns
 scheduling, the credit budget, builds and the migration ledger. Humans review every result.
 
-Status: **M4, knowledge and analysis** (on top of M1 to M3). See the milestones below.
+Status: **M5, read-only front end** (on top of M1 to M4). See the milestones below.
 
 ## Quick start
 
@@ -24,6 +24,8 @@ migrate doctor -c myproject/project.yaml --mcp   # check Copilot CLI headless + 
 migrate intents -c myproject/project.yaml --limit 20 --export review.md
 migrate analyse -c myproject/project.yaml    # upstream/obsolete/needed, clusters, forecasts
 migrate clusters -c myproject/project.yaml   # clusters in migration order (--show ID for detail)
+migrate serve -c myproject/project.yaml      # web front end on http://127.0.0.1:8765/
+migrate export-site site -c myproject/project.yaml   # static read-only copy of the front end
 migrate status -c myproject/project.yaml
 ```
 
@@ -39,6 +41,7 @@ migrate status -c myproject/project.yaml
 | `patchmig/agents/` | LLM adapter (Copilot CLI, fake), runner with budgets and retries, intent writer, briefs |
 | `patchmig/knowledge/` | Knowledge pack: tree access, OEM footprint map, upstream change map |
 | `patchmig/analysis/` | Upstream rungs, obsolete rule, revert folding, clustering, net diffs, forecasts |
+| `patchmig/web/` | Read-only web front end: JSON API (FastAPI), UI (`static/`), static export |
 | `patchmig/mcp_server/` | Read-only MCP tools for agents: trees at the migration refs, ledger, knowledge, Jira cache |
 | `docs/spike-m3.md` | Steps to run the M3 spike on your machine |
 | `docs/analysis-m4.md` | How to run and check the analysis on your trees |
@@ -109,6 +112,23 @@ Without shared history between the trees (for example, an imported vendor drop),
 compares file contents instead; identity and provenance then rarely conclude, so more patches
 stay `needed` for review.
 
+## Front end
+
+`migrate serve` starts a read-only web app over the project's ledger: an overview of each run
+(patches by state, clusters by forecast, what decided each verdict, recent activity), the patch
+list with filters and each patch's evidence, intent, history and diff, the clusters in migration
+order with a graph of how their patches are linked and the folded net diff, the knowledge pack
+(hot spots and the upstream fate of every touched file), agent calls with credits, and the
+config snapshot of the run. It listens on 127.0.0.1 by default; review actions, config editing
+and sign-in come with M8.
+
+The UI is plain JavaScript with Preact and htm vendored as one file (`static/htm-preact.js`), so
+it needs no Node.js, no build step and no CDN. `migrate export-site <folder>` writes the same UI
+plus every API answer as JSON files: a frozen, read-only snapshot for any static host, such as
+a private GitHub Pages site. It contains commit messages and diffs, so only publish it where
+the code may be seen. Serve it over HTTP (`python -m http.server -d <folder>` for a local look);
+browsers don't load the data from `file://`.
+
 ## Test fixtures
 
 `python -m tests.fixtures.scenario /tmp/demo` writes a `source/` tree (Android 14 base plus ten
@@ -125,8 +145,8 @@ dependency. `EXPECTED` in the module lists the verdict and cluster for each.
 | M1 | Foundation: config, ledger, CLI, fixtures, CI | Done |
 | M2 | Ingest adapters and patch normalisation | Done |
 | M3 | Copilot CLI spike, LLM adapter, MCP tool server (gate) | Done; spike pending |
-| M4 | Knowledge bootstrap and analysis | In review |
-| M5 | Read-only front end | Planned |
+| M4 | Knowledge bootstrap and analysis | In review (#4) |
+| M5 | Read-only front end | In review |
 | M6 | Cluster agent | Planned |
 | M7 | Build and test over SSH | Planned |
 | M8 | Publishing, review loop, Jira export | Planned |
