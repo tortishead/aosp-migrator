@@ -268,6 +268,25 @@ class AnalysisConfig(Model):
     )
 
 
+class MigrateConfig(Model):
+    agent: bool = Field(
+        default=True, description="Call the cluster agent when cherry-pick and net-diff fail"
+    )
+    review: bool = Field(
+        default=True, description="Have an independent reviewer agent check agent-made changes"
+    )
+    guardrail_retries: int = Field(
+        default=1, ge=0, description="Agent retries with feedback after a guardrail failure"
+    )
+    max_change_ratio: float = Field(
+        default=3.0, gt=0, description="Agent change may be this many times the net diff's size"
+    )
+    min_change_lines: int = Field(
+        default=40, ge=1, description="Changed lines always allowed, whatever the ratio"
+    )
+    brief_max_diff_chars: int = Field(default=30_000, ge=1000)
+
+
 class MemoryConfig(Model):
     path: Path | None = Field(default=None, description="Local clone of the migration memory repo")
 
@@ -288,6 +307,7 @@ class ProjectConfig(Model):
     output: OutputConfig | None = None
     path_rules: list[PathRule] = Field(default_factory=list)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    migrate: MigrateConfig = Field(default_factory=MigrateConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
     @model_validator(mode="after")

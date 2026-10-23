@@ -99,6 +99,43 @@ function Timeline({ items }) {
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString() : "");
 const short = (sha) => (sha ? sha.slice(0, 12) : "–");
 
+function Migration({ m }) {
+  const final = m.agent?.final;
+  const attempts = m.agent?.attempts || [];
+  return html`
+    <div class="panel">
+      <h2>Migration <span class="muted">· ${label(m.strategy || "not finished")}${m.finished_at ? ` · ${fmtTime(m.finished_at)}` : ""}</span></h2>
+      ${m.reason ? html`<p>${m.reason}</p>` : null}
+      ${m.question ? html`<p><b>Question:</b> ${m.question}</p>` : null}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Project</th><th>Branch</th><th>How</th><th>Base → head</th><th>Notes</th></tr></thead>
+        <tbody>${m.projects.map((p) => html`<tr>
+          <td>${p.project}</td><td><code>${p.branch}</code></td><td>${label(p.strategy) || "–"}</td>
+          <td class="mono">${short(p.base)} → ${short(p.head)}</td>
+          <td class="wrap">${[p.cherry_pick, p.net_diff].filter((r) => r && !r.ok).map((r) => html`<div>${label(r.strategy)} failed${r.conflicts.length ? html`: conflicts in ${r.conflicts.map((f) => html`<code>${f}</code> `)}` : r.error ? `: ${r.error}` : ""}</div>`)}</td>
+        </tr>`)}</tbody>
+      </table></div>
+    </div>
+    ${final || m.review ? html`<div class="grid">
+      ${final ? html`<div class="panel">
+        <h2>Cluster agent <span class="muted">· ${attempts.length} attempt(s)</span></h2>
+        <p>${label(final.outcome)} · confidence ${final.confidence.toFixed(2)}</p>
+        <p>${final.summary}</p>
+        ${final.risks?.length ? html`<p class="muted">Risks to check:</p><ul class="plain">${final.risks.map((r) => html`<li>${r}</li>`)}</ul>` : null}
+        ${attempts.filter((a) => a.guardrails && !a.guardrails.ok).map((a, i) => html`<p class="muted">Attempt ${i + 1} rejected by guardrails:</p><ul class="plain">${a.guardrails.hard.map((h) => html`<li>${h}</li>`)}</ul>`)}
+        ${m.guardrails?.soft?.length ? html`<p class="muted">Noted by guardrails:</p><ul class="plain">${m.guardrails.soft.map((h) => html`<li>${h}</li>`)}</ul>` : null}
+      </div>` : null}
+      ${m.review ? html`<div class="panel">
+        <h2>Reviewer</h2>
+        ${m.review.error ? html`<p class="error">${m.review.error}</p>` : html`
+          <p>${label(m.review.verdict)} · confidence ${m.review.confidence.toFixed(2)}${m.review.intent_met ? "" : " · intent not met"}</p>
+          <p>${m.review.summary}</p>
+          ${m.review.issues.length ? html`<ul class="plain">${m.review.issues.map((r) => html`<li>${r}</li>`)}</ul>` : null}`}
+      </div>` : null}
+    </div><div class="stack"></div>` : null}
+    ${m.diff ? html`<div class="panel"><h2>Migrated change <span class="muted">(on the cluster branches in the target)</span></h2><${Diff} text=${m.diff} /></div>` : null}`;
+}
+
 // ---------- pages ----------
 
 function Dashboard({ run }) {
@@ -108,11 +145,13 @@ function Dashboard({ run }) {
   return html`<${Loading} state=${summary}>${(s) => {
     const dropped = ["upstream", "obsolete", "reverted"].reduce((a, k) => a + (s.states[k] || 0), 0);
     const toMigrate = (s.states.needed || 0);
+    const migrated = ["applied", "resolved", "rewritten", "verified"].reduce((a, k) => a + (s.states[k] || 0), 0);
     return html`
       <h1>${s.project} <span class="muted">· Android ${s.migration?.source_version} → ${s.migration?.target_version}, run ${s.run.id}</span></h1>
       <div class="tiles">
         <div class="tile"><div class="value">${s.patches}</div><div class="label">patches</div></div>
         <div class="tile"><div class="value">${toMigrate}</div><div class="label">still needed</div></div>
+        <div class="tile"><div class="value">${migrated}</div><div class="label">migrated</div></div>
         <div class="tile"><div class="value">${dropped}</div><div class="label">dropped (upstream, obsolete, reverted)</div></div>
         <div class="tile"><div class="value">${s.states.needs_decision || 0}</div><div class="label">need a decision</div></div>
         <div class="tile"><div class="value">${s.clusters}</div><div class="label">clusters</div></div>
@@ -344,6 +383,7 @@ function ClusterPage({ run, id }) {
       <div class="panel"><h2>History</h2><${Timeline} items=${c.history} /></div>
     </div>
     <div class="stack"></div>
+    ${c.migration ? html`<${Migration} m=${c.migration} />` : null}
     <div class="panel"><h2>Net diff <span class="muted">(the patches still needed, folded on the source base)</span></h2><${Diff} text=${c.net_diff} /></div>`}<//>`;
 }
 

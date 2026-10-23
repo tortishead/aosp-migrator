@@ -8,7 +8,7 @@ related patches (patch, fix, improvement, revert), migrates each cluster onto th
 tests. GitHub Copilot CLI is the only agent runtime; a deterministic orchestrator owns
 scheduling, the credit budget, builds and the migration ledger. Humans review every result.
 
-Status: **M5, read-only front end** (on top of M1 to M4). See the milestones below.
+Status: **M6, cluster agent** (on top of M1 to M5). See the milestones below.
 
 ## Quick start
 
@@ -24,6 +24,8 @@ migrate doctor -c myproject/project.yaml --mcp   # check Copilot CLI headless + 
 migrate intents -c myproject/project.yaml --limit 20 --export review.md
 migrate analyse -c myproject/project.yaml    # upstream/obsolete/needed, clusters, forecasts
 migrate clusters -c myproject/project.yaml   # clusters in migration order (--show ID for detail)
+migrate apply -c myproject/project.yaml --no-agent   # free rungs only: cherry-pick, net diff
+migrate apply -c myproject/project.yaml --limit 3    # then the cluster agent where they fail
 migrate serve -c myproject/project.yaml      # web front end on http://127.0.0.1:8765/
 migrate export-site site -c myproject/project.yaml   # static read-only copy of the front end
 migrate status -c myproject/project.yaml
@@ -41,10 +43,12 @@ migrate status -c myproject/project.yaml
 | `patchmig/agents/` | LLM adapter (Copilot CLI, fake), runner with budgets and retries, intent writer, briefs |
 | `patchmig/knowledge/` | Knowledge pack: tree access, OEM footprint map, upstream change map |
 | `patchmig/analysis/` | Upstream rungs, obsolete rule, revert folding, clustering, net diffs, forecasts |
+| `patchmig/migrate/` | Per-cluster sparse worktrees and branches, cherry-pick and net-diff rungs, guardrails, migration orchestration |
 | `patchmig/web/` | Read-only web front end: JSON API (FastAPI), UI (`static/`), static export |
 | `patchmig/mcp_server/` | Read-only MCP tools for agents: trees at the migration refs, ledger, knowledge, Jira cache |
 | `docs/spike-m3.md` | Steps to run the M3 spike on your machine |
 | `docs/analysis-m4.md` | How to run and check the analysis on your trees |
+| `docs/migrate-m6.md` | How the migrate step works and how to try it on your trees |
 | `patchmig/templates/` | Example `project.yaml` used by `migrate init` |
 | `patchmig/cli.py` | The `migrate` command |
 | `tests/fixtures/scenario.py` | Generates small synthetic source/target trees with known migration cases |
@@ -99,7 +103,7 @@ method signatures. Then each patch gets a verdict with evidence:
 | `upstream` | identity: same patch-id or Change-Id in the target's history; provenance: its "cherry picked from" commit is in the target; textual: all its added lines are in the target and its removed lines gone |
 | `obsolete` | Every file it touches was deleted upstream with no successor |
 | `needs_decision` | It touches a path with a `needs_decision` or `forbidden` path rule |
-| `needed` | Nothing above concluded; the semantic check comes with the cluster agent (M6) |
+| `needed` | Nothing above concluded; the cluster agent does the semantic check while migrating |
 
 All patches are then clustered: explicit links (revert, `Fixes:`), shared Jira keys, linked
 Jira tickets, symbols one patch introduces and a later one uses, and overlapping changed lines.
@@ -111,6 +115,28 @@ own, and a forecast: clean, conflict, rewrite or obsolete, with reasons.
 Without shared history between the trees (for example, an imported vendor drop), the analysis
 compares file contents instead; identity and provenance then rarely conclude, so more patches
 stay `needed` for review.
+
+## Migrate
+
+`migrate apply` moves each needed cluster onto the target tree, in dependency order, on its own
+branch `patchmig/r<run>/c<cluster>` in every target project it touches (a dependent cluster
+branches from its dependency's branch). Worktrees are sparse: only the touched directories are
+checked out, under `<workdir>/worktrees/`. Per project it tries, cheapest first:
+
+1. cherry-pick of the member commits (`-x`, original authors, rename-aware), confidence 0.9;
+2. a 3-way apply of the cluster's net diff, confidence 0.85;
+3. only if both fail: one cluster agent call (Copilot CLI, write tool on, shell off, the
+   `patchmig` MCP tools for reading) that resolves the conflict markers or rewrites the change
+   for the same intent.
+
+The agent's edits must pass guardrails (no conflict markers, path rules, a size limit relative
+to the net diff, no unexpected deletions or binaries); a failure goes back to the agent once
+with the findings, then fails the cluster. The agent can also answer `upstream` (its quoted
+target code is checked, otherwise the cluster waits for a human decision), `needs_decision`
+with a question, or `failed`. Agent-made changes then go to an independent read-only reviewer,
+whose verdict caps the confidence or rejects the change. With `--no-agent`, clusters that
+need the agent stay `needed` with their conflicts recorded. Everything lands in the ledger and
+in the front end's cluster page. See `docs/migrate-m6.md`.
 
 ## Front end
 
@@ -145,9 +171,9 @@ dependency. `EXPECTED` in the module lists the verdict and cluster for each.
 | M1 | Foundation: config, ledger, CLI, fixtures, CI | Done |
 | M2 | Ingest adapters and patch normalisation | Done |
 | M3 | Copilot CLI spike, LLM adapter, MCP tool server (gate) | Done; spike pending |
-| M4 | Knowledge bootstrap and analysis | In review (#4) |
-| M5 | Read-only front end | In review |
-| M6 | Cluster agent | Planned |
+| M4 | Knowledge bootstrap and analysis | Done |
+| M5 | Read-only front end | In review (#5) |
+| M6 | Cluster agent | In review |
 | M7 | Build and test over SSH | Planned |
 | M8 | Publishing, review loop, Jira export | Planned |
 | M9 | Migration memory and pilot | Planned |
