@@ -51,6 +51,7 @@ def export_site(
         write(f"{base}/agent-calls", data.agent_calls(store, rid))
         write(f"{base}/activity", data.recent_transitions(store, rid))
         write(f"{base}/config", data.config_snapshot(store, rid))
+        write(f"{base}/review", data.review(store, rid))
         patches = data.patches(store, rid)
         write(f"{base}/patches", patches)
         for p in patches:

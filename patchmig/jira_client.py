@@ -1,4 +1,7 @@
-"""Minimal Jira REST client: only what the tool needs (read now; write comes in M8)."""
+"""Minimal Jira REST client: only what the tool needs (reads for ingest, writes for export).
+
+Writes use only standard fields (labels, comments, remote links, new issues): no custom fields.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +28,22 @@ class JiraClient(Protocol):
     def search(self, jql: str) -> list[Ticket]: ...
 
     def get(self, key: str) -> Ticket | None: ...
+
+
+class JiraWriter(Protocol):
+    def add_labels(self, key: str, labels: list[str]) -> None: ...
+
+    def comments(self, key: str) -> list[dict]: ...  # [{"id", "body"}]
+
+    def add_comment(self, key: str, body: str) -> str: ...
+
+    def update_comment(self, key: str, comment_id: str, body: str) -> None: ...
+
+    def add_link(self, key: str, url: str, title: str, global_id: str) -> None: ...
+
+    def create_issue(
+        self, project: str, issue_type: str, summary: str, description: str, labels: list[str]
+    ) -> str: ...
 
 
 class JiraError(Exception):
@@ -96,3 +115,53 @@ class HttpJiraClient:
     def get(self, key: str) -> Ticket | None:
         data = self._get(f"issue/{urllib.parse.quote(key)}", {"fields": self.FIELDS})
         return _ticket(data) if data else None
+
+    # ---- writes (export) ----------------------------------------------------------------
+
+    def _send(self, method: str, path: str, body: dict) -> dict | None:
+        req = urllib.request.Request(
+            f"{self.base}/rest/api/2/{path}",
+            method=method,
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": self.auth,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                raw = resp.read()
+                return json.loads(raw) if raw else None
+        except urllib.error.HTTPError as e:
+            raise JiraError(f"Jira {method} {path} failed: HTTP {e.code}") from e
+        except urllib.error.URLError as e:
+            raise JiraError(f"Jira not reachable at {self.base}: {e.reason}") from e
+
+    def _issue(self, key: str) -> str:
+        return f"issue/{urllib.parse.quote(key)}"
+
+    def add_labels(self, key: str, labels: list[str]) -> None:
+        self._send("PUT", self._issue(key), {"update": {"labels": [{"add": x} for x in labels]}})
+
+    def comments(self, key: str) -> list[dict]:
+        data = self._get(f"{self._issue(key)}/comment", {"maxResults": 1000}) or {}
+        return [{"id": str(c["id"]), "body": c.get("body") or ""} for c in data.get("comments", [])]
+
+    def add_comment(self, key: str, body: str) -> str:
+        return str(self._send("POST", f"{self._issue(key)}/comment", {"body": body})["id"])
+
+    def update_comment(self, key: str, comment_id: str, body: str) -> None:
+        self._send("PUT", f"{self._issue(key)}/comment/{comment_id}", {"body": body})
+
+    def add_link(self, key: str, url: str, title: str, global_id: str) -> None:
+        # Jira updates the existing remote link with the same globalId: idempotent.
+        self._send("POST", f"{self._issue(key)}/remotelink",
+                   {"globalId": global_id, "object": {"url": url, "title": title}})  # fmt: skip
+
+    def create_issue(self, project, issue_type, summary, description, labels) -> str:
+        data = self._send("POST", "issue", {"fields": {
+            "project": {"key": project}, "issuetype": {"name": issue_type},
+            "summary": summary, "description": description, "labels": labels,
+        }})  # fmt: skip
+        return data["key"]

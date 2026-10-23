@@ -1,7 +1,7 @@
 """Read-only web API and UI over one project's ledger.
 
-`migrate serve` runs this app; the UI in static/ calls the /api routes. Editing (review
-actions, config) comes in M8, together with sign-in.
+`migrate serve` runs this app; the UI in static/ calls the /api routes. Review actions are
+taken with `migrate review` or on the published PRs; editing in the browser needs sign-in.
 """
 
 from __future__ import annotations
@@ -62,6 +62,10 @@ def create_app(config: ProjectConfig | None, store: LedgerStore) -> FastAPI:
     @app.get("/api/runs/{run_id}/clusters/{cluster_id}")
     def cluster(run_id: int, cluster_id: int) -> dict:
         return get(data.cluster, store, run_id, cluster_id)
+
+    @app.get("/api/runs/{run_id}/review")
+    def review(run_id: int) -> dict:
+        return get(data.review, store, run_id)
 
     @app.get("/api/runs/{run_id}/knowledge")
     def knowledge(run_id: int) -> dict:

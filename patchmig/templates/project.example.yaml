@@ -38,7 +38,7 @@ jira:
   user: migration-bot
   token: env:JIRA_TOKEN
   label_prefix: mig
-  comment_marker: "[migration-agent]"
+  comment_marker: "[migration-agent]"   # finds the one comment per ticket to update
 
 build:
   transport: ssh                # or 'local' on the build host, with slots: [tree roots]
@@ -85,6 +85,10 @@ output:
     owner: example-oem
     token: env:GITHUB_TOKEN
     repo_map: {}                    # tree project path -> GitHub repo name
+    base_branch: oem-a15            # target branch in those repos; PRs go against it
+    # api_url: https://github.example.com/api/v3          # GitHub Enterprise
+    # git_url: https://github.example.com/{owner}/{repo}.git
+    reviewers: []
 
 path_rules: []
 #  - pattern: "vendor/qcom/**"

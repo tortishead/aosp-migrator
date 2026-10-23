@@ -60,6 +60,7 @@ class ClusterContext:
     intent: str
     net_diff: str  # tree-relative
     fates: str
+    review_feedback: str = ""  # what humans said about earlier attempts
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -72,6 +73,15 @@ def _policy(mcp: dict | None, write: bool) -> ToolPolicy:
     allow = (["write"] if write else []) + ([SERVER] if mcp else [])
     deny = ["shell"] if write else ["shell", "write"]
     return ToolPolicy(allow=allow, deny=deny, mcp_servers={SERVER: mcp} if mcp else {})
+
+
+def _feedback_section(ctx: ClusterContext) -> str:
+    if not ctx.review_feedback:
+        return ""
+    return (
+        "\n## What reviewers said about earlier attempts\n\n"
+        f"{ctx.review_feedback}\n\nAddress this feedback; it overrides the mechanical result.\n"
+    )
 
 
 def cluster_brief(
@@ -91,6 +101,7 @@ def cluster_brief(
         members=ctx.members,
         intent=ctx.intent,
         situation=situation,
+        review_feedback=_feedback_section(ctx),
         fates=ctx.fates,
         net_diff=_truncate(ctx.net_diff, config.migrate.brief_max_diff_chars),
         feedback=feedback,

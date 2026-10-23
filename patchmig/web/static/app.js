@@ -409,6 +409,7 @@ function ClusterPage({ run, id }) {
       <div class="panel"><h2>History</h2><${Timeline} items=${c.history} /></div>
     </div>
     <div class="stack"></div>
+    <${ReviewStatus} c=${c} />
     ${c.migration ? html`<${Migration} m=${c.migration} />` : null}
     ${c.verification ? html`<${Verification} v=${c.verification} />` : null}
     <div class="panel"><h2>Net diff <span class="muted">(the patches still needed, folded on the source base)</span></h2><${Diff} text=${c.net_diff} /></div>`}<//>`;
@@ -471,8 +472,55 @@ function ConfigPage({ run }) {
   const state = useData(`runs/${run}/config`);
   return html`<${Loading} state=${state}>${(c) => html`
     <h1>Configuration <span class="muted">used by run ${run}</span></h1>
-    <p class="muted">Read-only snapshot (hash ${c.hash.slice(0, 12)}). Secrets appear only as references. Editing comes with M8.</p>
+    <p class="muted">Read-only snapshot (hash ${c.hash.slice(0, 12)}). Secrets appear only as references. Edit the project's YAML file to change it.</p>
     <div class="panel"><pre class="block">${JSON.stringify(c.config, null, 2)}</pre></div>`}<//>`;
+}
+
+const QUEUE_INFO = {
+  quick_approve: ["Quick approve", "Verified, high confidence"],
+  careful_review: ["Careful review", "Verified, lower confidence: read the agent notes"],
+  needs_decision: ["Needs a decision", "A human has to choose"],
+  failed: ["Failed", "Could not be migrated or verified"],
+  dropped: ["Dropped", "Upstream, obsolete or reverted: confirm"],
+  in_progress: ["In progress", "Still to migrate or verify"],
+  approved: ["Approved", "Ready for the Jira export"],
+};
+
+function ReviewPage({ run }) {
+  const state = useData(`runs/${run}/review`);
+  return html`<${Loading} state=${state}>${(r) => html`
+    <h1>Review</h1>
+    <p class="muted">Approve with <code>migrate review approve ID --by NAME</code> or by approving or merging the PR; request changes on the PR or use <code>migrate review reject</code> to send a cluster back to the agent. <code>migrate review sync</code> reads the PRs.</p>
+    <div class="tiles">${Object.entries(QUEUE_INFO).map(([q, [name]]) => html`
+      <div class="tile"><div class="value">${r.counts[q] || 0}</div><div class="label">${name.toLowerCase()}</div></div>`)}</div>
+    ${Object.entries(QUEUE_INFO).filter(([q]) => r.queues[q]?.length).map(([q, [name, hint]]) => html`
+      <div class="panel">
+        <h2>${name} <span class="muted">· ${hint}</span></h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Cluster</th><th>State</th><th class="num">Confidence</th><th>PRs</th><th>Notes</th></tr></thead>
+          <tbody>${r.queues[q].map((c) => html`<tr>
+            <td class="wrap"><a href=${`#/r/${run}/clusters/${c.id}`}>${c.name}</a></td>
+            <td><${State} s=${c.state} /></td>
+            <td class="num">${c.confidence != null ? c.confidence.toFixed(2) : "–"}</td>
+            <td>${c.prs.length ? c.prs.map((u) => html`<div><a href=${u} target="_blank" rel="noopener">${u.split("/").slice(-3).join("/")}</a></div>`) : "–"}</td>
+            <td class="wrap">${c.question ? html`<b>Question:</b> ${c.question}` : c.review ? html`${c.review.decision} by ${c.review.by}${c.jira.length ? ` · Jira: ${c.jira.join(", ")}` : ""}` : c.reason || ""}</td>
+          </tr>`)}</tbody>
+        </table></div>
+      </div>`)}`}<//>`;
+}
+
+function ReviewStatus({ c }) {
+  const prs = c.publish?.prs || [];
+  if (!prs.length && !c.review && !c.feedback.length && !c.decisions.length) return null;
+  return html`<div class="panel">
+    <h2>Review <span class="muted">· ${(QUEUE_INFO[c.queue] || [c.queue])[0]}</span></h2>
+    ${c.review ? html`<p>${label(c.review.decision)} by ${c.review.by} (${c.review.source}) · ${fmtTime(c.review.at)}${c.review.reason ? html`<br />${c.review.reason}` : null}</p>` : null}
+    ${prs.length ? html`<p>${prs.map((pr) => html`<div>${pr.project}: <a href=${pr.url} target="_blank" rel="noopener">${pr.repo} #${pr.number}</a> <span class="muted">(${pr.branch})</span></div>`)}</p>` : null}
+    ${c.publish?.error ? html`<p class="error">Publishing failed: ${c.publish.error}</p>` : null}
+    ${c.feedback.length ? html`<p class="muted">Feedback for the agent:</p><ul class="plain">${c.feedback.map((f) => html`<li>${f.by} (${f.source}): ${f.text}</li>`)}</ul>` : null}
+    ${c.decisions.length ? html`<p class="muted">Decisions:</p><ul class="plain">${c.decisions.map((d) => html`<li>${d.by}: ${d.choice} · ${d.reason}</li>`)}</ul>` : null}
+    ${c.jira_export ? html`<p class="muted">Exported to Jira: ${Object.keys(c.jira_export).join(", ")}</p>` : null}
+  </div>`;
 }
 
 function RunsPage({ runs }) {
@@ -484,7 +532,7 @@ function RunsPage({ runs }) {
   </table></div>`;
 }
 
-const TABS = [["", "Overview"], ["patches", "Patches"], ["clusters", "Clusters"], ["knowledge", "Knowledge"], ["agents", "Agent calls"], ["config", "Config"]];
+const TABS = [["", "Overview"], ["review", "Review"], ["patches", "Patches"], ["clusters", "Clusters"], ["knowledge", "Knowledge"], ["agents", "Agent calls"], ["config", "Config"]];
 
 function App() {
   const runs = useData("runs");
@@ -501,6 +549,7 @@ function App() {
     else if (page === "patches") body = html`<${PatchesPage} run=${run} />`;
     else if (page === "clusters" && id) body = html`<${ClusterPage} run=${run} id=${id} />`;
     else if (page === "clusters") body = html`<${ClustersPage} run=${run} />`;
+    else if (page === "review") body = html`<${ReviewPage} run=${run} />`;
     else if (page === "knowledge") body = html`<${KnowledgePage} run=${run} />`;
     else if (page === "agents") body = html`<${AgentsPage} run=${run} />`;
     else if (page === "config") body = html`<${ConfigPage} run=${run} />`;

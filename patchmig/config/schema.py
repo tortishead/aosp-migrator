@@ -125,6 +125,9 @@ class JiraConfig(Model):
     token: SecretRef
     label_prefix: str = "mig"
     comment_marker: str = "[migration-agent]"
+    issue_type: str = Field(
+        default="Task", description="Type of tracking tickets created for untracked patches"
+    )
 
 
 class SshConfig(Model):
@@ -273,6 +276,21 @@ class GithubOutput(Model):
     repo_map: dict[str, str] = Field(
         default_factory=dict, description="Maps tree project paths to GitHub repo names"
     )
+    base_branch: str = Field(
+        description="Branch of the target tree in the GitHub repos; PRs are opened against it"
+    )
+    base_branch_map: dict[str, str] = Field(
+        default_factory=dict, description="Per-repo base branch, where it differs"
+    )
+    api_url: str = Field(
+        default="https://api.github.com", description="GitHub Enterprise: https://<host>/api/v3"
+    )
+    git_url: str = Field(
+        default="https://github.com/{owner}/{repo}.git",
+        description="Push URL template with {owner} and {repo}",
+    )
+    reviewers: list[str] = Field(default_factory=list, description="Requested on every PR")
+    labels: list[str] = Field(default_factory=lambda: ["migration"])
 
 
 class GerritOutput(Model):

@@ -1,0 +1,98 @@
+# Publish, review and Jira export (M8)
+
+After `migrate verify`, the clusters go to people. This step opens the PRs, takes the
+reviewers' decisions back into the ledger, and writes approved results to Jira.
+
+## 1. Configure GitHub and Jira
+
+```yaml
+output:
+  target: github
+  branch_prefix: migration/
+  draft: true
+  github:
+    owner: example-oem
+    token: env:GITHUB_TOKEN          # needs contents:write and pull_requests:write on the repos
+    base_branch: oem-a15             # the target tree's branch in the GitHub repos
+    repo_map:                        # every target project a cluster may touch
+      frameworks/base: platform_frameworks_base
+      packages/services/Car: platform_packages_services_car
+    reviewers: [migration-lead]
+    # GitHub Enterprise:
+    # api_url: https://github.example.com/api/v3
+    # git_url: https://github.example.com/{owner}/{repo}.git
+jira:
+  url: https://jira.example.com
+  project: OEM                       # for tracking tickets of untracked patches
+  token: env:JIRA_TOKEN
+  comment_marker: "[migration-agent]"
+```
+
+The GitHub repos must hold the target tree's history (the cluster branches are pushed on
+top of the target base). The token reaches `git push` through `GIT_ASKPASS`, never through a
+URL or a command line.
+
+## 2. Publish
+
+```bash
+migrate publish -c project.yaml --dry-run      # which branches would go where
+migrate publish -c project.yaml                # verified clusters only
+migrate publish -c project.yaml --unverified   # also migrated clusters not yet built
+```
+
+Each cluster becomes one draft PR per repository it touches, from
+`migration/r<run>-c<cluster>` against `base_branch`, linked to each other. The body has the
+review queue and confidence, the original patches with their Jira keys, the intents, how
+each project was migrated, the cluster agent's summary and risks, the reviewer agent's
+verdict, and the build and test results. Publishing again force-pushes the branch (it belongs
+to the tool) and refreshes the body; no duplicate PRs.
+
+## 3. Review
+
+```bash
+migrate review list -c project.yaml
+```
+
+| Queue | What it holds | What to do |
+| --- | --- | --- |
+| quick approve | verified, confidence ≥ `thresholds.quick_approve` | skim, approve |
+| careful review | verified, lower confidence | read the agent's risks and the diff |
+| needs decision | a question for a human | `migrate review decide` |
+| failed | could not be migrated or verified | `migrate review retry` (with a hint), or fix by hand |
+| dropped | upstream, obsolete or reverted | confirm (approve) or `reject` if still needed |
+| approved | approved by a human | goes to the Jira export |
+
+Decisions can be made on the PRs or on the command line:
+
+- **Approve:** approve or merge the PR, or `migrate review approve <id> --by <name>`.
+- **Send back:** request changes on the PR (the review text is the feedback), close it
+  unmerged, or `migrate review reject <id> --by <name> --reason "..."`. The cluster goes back
+  to `needed` and the next `migrate apply` hands your words to the cluster agent, even if a
+  cherry-pick would apply. Rejecting a dropped cluster means its patches are needed after all.
+- **Decide:** `migrate review decide <id> migrate|upstream|obsolete --by <name> --reason "..."`.
+  `migrate` sends your answer to the agent; `upstream` and `obsolete` drop the cluster and
+  count as approval.
+- **Retry:** `migrate review retry <id> --by <name> --reason "hint"` for a failed cluster.
+
+`migrate review sync` reads the PRs (merges, approving reviews, change requests, closes) and
+applies them. Each review is acted on once. The Review page of `migrate serve` shows the
+queues with their PRs.
+
+## 4. Jira export
+
+```bash
+migrate jira-export -c project.yaml --dry-run            # exactly what would be written
+migrate jira-export -c project.yaml
+migrate jira-export -c project.yaml --create-missing     # also tickets for untracked patches
+```
+
+Only approved clusters are exported, and only standard Jira fields are used:
+
+- a label per outcome: `<label>-migrated`, `-upstream`, `-obsolete`, `-reverted` (the label
+  is `migration.label`, for example `mig-A14-A15`);
+- a remote link to each PR;
+- one comment per ticket starting with `<comment_marker> <label>`, updated in place.
+
+Patches without a ticket get one tracking ticket per cluster with `--create-missing`; its
+key is added to those patches, so the next migration finds them through Jira. The export can
+be repeated: nothing changes when nothing changed.
