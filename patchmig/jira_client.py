@@ -32,38 +32,6 @@ class Ticket:
 class JiraClient(Protocol):
     def search(self, jql: str) -> list[Ticket]: ...
 
-    def _search_cloud(self, jql: str) -> list[Ticket]:
-        tickets: list[Ticket] = []
-        params = {"jql": jql, "fields": self.FIELDS, "maxResults": 100}
-        while True:
-            data = self._get("search/jql", params, version=3) or {}
-            tickets += [_ticket(i) for i in data.get("issues", [])]
-            token = data.get("nextPageToken")
-            if data.get("isLast", True) or not token:
-                return tickets
-            params = {**params, "nextPageToken": token}
-
-    def check(self, project: str) -> list[str]:
-        """What a connection test can tell: who we are, and that the project is visible."""
-        me = self._get("myself", {})
-        if me is None:
-            raise JiraError("Jira /myself not found: is the URL the Jira base URL?")
-        who = me.get("emailAddress") or me.get("name") or me.get("displayName") or "?"
-        found = [f"signed in as {who} ({'Cloud' if self.cloud else 'Server/Data Center'})"]
-        proj = self._get(f"project/{urllib.parse.quote(project)}", {})
-        if proj is None:
-            raise JiraError(f"project {project} not found or not visible to this account")
-        found.append(f"project {project}: {proj.get('name', '?')}")
-        jql = {
-            "jql": f"project = {project} ORDER BY key DESC",
-            "fields": "summary",
-            "maxResults": 1,
-        }
-        page = self._get("search/jql", jql, version=3) if self.cloud else self._get("search", jql)
-        latest = ((page or {}).get("issues") or [{}])[0].get("key", "none")
-        found.append(f"JQL search works (latest issue: {latest})")
-        return found
-
     def get(self, key: str) -> Ticket | None: ...
 
 
