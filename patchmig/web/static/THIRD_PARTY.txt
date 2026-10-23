@@ -1,0 +1,4 @@
+htm-preact.js is htm 3.1.1 (preact/standalone.module.js from the npm package "htm"),
+copied unchanged. It bundles htm (Apache License 2.0, https://github.com/developit/htm)
+and Preact 10 with hooks (MIT License, https://github.com/preactjs/preact).
+It is vendored so the UI needs no build step, no Node.js and no CDN access.

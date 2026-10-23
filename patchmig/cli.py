@@ -291,6 +291,45 @@ def clusters_cmd(
             typer.echo(c.net_diff, nl=False)
 
 
+@app.command("serve")
+def serve_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    host: Annotated[str, typer.Option(help="Interface to listen on")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port")] = 8765,
+) -> None:
+    """Serve the read-only web front end for this project's ledger."""
+    import uvicorn
+
+    from patchmig.web.api import create_app
+
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    typer.echo(f"Serving {cfg.name} on http://{host}:{port}/ (read-only; Ctrl+C to stop)")
+    uvicorn.run(create_app(cfg, store), host=host, port=port, log_level="warning")
+
+
+@app.command("export-site")
+def export_site_cmd(
+    out: Annotated[Path, typer.Argument(help="Empty or new folder for the site")],
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_ids: Annotated[
+        list[int] | None, typer.Option("--run", help="Runs to include (default: all)")
+    ] = None,
+) -> None:
+    """Write a static, read-only copy of the front end (e.g. for private GitHub Pages)."""
+    from patchmig.web.export import export_site
+
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    try:
+        n = export_site(cfg, store, out, run_ids or None)
+    except FileExistsError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"Wrote {n} data files to {out}. Serve it over HTTP, e.g.: "
+               f"python -m http.server -d {out}")  # fmt: skip
+
+
 @app.command("doctor")
 def doctor_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
