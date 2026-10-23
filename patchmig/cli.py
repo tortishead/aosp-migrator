@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from sqlalchemy import select
 
 from patchmig.config import ConfigError, ProjectConfig, dump_config, load_config
-from patchmig.ledger import LedgerStore, State
+from patchmig.ingest import IngestError, ingest
+from patchmig.jira_client import HttpJiraClient, JiraClient
+from patchmig.ledger import LedgerStore, Patch, State
 
 app = typer.Typer(help="Migrate OEM Android framework patches between Android versions.")
 config_app = typer.Typer(help="Inspect and validate the project configuration.")
@@ -96,6 +99,69 @@ def status(config: ConfigOption = DEFAULT_CONFIG) -> None:
         if counts[state]:
             typer.echo(f"  {state.value:<15} {counts[state]}")
     typer.echo(f"  {'total':<15} {sum(counts.values())}")
+
+
+def _jira(cfg: ProjectConfig, enabled: bool) -> JiraClient | None:
+    if not enabled or cfg.jira is None:
+        return None
+    try:
+        return HttpJiraClient(cfg.jira)
+    except (KeyError, OSError) as e:
+        typer.secho(f"Jira token not available ({e}); use --no-jira to skip.", fg="red", err=True)
+        raise typer.Exit(1) from e
+
+
+@app.command("ingest")
+def ingest_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    use_jira: Annotated[bool, typer.Option("--jira/--no-jira", help="Fetch Jira tickets")] = True,
+    note: Annotated[str | None, typer.Option(help="Free text shown with the run")] = None,
+) -> None:
+    """Read the patch list from all configured sources into a new run."""
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    jira = _jira(cfg, use_jira)
+    run = store.create_run(cfg, note=note or "ingest")
+    try:
+        report = ingest(cfg, store, run, jira)
+    except IngestError as e:
+        typer.secho(f"Ingest failed: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"Run {run.id}: {report.total} patches")
+    for source, n in report.found_per_source.items():
+        typer.echo(f"  from {source:<12} {n}")
+    if report.duplicates_merged:
+        typer.echo(f"  duplicates merged: {report.duplicates_merged}")
+    typer.echo("  roles: " + ", ".join(f"{k} {v}" for k, v in sorted(report.roles.items())))
+    if jira is not None:
+        typer.echo(f"  Jira tickets fetched: {report.tickets_fetched}")
+        if report.tickets_missing:
+            typer.echo(f"  Jira tickets not found: {', '.join(report.tickets_missing)}")
+    for w in report.warnings:
+        typer.secho(f"  warning: {w}", fg=typer.colors.YELLOW)
+
+
+@app.command("patches")
+def patches_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+) -> None:
+    """List the patches of a run in order."""
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    run_id = run_id or getattr(store.latest_run(), "id", None)
+    if run_id is None:
+        typer.echo("No runs yet. Start one with: migrate ingest")
+        return
+    with store.session() as s:
+        rows = s.scalars(select(Patch).where(Patch.run_id == run_id).order_by(Patch.seq)).all()
+    for p in rows:
+        sha = (p.commit_sha or "")[:10] or "(diff)"
+        keys = ",".join(p.jira_keys) or "-"
+        typer.echo(
+            f"{p.seq:>4} {p.state.value:<10} {p.chain_role or '':<7} {sha:<10} "
+            f"{keys:<12} {p.project}: {p.subject}"
+        )
 
 
 if __name__ == "__main__":

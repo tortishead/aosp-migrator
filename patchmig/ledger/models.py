@@ -64,6 +64,8 @@ class Patch(Base):
     cluster_id: Mapped[int | None] = mapped_column(ForeignKey("clusters.id"))
 
     # Identity
+    seq: Mapped[int] = mapped_column(default=0)  # order in the patch set (oldest first)
+    sources: Mapped[list[Any]] = mapped_column(default=list)  # adapters that listed it
     project: Mapped[str] = mapped_column(String(300))
     commit_sha: Mapped[str | None] = mapped_column(String(64))
     diff_path: Mapped[str | None] = mapped_column(Text)
@@ -109,3 +111,16 @@ class Transition(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     forced: Mapped[bool] = mapped_column(default=False)
     at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Ticket(Base):
+    """Cached Jira ticket text, shared across runs; refreshed on every ingest."""
+
+    __tablename__ = "tickets"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(100), default="")
+    issue_links: Mapped[list[Any]] = mapped_column(default=list)
+    fetched_at: Mapped[datetime] = mapped_column(default=utcnow)
