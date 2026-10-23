@@ -177,6 +177,7 @@ def cluster(store: LedgerStore, run_id: int, cluster_id: int) -> dict:
         "forecast": r.get("forecast"), "fold_errors": r.get("fold_errors", []),
         "upstream_check": r.get("upstream_check"), "net_diff": _cut(c.net_diff),
         "migration": _migration(r.get("migration")),
+        "verification": r.get("verification"),
         "history": _history(store, c),
     }  # fmt: skip
 

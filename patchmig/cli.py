@@ -19,6 +19,7 @@ from patchmig.ingest import IngestError, ingest
 from patchmig.jira_client import HttpJiraClient, JiraClient
 from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
 from patchmig.migrate import migrate
+from patchmig.verify import VerifyError, check_host, verify
 
 app = typer.Typer(help="Migrate OEM Android framework patches between Android versions.")
 config_app = typer.Typer(help="Inspect and validate the project configuration.")
@@ -338,6 +339,64 @@ def apply_cmd(
         typer.echo(f"Estimated credits used in this run so far: {report.credits:.1f}")
     if report.stopped_by_budget:
         typer.secho(f"Stopped: {report.stopped_by_budget}", fg=typer.colors.YELLOW)
+
+
+@app.command("verify")
+def verify_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    cluster: Annotated[
+        list[int] | None, typer.Option("--cluster", help="Only this cluster id (repeatable)")
+    ] = None,
+    limit: Annotated[int | None, typer.Option(help="Verify at most N clusters")] = None,
+    no_fix: Annotated[
+        bool, typer.Option("--no-fix", help="Do not ask the agent to fix build errors")
+    ] = False,
+) -> None:
+    """Build the affected modules of each migrated cluster on the build host, then test it."""
+    from patchmig.mcp_server.server import server_config
+
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    rid = _latest_run_id(store, run_id)
+    with store.session() as s:
+        run = s.get(Run, rid)
+    runner = None if no_fix else AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
+    try:
+        report = verify(
+            cfg, store, run, runner, cluster_ids=cluster, limit=limit,
+            mcp=server_config(str(config.resolve()), rid),
+        )  # fmt: skip
+    except VerifyError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    if not report.outcomes:
+        typer.echo(f"Run {rid}: no migrated cluster to verify (run migrate apply first?)")
+    for o in report.outcomes:
+        typer.echo(f"  [{o.cluster_id}] {o.state:<14} {o.name}")
+        if o.reason:
+            typer.echo(f"        {o.reason}")
+    if report.stopped_by_budget:
+        typer.secho(f"Stopped: {report.stopped_by_budget}", fg=typer.colors.YELLOW)
+
+
+@app.command("build-check")
+def build_check_cmd(config: ConfigOption = DEFAULT_CONFIG) -> None:
+    """Check the build host: it answers over SSH and every slot is a prepared target tree."""
+    cfg = _load(config)
+    try:
+        checks = check_host(cfg)
+    except VerifyError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    failed = False
+    for name, ok, detail in checks:
+        typer.secho(f"  {'ok  ' if ok else 'FAIL'} {name}", fg="green" if ok else "red")
+        if not ok and detail:
+            typer.echo("       " + detail.replace("\n", "\n       "))
+        failed |= not ok
+    if failed:
+        raise typer.Exit(1)
 
 
 @app.command("serve")

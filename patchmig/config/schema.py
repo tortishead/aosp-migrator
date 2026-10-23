@@ -136,12 +136,34 @@ class SshConfig(Model):
 
 
 class BuildConfig(Model):
-    ssh: SshConfig
+    transport: Literal["ssh", "local"] = Field(
+        default="ssh",
+        description="'ssh' to a build server; 'local' when the orchestrator runs on the build host",
+    )
+    ssh: SshConfig | None = None
+    slots: list[str] = Field(
+        default_factory=list,
+        description="Prepared target tree roots on the build host, one per parallel build. "
+        "Default: ssh.workdir, or workdir-1..N with parallelism N",
+    )
     lunch_target: str = Field(description="e.g. 'aosp_cf_x86_64_auto-trunk_staging-userdebug'")
+    setup_cmd: str = Field(
+        default="source build/envsetup.sh && lunch {lunch_target}",
+        description="Run in the tree root before every build or test command",
+    )
     module_build_cmd: str = "m {modules}"
-    full_build_cmd: str = "m"
+    full_build_cmd: str | None = Field(
+        default=None,
+        description="Not used: clusters are only ever built per affected module",
+        json_schema_extra={"deprecated": True},
+    )
     parallelism: int = Field(default=1, ge=1, description="Parallel worktrees/builds on the server")
     timeout_minutes: int = Field(default=240, ge=1)
+    module_map: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Glob over tree paths -> modules to build, overriding Android.bp lookup",
+    )
+    log_tail_lines: int = Field(default=200, ge=10, description="Log lines kept in the ledger")
 
     @field_validator("module_build_cmd")
     @classmethod
@@ -150,14 +172,43 @@ class BuildConfig(Model):
             raise ValueError("module_build_cmd must contain the '{modules}' placeholder")
         return value
 
+    @model_validator(mode="after")
+    def _transport_configured(self) -> BuildConfig:
+        if self.transport == "ssh" and self.ssh is None:
+            raise ValueError("build.transport is 'ssh' but build.ssh is missing")
+        if self.transport == "local" and not self.slots:
+            raise ValueError("build.transport 'local' needs build.slots (local tree roots)")
+        return self
+
+    def tree_slots(self) -> list[str]:
+        if self.slots:
+            return self.slots
+        root = self.ssh.workdir
+        if self.parallelism == 1:
+            return [root]
+        return [f"{root}-{i}" for i in range(1, self.parallelism + 1)]
+
 
 class TestsConfig(Model):
+    enabled: bool = True
     use_test_mapping: bool = True
+    mapping_groups: list[str] = Field(
+        default_factory=lambda: ["presubmit"], description="TEST_MAPPING groups to run"
+    )
     extra_modules: list[str] = Field(default_factory=list)
+    test_cmd: str = Field(default="atest {tests}", description="Must contain '{tests}'")
+    max_tests: int = Field(default=20, ge=1)
     cuttlefish: bool = False
     baseline: bool = Field(
         default=True, description="Also run selected tests on the unpatched target"
     )
+
+    @field_validator("test_cmd")
+    @classmethod
+    def _needs_tests_placeholder(cls, value: str) -> str:
+        if "{tests}" not in value:
+            raise ValueError("test_cmd must contain the '{tests}' placeholder")
+        return value
 
 
 class LlmConfig(Model):

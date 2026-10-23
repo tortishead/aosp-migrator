@@ -8,7 +8,7 @@ related patches (patch, fix, improvement, revert), migrates each cluster onto th
 tests. GitHub Copilot CLI is the only agent runtime; a deterministic orchestrator owns
 scheduling, the credit budget, builds and the migration ledger. Humans review every result.
 
-Status: **M6, cluster agent** (on top of M1 to M5). See the milestones below.
+Status: **M7, build and test** (on top of M1 to M6). See the milestones below.
 
 ## Quick start
 
@@ -26,6 +26,8 @@ migrate analyse -c myproject/project.yaml    # upstream/obsolete/needed, cluster
 migrate clusters -c myproject/project.yaml   # clusters in migration order (--show ID for detail)
 migrate apply -c myproject/project.yaml --no-agent   # free rungs only: cherry-pick, net diff
 migrate apply -c myproject/project.yaml --limit 3    # then the cluster agent where they fail
+migrate build-check -c myproject/project.yaml        # SSH to the build server, slots prepared?
+migrate verify -c myproject/project.yaml     # build affected modules, run TEST_MAPPING tests
 migrate serve -c myproject/project.yaml      # web front end on http://127.0.0.1:8765/
 migrate export-site site -c myproject/project.yaml   # static read-only copy of the front end
 migrate status -c myproject/project.yaml
@@ -44,11 +46,13 @@ migrate status -c myproject/project.yaml
 | `patchmig/knowledge/` | Knowledge pack: tree access, OEM footprint map, upstream change map |
 | `patchmig/analysis/` | Upstream rungs, obsolete rule, revert folding, clustering, net diffs, forecasts |
 | `patchmig/migrate/` | Per-cluster sparse worktrees and branches, cherry-pick and net-diff rungs, guardrails, migration orchestration |
+| `patchmig/verify/` | Build host over SSH or local, module and test selection, build/test/fix loop |
 | `patchmig/web/` | Read-only web front end: JSON API (FastAPI), UI (`static/`), static export |
 | `patchmig/mcp_server/` | Read-only MCP tools for agents: trees at the migration refs, ledger, knowledge, Jira cache |
 | `docs/spike-m3.md` | Steps to run the M3 spike on your machine |
 | `docs/analysis-m4.md` | How to run and check the analysis on your trees |
 | `docs/migrate-m6.md` | How the migrate step works and how to try it on your trees |
+| `docs/verify-m7.md` | Preparing the build server and running builds and tests |
 | `patchmig/templates/` | Example `project.yaml` used by `migrate init` |
 | `patchmig/cli.py` | The `migrate` command |
 | `tests/fixtures/scenario.py` | Generates small synthetic source/target trees with known migration cases |
@@ -138,6 +142,17 @@ whose verdict caps the confidence or rejects the change. With `--no-agent`, clus
 need the agent stay `needed` with their conflicts recorded. Everything lands in the ledger and
 in the front end's cluster page. See `docs/migrate-m6.md`.
 
+## Verify
+
+`migrate verify` builds each migrated cluster on the build server (SSH, or `local` on the
+build host), one cluster per prepared tree slot, in parallel up to `build.parallelism`. It
+builds only the modules the cluster affects (nearest `Android.bp`, or `build.module_map`),
+never the whole tree. Build errors go to the cluster agent, which fixes the change in the
+cluster's worktree under the same guardrails, up to `budget.max_fix_attempts`. Then the
+TEST_MAPPING tests run; failures are re-run on the unpatched target so existing failures are
+not blamed on the cluster. Clusters end `verified`, `failed` or `needs_decision`, with logs
+on the cluster page. See `docs/verify-m7.md`.
+
 ## Front end
 
 `migrate serve` starts a read-only web app over the project's ledger: an overview of each run
@@ -172,8 +187,8 @@ dependency. `EXPECTED` in the module lists the verdict and cluster for each.
 | M2 | Ingest adapters and patch normalisation | Done |
 | M3 | Copilot CLI spike, LLM adapter, MCP tool server (gate) | Done; spike pending |
 | M4 | Knowledge bootstrap and analysis | Done |
-| M5 | Read-only front end | In review (#5) |
-| M6 | Cluster agent | In review |
-| M7 | Build and test over SSH | Planned |
+| M5 | Read-only front end | Done |
+| M6 | Cluster agent | Done |
+| M7 | Build and test over SSH | In review |
 | M8 | Publishing, review loop, Jira export | Planned |
 | M9 | Migration memory and pilot | Planned |

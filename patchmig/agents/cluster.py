@@ -162,3 +162,64 @@ def ask_reviewer(
         cluster_id=ctx.cluster_id,
     )
     return runner.run(task)
+
+
+class FixAnswer(BaseModel):
+    outcome: Literal["fixed", "not_caused_by_cluster", "cannot_fix"]
+    summary: str = Field(description="What was wrong and what you changed, in 1-3 sentences")
+    files: list[str] = Field(default_factory=list, description="Files you changed")
+    confidence: float = Field(ge=0, le=1)
+
+
+def fix_brief(
+    config: ProjectConfig,
+    ctx: ClusterContext,
+    migrated_diff: str,
+    command: str,
+    errors: str,
+    previous: list[str],
+) -> str:
+    template = files("patchmig.agents.briefs").joinpath("build_fixer.md").read_text()
+    earlier = ""
+    if previous:
+        earlier = "\n## Earlier fix attempts (the build still failed after them)\n\n" + "\n".join(
+            f"- {p}" for p in previous
+        )
+    return template.format(
+        source_version=config.migration.source_version,
+        target_version=config.migration.target_version,
+        server=SERVER,
+        name=ctx.name,
+        members=ctx.members,
+        intent=ctx.intent,
+        migrated_diff=_truncate(migrated_diff, config.migrate.brief_max_diff_chars),
+        command=command,
+        errors=errors,
+        previous=earlier,
+    ) + answer_instructions(FixAnswer)
+
+
+def ask_build_fixer(
+    runner: AgentRunner,
+    config: ProjectConfig,
+    ctx: ClusterContext,
+    workdir: Path,
+    migrated_diff: str,
+    command: str,
+    errors: str,
+    previous: list[str],
+    mcp: dict | None,
+    attempt: int,
+) -> AgentOutcome:
+    task = AgentTask(
+        agent="cluster_agent",
+        key=f"cluster:{ctx.cluster_id}:fix:{attempt}",
+        brief=fix_brief(config, ctx, migrated_diff, command, errors, previous),
+        schema=FixAnswer,
+        workdir=workdir,
+        tools=_policy(mcp, write=True),
+        subject_type="cluster",
+        subject_id=ctx.cluster_id,
+        cluster_id=ctx.cluster_id,
+    )
+    return runner.run(task)

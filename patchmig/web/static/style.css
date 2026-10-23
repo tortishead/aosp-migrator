@@ -175,3 +175,7 @@ svg.graph .edge-label { fill: var(--muted); font-size: 11px; }
   header select { margin-left: 0; }
   main { padding: 12px; }
 }
+
+details { margin: 8px 0; }
+details summary { cursor: pointer; }
+details pre.block { margin-top: 6px; max-height: 320px; overflow: auto; }

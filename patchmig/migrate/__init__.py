@@ -283,6 +283,12 @@ class Migrator:
 
     # ---- the agent rung ---------------------------------------------------------------
 
+    def context_for(self, cluster: Cluster, members: list[Patch]) -> ClusterContext:
+        """The agents' view of a cluster that was already migrated (for build fixes)."""
+        net = cluster.result.get("net_diff_by_project", {})
+        keys = {f"{p}:{fd.path}" for p, d in net.items() for fd in split_diff(d)}
+        return self._context(cluster, members, net, self._fates(keys))
+
     def _context(
         self, cluster: Cluster, members: list[Patch], net: dict[str, str], fates: dict
     ) -> ClusterContext:
@@ -515,7 +521,7 @@ class Migrator:
             lines += [""] + trailers
         return "\n".join(lines) + "\n"
 
-    def _migrated_diff(self, record: dict) -> str:
+    def migrated_diff(self, record: dict) -> str:
         """The cluster's whole change on its branches (base..head of every project)."""
         parts = []
         for project, info in record["projects"].items():
@@ -548,7 +554,7 @@ class Migrator:
         record["state"] = state.value
         record["reason"] = reason
         if state in MIGRATED:
-            record["diff"] = self._migrated_diff(record)
+            record["diff"] = self.migrated_diff(record)
         self._save(cluster, record, confidence)
         for m in members:
             self.store.transition(m, state, actor=actor, reason=reason)
