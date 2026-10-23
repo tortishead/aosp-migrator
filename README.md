@@ -8,7 +8,7 @@ related patches (patch, fix, improvement, revert), migrates each cluster onto th
 tests. GitHub Copilot CLI is the only agent runtime; a deterministic orchestrator owns
 scheduling, the credit budget, builds and the migration ledger. Humans review every result.
 
-Status: **M2, ingest** (on top of M1's config, ledger, CLI and fixtures). See the milestones below.
+Status: **M3, Copilot CLI adapter and spike kit** (on top of M1 and M2). See the milestones below.
 
 ## Quick start
 
@@ -20,6 +20,8 @@ migrate init myproject                       # writes myproject/project.yaml
 migrate config validate -c myproject/project.yaml
 migrate ingest -c myproject/project.yaml     # new run: read all patch sources (+ Jira tickets)
 migrate patches -c myproject/project.yaml    # list the run's patches in order
+migrate doctor -c myproject/project.yaml --mcp   # check Copilot CLI headless + MCP tools
+migrate intents -c myproject/project.yaml --limit 20 --export review.md
 migrate status -c myproject/project.yaml
 ```
 
@@ -32,6 +34,9 @@ migrate status -c myproject/project.yaml
 | `patchmig/ingest/` | Patch-source adapters, manifest parsing, diff footprints, normalisation and linking |
 | `patchmig/gitutil.py` | Thin helpers over the git CLI |
 | `patchmig/jira_client.py` | Minimal Jira REST client (read) |
+| `patchmig/agents/` | LLM adapter (Copilot CLI, fake), runner with budgets and retries, intent writer, briefs |
+| `patchmig/mcp_server/` | Read-only MCP tools for agents: trees at the migration refs, ledger, Jira cache |
+| `docs/spike-m3.md` | Steps to run the M3 spike on your machine |
 | `patchmig/templates/` | Example `project.yaml` used by `migrate init` |
 | `patchmig/cli.py` | The `migrate` command |
 | `tests/fixtures/scenario.py` | Generates small synthetic source/target trees with known migration cases |
@@ -59,6 +64,19 @@ touched symbols), and links: reverts, `Fixes:` references and cherry-pick origin
 are `base`, `fix` or `revert`. The same patch listed by several sources is merged (by commit,
 or by patch-id for diff files). Referenced Jira tickets are cached in the ledger.
 
+## Agents
+
+Every LLM call goes through `patchmig/agents/adapter.py`. The Copilot CLI adapter runs one
+headless process per task (`-p`, `-s`, `--no-ask-user`, model, allowed and denied tools, and the
+MCP config for the `patchmig` tool server); long briefs are passed as an attachment. The runner
+checks the run and cluster credit budgets before each call, validates the JSON answer against
+the task's schema, retries once with a correction, and logs every call (credits, duration,
+output tail) in the ledger. Credits are estimates from `llm.credits_per_call`, calibrated by the
+spike.
+
+The intent writer gives each patch a short, sourced intent and reuses intents by patch
+fingerprint, so a patch never costs twice, also across runs.
+
 ## Test fixtures
 
 `python -m tests.fixtures.scenario /tmp/demo` writes a `source/` tree (Android 14 base plus eight
@@ -71,8 +89,8 @@ patch with its revert, a change already upstream, and a cross-project symbol dep
 | # | Milestone | Status |
 | --- | --- | --- |
 | M1 | Foundation: config, ledger, CLI, fixtures, CI | In review (#1) |
-| M2 | Ingest adapters and patch normalisation | In review |
-| M3 | Copilot CLI spike, LLM adapter, MCP tool server (gate) | Planned |
+| M2 | Ingest adapters and patch normalisation | In review (#2) |
+| M3 | Copilot CLI spike, LLM adapter, MCP tool server (gate) | In review; spike pending |
 | M4 | Knowledge bootstrap and analysis | Planned |
 | M5 | Read-only front end | Planned |
 | M6 | Cluster agent | Planned |

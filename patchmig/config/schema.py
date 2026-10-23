@@ -167,6 +167,28 @@ class LlmConfig(Model):
         default_factory=dict, description="Model per agent; unset agents use the CLI default"
     )
     timeout_seconds: int = Field(default=900, ge=10)
+    max_retries: int = Field(
+        default=1, ge=0, description="Extra calls when an answer is not valid JSON for its schema"
+    )
+    credits_per_call: dict[str, float] = Field(
+        default_factory=lambda: {"default": 1.0},
+        description="Estimated credits per call by model name ('default' for any other); "
+        "calibrate with the M3 spike",
+    )
+    mcp_flag: str = Field(
+        default="--additional-mcp-config",
+        description="Copilot CLI flag that takes an MCP server config as JSON",
+    )
+    inline_prompt_max_chars: int = Field(
+        default=60_000, ge=1000, description="Longer briefs are passed as an attachment file"
+    )
+    extra_args: list[str] = Field(default_factory=list, description="Appended to every call")
+    intent_max_diff_chars: int = Field(default=20_000, ge=1000)
+
+    def credits_for(self, model: str | None) -> float:
+        return self.credits_per_call.get(
+            model or "default", self.credits_per_call.get("default", 1.0)
+        )
 
     @field_validator("models")
     @classmethod
