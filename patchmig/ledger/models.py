@@ -64,6 +64,8 @@ class Patch(Base):
     cluster_id: Mapped[int | None] = mapped_column(ForeignKey("clusters.id"))
 
     # Identity
+    seq: Mapped[int] = mapped_column(default=0)  # order in the patch set (oldest first)
+    sources: Mapped[list[Any]] = mapped_column(default=list)  # adapters that listed it
     project: Mapped[str] = mapped_column(String(300))
     commit_sha: Mapped[str | None] = mapped_column(String(64))
     diff_path: Mapped[str | None] = mapped_column(Text)
@@ -83,7 +85,8 @@ class Patch(Base):
     chain_role: Mapped[str | None] = mapped_column(String(32))  # base, fix, improvement, revert
 
     # Analysis and outcome
-    intent: Mapped[str | None] = mapped_column(Text)
+    intent: Mapped[str | None] = mapped_column(Text)  # rendered for people
+    intent_detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)  # structured, with sources
     state: Mapped[State] = mapped_column(StateColumn, default=State.INGESTED)
     verdict: Mapped[dict[str, Any]] = mapped_column(default=dict)  # verdict, evidence
     confidence: Mapped[float | None]
@@ -109,3 +112,40 @@ class Transition(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     forced: Mapped[bool] = mapped_column(default=False)
     at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Ticket(Base):
+    """Cached Jira ticket text, shared across runs; refreshed on every ingest."""
+
+    __tablename__ = "tickets"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(100), default="")
+    issue_links: Mapped[list[Any]] = mapped_column(default=list)
+    fetched_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class AgentCall(Base):
+    """One call to the agent runtime: for credit accounting, audit and the front end."""
+
+    __tablename__ = "agent_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), index=True)
+    agent: Mapped[str] = mapped_column(String(64))
+    task_key: Mapped[str] = mapped_column(String(200))
+    subject_type: Mapped[str | None] = mapped_column(String(16))
+    subject_id: Mapped[int | None]
+    cluster_id: Mapped[int | None] = mapped_column(index=True)
+    attempt: Mapped[int] = mapped_column(default=1)
+    model: Mapped[str | None] = mapped_column(String(100))
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    duration_s: Mapped[float] = mapped_column(default=0.0)
+    credits: Mapped[float] = mapped_column(default=0.0)  # estimate from llm.credits_per_call
+    ok: Mapped[bool] = mapped_column(default=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    prompt_chars: Mapped[int] = mapped_column(default=0)
+    output_chars: Mapped[int] = mapped_column(default=0)
+    output: Mapped[str] = mapped_column(Text, default="")  # tail of the raw answer
