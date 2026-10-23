@@ -22,11 +22,17 @@ output:
     # api_url: https://github.example.com/api/v3
     # git_url: https://github.example.com/{owner}/{repo}.git
 jira:
-  url: https://jira.example.com
+  url: https://jira.example.com      # Cloud: https://<site>.atlassian.net
   project: OEM                       # for tracking tickets of untracked patches
-  token: env:JIRA_TOKEN
+  token: env:JIRA_TOKEN              # Server/DC: personal access token; Cloud: API token
+  # user: you@example.com            # Cloud: your account email (basic auth)
+  # deployment: auto                 # auto (Cloud for *.atlassian.net), server or cloud
   comment_marker: "[migration-agent]"
 ```
+
+`migrate jira-check` signs in, finds the project and runs one JQL search, read-only. Both
+Jira Server/Data Center and Jira Cloud are supported through the REST API (v2; on Cloud the
+JQL search uses v3 `search/jql`, because Cloud removed the old search endpoint).
 
 The GitHub repos must hold the target tree's history (the cluster branches are pushed on
 top of the target base). The token reaches `git push` through `GIT_ASKPASS`, never through a

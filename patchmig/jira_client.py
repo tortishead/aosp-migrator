@@ -1,6 +1,11 @@
 """Minimal Jira REST client: only what the tool needs (reads for ingest, writes for export).
 
 Writes use only standard fields (labels, comments, remote links, new issues): no custom fields.
+
+Jira Server/Data Center and Jira Cloud both serve REST v2 with plain-text bodies, which is
+what we use. The one difference that matters: Cloud removed `/rest/api/2/search` (it answers
+410 Gone), so on Cloud JQL goes to `/rest/api/3/search/jql`, paged by `nextPageToken`, and
+its descriptions come back as Atlassian Document Format, which we flatten to text.
 """
 
 from __future__ import annotations
@@ -27,6 +32,38 @@ class Ticket:
 class JiraClient(Protocol):
     def search(self, jql: str) -> list[Ticket]: ...
 
+    def _search_cloud(self, jql: str) -> list[Ticket]:
+        tickets: list[Ticket] = []
+        params = {"jql": jql, "fields": self.FIELDS, "maxResults": 100}
+        while True:
+            data = self._get("search/jql", params, version=3) or {}
+            tickets += [_ticket(i) for i in data.get("issues", [])]
+            token = data.get("nextPageToken")
+            if data.get("isLast", True) or not token:
+                return tickets
+            params = {**params, "nextPageToken": token}
+
+    def check(self, project: str) -> list[str]:
+        """What a connection test can tell: who we are, and that the project is visible."""
+        me = self._get("myself", {})
+        if me is None:
+            raise JiraError("Jira /myself not found: is the URL the Jira base URL?")
+        who = me.get("emailAddress") or me.get("name") or me.get("displayName") or "?"
+        found = [f"signed in as {who} ({'Cloud' if self.cloud else 'Server/Data Center'})"]
+        proj = self._get(f"project/{urllib.parse.quote(project)}", {})
+        if proj is None:
+            raise JiraError(f"project {project} not found or not visible to this account")
+        found.append(f"project {project}: {proj.get('name', '?')}")
+        jql = {
+            "jql": f"project = {project} ORDER BY key DESC",
+            "fields": "summary",
+            "maxResults": 1,
+        }
+        page = self._get("search/jql", jql, version=3) if self.cloud else self._get("search", jql)
+        latest = ((page or {}).get("issues") or [{}])[0].get("key", "none")
+        found.append(f"JQL search works (latest issue: {latest})")
+        return found
+
     def get(self, key: str) -> Ticket | None: ...
 
 
@@ -50,6 +87,21 @@ class JiraError(Exception):
     pass
 
 
+def adf_text(node) -> str:
+    """Plain text of an Atlassian Document Format node (Jira Cloud v3 rich text)."""
+    if isinstance(node, str):
+        return node
+    if not isinstance(node, dict):
+        return ""
+    if node.get("type") == "text":
+        return node.get("text", "")
+    if node.get("type") == "hardBreak":
+        return "\n"
+    inner = "".join(adf_text(c) for c in node.get("content") or [])
+    block = node.get("type") in ("paragraph", "heading", "codeBlock", "listItem", "blockquote")
+    return inner + "\n" if block else inner
+
+
 def _ticket(issue: dict) -> Ticket:
     f = issue.get("fields", {})
     links = []
@@ -58,8 +110,8 @@ def _ticket(issue: dict) -> Ticket:
         if other:
             links.append(other["key"])
     description = f.get("description") or ""
-    if not isinstance(description, str):  # Jira Cloud v3 rich text: keep it readable enough
-        description = json.dumps(description)
+    if not isinstance(description, str):  # Jira Cloud v3 rich text
+        description = adf_text(description).strip()
     return Ticket(
         key=issue["key"],
         summary=f.get("summary") or "",
@@ -69,13 +121,32 @@ def _ticket(issue: dict) -> Ticket:
     )
 
 
+def _hint(code: int) -> str:
+    return {
+        401: " (check the token; on Cloud set jira.user to your account email)",
+        403: " (the account lacks permission for this)",
+        410: " (endpoint removed: set jira.deployment: cloud)",
+    }.get(code, "")
+
+
+def is_cloud(config: JiraConfig) -> bool:
+    if config.deployment != "auto":
+        return config.deployment == "cloud"
+    host = urllib.parse.urlparse(config.url).hostname or ""
+    return host.endswith(".atlassian.net")
+
+
 class HttpJiraClient:
-    """Jira Server/Data Center (REST v2). Bearer token, or basic auth when a user is set."""
+    """Jira REST v2 on Server/Data Center and Cloud (v3 only for JQL search on Cloud).
+
+    Bearer token, or basic auth when a user is set (Cloud: account email + API token).
+    """
 
     FIELDS = "summary,description,status,issuelinks"
 
     def __init__(self, config: JiraConfig, timeout: float = 30):
         self.base = config.url.rstrip("/")
+        self.cloud = is_cloud(config)
         token = resolve_secret(config.token)
         if config.user:
             creds = base64.b64encode(f"{config.user}:{token}".encode()).decode()
@@ -84,8 +155,8 @@ class HttpJiraClient:
             self.auth = f"Bearer {token}"
         self.timeout = timeout
 
-    def _get(self, path: str, params: dict) -> dict | None:
-        url = f"{self.base}/rest/api/2/{path}?{urllib.parse.urlencode(params)}"
+    def _get(self, path: str, params: dict, version: int = 2) -> dict | None:
+        url = f"{self.base}/rest/api/{version}/{path}?{urllib.parse.urlencode(params)}"
         req = urllib.request.Request(
             url, headers={"Authorization": self.auth, "Accept": "application/json"}
         )
@@ -95,11 +166,13 @@ class HttpJiraClient:
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return None
-            raise JiraError(f"Jira {path} failed: HTTP {e.code}") from e
+            raise JiraError(f"Jira {path} failed: HTTP {e.code}{_hint(e.code)}") from e
         except urllib.error.URLError as e:
             raise JiraError(f"Jira not reachable at {self.base}: {e.reason}") from e
 
     def search(self, jql: str) -> list[Ticket]:
+        if self.cloud:
+            return self._search_cloud(jql)
         tickets: list[Ticket] = []
         start = 0
         while True:
@@ -111,6 +184,38 @@ class HttpJiraClient:
             start += len(issues)
             if not issues or start >= (data or {}).get("total", 0):
                 return tickets
+
+    def _search_cloud(self, jql: str) -> list[Ticket]:
+        tickets: list[Ticket] = []
+        params = {"jql": jql, "fields": self.FIELDS, "maxResults": 100}
+        while True:
+            data = self._get("search/jql", params, version=3) or {}
+            tickets += [_ticket(i) for i in data.get("issues", [])]
+            token = data.get("nextPageToken")
+            if data.get("isLast", True) or not token:
+                return tickets
+            params = {**params, "nextPageToken": token}
+
+    def check(self, project: str) -> list[str]:
+        """What a connection test can tell: who we are, and that the project is visible."""
+        me = self._get("myself", {})
+        if me is None:
+            raise JiraError("Jira /myself not found: is the URL the Jira base URL?")
+        who = me.get("emailAddress") or me.get("name") or me.get("displayName") or "?"
+        found = [f"signed in as {who} ({'Cloud' if self.cloud else 'Server/Data Center'})"]
+        proj = self._get(f"project/{urllib.parse.quote(project)}", {})
+        if proj is None:
+            raise JiraError(f"project {project} not found or not visible to this account")
+        found.append(f"project {project}: {proj.get('name', '?')}")
+        jql = {
+            "jql": f"project = {project} ORDER BY key DESC",
+            "fields": "summary",
+            "maxResults": 1,
+        }
+        page = self._get("search/jql", jql, version=3) if self.cloud else self._get("search", jql)
+        latest = ((page or {}).get("issues") or [{}])[0].get("key", "none")
+        found.append(f"JQL search works (latest issue: {latest})")
+        return found
 
     def get(self, key: str) -> Ticket | None:
         data = self._get(f"issue/{urllib.parse.quote(key)}", {"fields": self.FIELDS})
@@ -134,7 +239,7 @@ class HttpJiraClient:
                 raw = resp.read()
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as e:
-            raise JiraError(f"Jira {method} {path} failed: HTTP {e.code}") from e
+            raise JiraError(f"Jira {method} {path} failed: HTTP {e.code}{_hint(e.code)}") from e
         except urllib.error.URLError as e:
             raise JiraError(f"Jira not reachable at {self.base}: {e.reason}") from e
 

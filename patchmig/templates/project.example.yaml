@@ -35,8 +35,9 @@ patch_sources:
 jira:
   url: https://jira.example.com
   project: OEM
-  user: migration-bot
-  token: env:JIRA_TOKEN
+  deployment: auto              # auto (cloud for *.atlassian.net), server or cloud
+  user: migration-bot           # basic auth user; Cloud: the account email. Omit for a Bearer PAT
+  token: env:JIRA_TOKEN         # Server/DC: personal access token; Cloud: API token
   label_prefix: mig
   comment_marker: "[migration-agent]"   # finds the one comment per ticket to update
 
