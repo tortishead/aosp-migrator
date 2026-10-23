@@ -129,7 +129,7 @@ def test_build_break_is_fixed_by_the_agent_and_tested(built):
     m = power.result["migration"]
     new_head = m["projects"][FRAMEWORKS]["head"]
     assert new_head != old_head
-    branch = branch_name(built.run.id, power.id)
+    branch = branch_name(built.config.name, built.run.id, power.id)
     assert built.target_git(FRAMEWORKS, "rev-parse", branch).strip() == new_head
     assert "setMode(mode, 0);" in m["diff"]
     assert [t.agent for t, _ in built.fake.calls] == ["cluster_agent"]

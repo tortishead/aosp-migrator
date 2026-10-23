@@ -42,7 +42,11 @@ def run_report(store: LedgerStore, run_id: int) -> str:
         "",
         *_table(["State", "Patches"], [[k, v] for k, v in sorted(s["states"].items())]),
         "",
-        "Decided by: " + ", ".join(f"{k} {v}" for k, v in sorted(s["rungs"].items())),
+        "Decided by: "
+        + ", ".join(
+            f"{'no upstream match' if k == 'none' else k} {v}"
+            for k, v in sorted(s["rungs"].items())
+        ),
         "",
         "## Clusters",
         "",

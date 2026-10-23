@@ -26,6 +26,7 @@ class FakeGithub:
         self.review_list: dict[tuple[str, int], list[dict]] = {}
         self.labels: dict[tuple[str, int], list[str]] = {}
         self.requested: dict[tuple[str, int], list[str]] = {}
+        self.request_calls: list[tuple[str, int]] = []
 
     def find_pr(self, repo, head):
         return next((p for p in self.prs.get(repo, []) if p["head"] == head), None)
@@ -51,6 +52,7 @@ class FakeGithub:
 
     def request_reviewers(self, repo, number, reviewers):
         self.requested[(repo, number)] = reviewers
+        self.request_calls.append((repo, number))
 
     def add_labels(self, repo, number, labels):
         self.labels[(repo, number)] = labels
@@ -141,7 +143,7 @@ def test_publish_opens_one_pr_per_repo_and_is_repeatable(published):
 
     prs = power.result["publish"]["projects"]
     assert set(prs) == set(PROJECTS)  # one PR per repo the cluster touches
-    branch = f"migration/r{p.run.id}-c{power.id}"
+    branch = f"migration/migrate-test/r{p.run.id}-c{power.id}"
     for project in PROJECTS:
         assert prs[project]["branch"] == branch
         head = power.result["migration"]["projects"][project]["head"]
@@ -161,7 +163,7 @@ def test_publish_opens_one_pr_per_repo_and_is_repeatable(published):
     assert len(p.gh.prs[REPOS[FRAMEWORKS]]) == 2  # power and bt; nothing new
     bt = p.cluster_of("P3")
     assert "RECONNECT_TIMEOUT_MS = 12000" in subprocess.run(
-        ["git", "show", f"migration/r{p.run.id}-c{bt.id}:{BT_NEW}"],
+        ["git", "show", f"migration/migrate-test/r{p.run.id}-c{bt.id}:{BT_NEW}"],
         cwd=p.hub / f"{REPOS[FRAMEWORKS]}.git", capture_output=True, text=True, check=True,
     ).stdout  # fmt: skip
 
@@ -347,3 +349,31 @@ def test_web_review_view(published):
     assert len(item["prs"]) == 2
     c = data.cluster(p.store, p.run.id, p.cluster_of("P1").id)
     assert c["queue"] == "careful_review" and len(c["publish"]["prs"]) == 2
+
+
+def test_rework_asks_reviewers_again_and_approved_clusters_are_left_alone(published):
+    p = published
+    p.publish()
+    bt, power = p.cluster_of("P3"), p.cluster_of("P1")
+    bt_pr = bt.result["publish"]["projects"][FRAMEWORKS]
+    key = (bt_pr["repo"], bt_pr["number"])
+    assert p.gh.request_calls.count(key) == 1
+    prs_before = {repo: len(prs) for repo, prs in p.gh.prs.items()}
+    p.reviewer().approve(power.id, "lead")
+    p.reviewer().reject(bt.id, "lead", "Use 15 s.")
+
+    def rework(task, attempt):
+        path = task.workdir / FRAMEWORKS / BT_NEW
+        path.write_text(path.read_text().replace("12000", "15000"))
+        return answer("rewritten", confidence=0.8)
+
+    p.migrate(p.runner(rework), cluster_ids=[bt.id])
+    p.verify(cluster_ids=[bt.id])
+    pushed = {pr: p.remote_head(pr, f"migration/migrate-test/r{p.run.id}-c{power.id}")
+              for pr in PROJECTS}  # fmt: skip
+    report = p.publish()
+    assert [o.cluster_id for o in report.outcomes] == [bt.id]  # approved power: not touched
+    assert p.gh.request_calls.count(key) == 2  # same PR, reviewers asked again
+    assert {repo: len(prs) for repo, prs in p.gh.prs.items()} == prs_before  # no new PRs
+    for project, head in pushed.items():
+        assert p.remote_head(project, f"migration/migrate-test/r{p.run.id}-c{power.id}") == head

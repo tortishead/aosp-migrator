@@ -64,7 +64,7 @@ def memory_git(mem: Memory, *args: str) -> str:
                           check=True).stdout  # fmt: skip
 
 
-def test_record_writes_approved_facts_and_commits(remembered):
+def test_record_writes_approved_facts_and_commits(remembered, monkeypatch):
     r, mem = remembered, remembered.memory
     assert r.report.patches >= 4 and r.report.commit
     power = yaml.safe_load((mem.path / f"patches/{POWER_ID}.yaml").read_text())
@@ -83,8 +83,9 @@ def test_record_writes_approved_facts_and_commits(remembered):
     decisions = yaml.safe_load((mem.path / "decisions/mig-A14-A15.yaml").read_text())
     assert decisions["runs"][r.run.id][0]["kind"] == "feedback"
 
+    monkeypatch.setattr("patchmig.memory._now", lambda: "2099-01-01T00:00:00+00:00")
     again = mem.record(r.config, r.store, r.run)
-    assert again.commit is None  # nothing new: no commit
+    assert again.commit is None  # nothing new: no commit, however much time passed
     assert memory_git(mem, "rev-list", "--count", "HEAD").strip() == "1"
 
 
@@ -130,7 +131,7 @@ def test_next_migration_reuses_intents_and_briefs_the_agent(remembered, tmp_path
     (brief,) = [b for b in briefs if "Add OEM power mode" in b]
     section = brief.split("## From earlier migrations (migration memory)")[1]
     assert "in mig-A14-A15 verified" in section
-    assert "reviewer: Pass REASON_OEM" in section
+    assert section.count("reviewer: Pass REASON_OEM") == 1  # once per cluster, not per patch
     assert "Lesson (OEM callers pass REASON_OEM)" in section
     assert "Only for audio" not in section  # proposed, and for other paths
 

@@ -2,7 +2,7 @@
 
 Per cluster, in dependency order:
 
-1. A sparse worktree per target project on branch patchmig/r<run>/c<cluster>
+1. A sparse worktree per target project on branch patchmig/<name>/r<run>/c<cluster>
    (from the dependency's branch when the cluster depends on another one).
 2. Per project: cherry-pick the members, else a 3-way apply of the net diff (no credits).
 3. Only if a project is still not done: one cluster agent call, which edits the worktrees.
@@ -98,7 +98,7 @@ class Migrator:
         self.runner = runner
         self.mcp = mcp
         self.trees = Trees(config)
-        self.workspaces = Workspaces(self.trees, config.workdir / "worktrees")
+        self.workspaces = Workspaces(self.trees, config.workdir / "worktrees", config.name)
 
     # ---- loading ----------------------------------------------------------------------
 
@@ -217,9 +217,9 @@ class Migrator:
                     base_of[project] = info["head"]
 
         record: dict = {"started_at": _now(), "projects": {}, "agent": None, "review": None}
-        self.workspaces.remove(self.run.id, cluster.id, projects)
         worktrees: dict[str, ProjectWorktree] = {}
         try:
+            self.workspaces.remove(self.run.id, cluster.id, projects)
             for project in projects:
                 worktrees[project] = self.workspaces.create(
                     self.run.id,

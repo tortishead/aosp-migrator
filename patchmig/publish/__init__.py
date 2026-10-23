@@ -1,9 +1,9 @@
 """Publish: one draft PR per verified cluster and GitHub repository.
 
 For each cluster, every target project with migrated commits is pushed to its GitHub repo
-(output.github.repo_map) as `<branch_prefix>r<run>-c<cluster>`, and a PR is opened against
-the target branch, or updated if it exists. A cluster spanning several repos gets one PR
-per repo, linked to each other. The PR body carries what a reviewer needs: intent, original
+(output.github.repo_map) as `<branch_prefix><project name>/r<run>-c<cluster>`, and a PR is
+opened against the target branch, or updated if it exists. A cluster spanning several repos gets
+one PR per repo, linked to each other. The PR body carries what a reviewer needs: intent, original
 patches, how each project was migrated, what the agents said, build and test results, and
 the review queue. Publishing again force-pushes the branch and refreshes the body, so it is
 safe to repeat after a fix or a re-migration.
@@ -21,6 +21,7 @@ from patchmig.gitutil import GitError
 from patchmig.knowledge.trees import Trees
 from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
 from patchmig.ledger.states import MIGRATED
+from patchmig.migrate.workspace import namespace
 from patchmig.publish.github import GithubApi, GithubError, push, push_token
 from patchmig.review import queue_of
 
@@ -51,7 +52,7 @@ def _now() -> str:
 
 
 def branch_for(config: ProjectConfig, run_id: int, cluster_id: int) -> str:
-    return f"{config.output.branch_prefix}r{run_id}-c{cluster_id}"
+    return f"{config.output.branch_prefix}{namespace(config.name)}/r{run_id}-c{cluster_id}"
 
 
 def pr_title(config: ProjectConfig, cluster: Cluster) -> str:
@@ -94,8 +95,10 @@ def pr_body(
         lines.append(
             f"| `{sha}` {p.subject} | {p.project} | {', '.join(p.jira_keys) or '–'} | {p.state} |"
         )
-    intents = [f"- **{p.subject}**: {(p.intent or '').splitlines()[0]}" for p in members
-               if p.intent]  # fmt: skip
+    intents = []
+    for p in members:
+        if p.intent:  # problem, change and how to verify; components and sources stay out
+            intents += [f"- **{p.subject}**", *(f"  - {x}" for x in p.intent.splitlines()[:3])]
     if intents:
         lines += ["", "## Intent", "", *intents]
     lines += ["", "## How it was migrated", ""]
@@ -166,8 +169,13 @@ class Publisher:
             rows = s.scalars(
                 select(Cluster).where(Cluster.run_id == self.run.id).order_by(Cluster.order_index)
             ).all()
+        # Approved clusters are done: their PRs may be merged, so never push to them again.
         return [
-            c for c in rows if c.state in allowed and (cluster_ids is None or c.id in cluster_ids)
+            c
+            for c in rows
+            if c.state in allowed
+            and (c.result.get("review") or {}).get("decision") != "approved"
+            and (cluster_ids is None or c.id in cluster_ids)
         ]
 
     def publish(self, cluster_ids=None, include_unverified=False, dry_run=False) -> PublishReport:
@@ -193,7 +201,7 @@ class Publisher:
         branch = branch_for(self.config, self.run.id, cluster.id)
         if dry_run:
             repos = ", ".join(f"{self.gh.repo_map[p]}:{branch}" for p in projects)
-            return PublishOutcome(cluster.id, cluster.name, "skipped", reason=f"would push {repos}")
+            return PublishOutcome(cluster.id, cluster.name, "dry run", reason=f"would push {repos}")
         members = _members(self.store, cluster)
         record = dict(cluster.result.get("publish") or {"projects": {}})
         record["projects"] = dict(record.get("projects", {}))
@@ -207,7 +215,8 @@ class Publisher:
                 push(self.trees.target_repo(project), info["head"], url, branch, token)
                 base = self.gh.base_branch_map.get(repo, self.gh.base_branch)
                 pr = self.api.find_pr(repo, branch)
-                if pr is None or pr.get("state") == "closed" and not pr.get("merged_at"):
+                merged = pr is not None and (pr.get("merged") or pr.get("merged_at"))
+                if pr is None or pr.get("state") == "closed" and not merged:
                     body = pr_body(self.config, cluster, members, project, {})
                     pr = self.api.create_pr(
                         repo, title, body, branch, base, self.config.output.draft
@@ -215,6 +224,9 @@ class Publisher:
                     self.api.add_labels(repo, pr["number"], self.gh.labels)
                     self.api.request_reviewers(repo, pr["number"], self.gh.reviewers)
                 entry = record["projects"].get(project, {})
+                if entry.get("number") == pr["number"] and entry.get("head") != info["head"]:
+                    # Reworked after review: ask the reviewers to look again.
+                    self.api.request_reviewers(repo, pr["number"], self.gh.reviewers)
                 record["projects"][project] = {
                     **entry, "repo": repo, "branch": branch, "base": base,
                     "number": pr["number"], "url": pr["html_url"], "head": info["head"],

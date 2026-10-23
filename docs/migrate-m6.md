@@ -11,7 +11,7 @@ migrate apply -c project.yaml --no-agent
 
 For each needed cluster (in dependency order) this creates a sparse worktree per target project
 under `<workdir>/worktrees/run-<run>/cluster-<id>/<project>/` on branch
-`patchmig/r<run>/c<id>`, then tries:
+`patchmig/<project name>/r<run>/c<id>`, then tries:
 
 - **cherry-pick** of the member commits, oldest first (`-x`, original author, committer
   `patchmig`). Git's rename detection carries changes into files that moved upstream.
@@ -64,7 +64,7 @@ the good case, two plus one after a guardrail retry; `budget.cluster_credits` ca
 
 ## What to check on real trees
 
-- Do the cherry-picked branches look right (`git log patchmig/r1/c<id>` in a target project)?
+- Do the cherry-picked branches look right (`git log patchmig/<project name>/r1/c<id>` in a target project)?
 - For agent clusters: the cluster page in `migrate serve` shows the agent's summary, risks,
   guardrail findings, the review, and the migrated diff next to the original net diff.
 - Copilot CLI tool names: the agent needs the `write` tool and must not get `shell`. If your

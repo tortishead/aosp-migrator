@@ -19,6 +19,7 @@ from patchmig.agents.runner import AgentFailed, AgentRunner, BudgetExceeded
 from patchmig.config import ProjectConfig
 from patchmig.gitutil import GitError, commit_info
 from patchmig.ledger import LedgerStore, Patch, Run, Ticket
+from patchmig.ledger.states import DROPPED
 
 
 class IntentResult(BaseModel):
@@ -85,6 +86,7 @@ class IntentReport:
     written: int = 0
     reused: int = 0
     skipped: int = 0  # already had an intent
+    not_needed: int = 0  # upstream, obsolete or reverted: no agent call
     failed: list[str] = field(default_factory=list)
     stopped_by_budget: str | None = None
     credits: float = 0.0
@@ -135,6 +137,9 @@ def write_intents(
         if memory is not None and (remembered := _from_memory(memory, patch)):
             _save(store, patch.id, *remembered)
             report.reused += 1
+            continue
+        if patch.state in DROPPED:  # analysed as not needed: not worth credits
+            report.not_needed += 1
             continue
         if runner is None or (limit is not None and asked >= limit):
             continue

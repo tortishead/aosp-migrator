@@ -6,13 +6,16 @@ directories the cluster touches) because a full checkout of a large project per 
 cost gigabytes. Agents read anything else through the MCP tools.
 
 The worktrees and branches live in the target tree's repositories (as any `git worktree`
-does): branches are named patchmig/r<run>/c<cluster>. The source commits are fetched into
-each target repository under refs/patchmig/source-head so they can be cherry-picked.
+does): branches are named patchmig/<project name>/r<run>/c<cluster>, so two projects (say a
+pilot and the full migration) can share a target tree without touching each other's
+branches. The source commits are fetched into each target repository under
+refs/patchmig/source-head so they can be cherry-picked.
 """
 
 from __future__ import annotations
 
 import posixpath
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,14 +52,20 @@ class ProjectWorktree:
         return self.git("rev-parse", "HEAD").strip()
 
 
-def branch_name(run_id: int, cluster_id: int) -> str:
-    return f"patchmig/r{run_id}/c{cluster_id}"
+def namespace(name: str) -> str:
+    """The project name as a git ref component."""
+    return re.sub(r"[^a-z0-9._-]+", "-", name.lower()).strip("-.") or "project"
+
+
+def branch_name(project_name: str, run_id: int, cluster_id: int) -> str:
+    return f"patchmig/{namespace(project_name)}/r{run_id}/c{cluster_id}"
 
 
 class Workspaces:
-    def __init__(self, trees: Trees, root: Path):
+    def __init__(self, trees: Trees, root: Path, project_name: str):
         self.trees = trees
         self.root = root
+        self.project_name = project_name
         self._fetched: set[str] = set()
 
     def cluster_dir(self, run_id: int, cluster_id: int) -> Path:
@@ -74,7 +83,7 @@ class Workspaces:
 
     def remove(self, run_id: int, cluster_id: int, projects: list[str]) -> None:
         """Drop a cluster's worktrees and branches (before a retry)."""
-        branch = branch_name(run_id, cluster_id)
+        branch = branch_name(self.project_name, run_id, cluster_id)
         folder = self.cluster_dir(run_id, cluster_id)
         for project in projects:
             repo = self.trees.target_repo(project)
@@ -88,7 +97,13 @@ class Workspaces:
                     shutil.rmtree(path, ignore_errors=True)
             git(repo, "worktree", "prune")
             if resolve(repo, f"refs/heads/{branch}"):
-                git(repo, "branch", "-D", branch)
+                try:
+                    git(repo, "branch", "-D", branch)
+                except GitError as e:
+                    raise WorkspaceError(
+                        f"{project}: branch {branch} is checked out elsewhere (another workdir "
+                        "of this project?); remove that worktree or give the project another name"
+                    ) from e
         shutil.rmtree(folder, ignore_errors=True)
 
     def create(
@@ -113,7 +128,7 @@ class Workspaces:
         if path.exists():
             raise WorkspaceError(f"{path} already exists; remove the cluster's workspace first")
         path.parent.mkdir(parents=True, exist_ok=True)
-        branch = branch_name(run_id, cluster_id)
+        branch = branch_name(self.project_name, run_id, cluster_id)
         git(repo, "worktree", "add", "-q", "--no-checkout", "-b", branch, str(path), start)
         wt = ProjectWorktree(project, repo, path, branch, start)
         # No directories (only top-level files touched): the cone holds just the root files.
