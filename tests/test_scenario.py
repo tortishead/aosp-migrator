@@ -143,3 +143,13 @@ def test_p10_is_a_backport_of_a_target_commit(scenario: Scenario):
     assert git(car, "merge-base", "--is-ancestor", original, TARGET_BASE_TAG).returncode == 0
     assert patch_id(car, original) != patch_id(scenario.source / CAR, scenario.commits["P10"])
     assert git(car, "show", "--name-only", "--format=", original).stdout.strip() == WATCHDOG
+
+
+def test_trees_carry_build_metadata_for_module_and_test_selection(scenario):
+    from tests.fixtures.scenario import CAR_BP, CAR_TEST_MAPPING, FW_BP, POWER_TEST_MAPPING
+
+    for tree in (scenario.source, scenario.target):
+        assert 'name: "framework"' in (tree / FRAMEWORKS / FW_BP).read_text()
+        assert "presubmit" in (tree / FRAMEWORKS / POWER_TEST_MAPPING).read_text()
+        assert 'name: "CarService"' in (tree / CAR / CAR_BP).read_text()
+        assert "CarServiceUnitTest" in (tree / CAR / CAR_TEST_MAPPING).read_text()

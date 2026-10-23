@@ -136,6 +136,32 @@ function Migration({ m }) {
     ${m.diff ? html`<div class="panel"><h2>Migrated change <span class="muted">(on the cluster branches in the target)</span></h2><${Diff} text=${m.diff} /></div>` : null}`;
 }
 
+function Run({ title, r }) {
+  return html`<details open=${!r.ok}>
+    <summary>${title}: <b class=${r.ok ? "" : "error"}>${r.ok ? "ok" : r.timed_out ? "timed out" : `failed (exit ${r.exit_code})`}</b>
+      <span class="muted"> · ${r.duration_s}s · <code>${r.command}</code></span></summary>
+    <pre class="block">${r.log_tail}</pre></details>`;
+}
+
+function Verification({ v }) {
+  const sel = v.selection || {};
+  return html`
+    <div class="panel">
+      <h2>Build and test <span class="muted">· ${v.host} · ${v.slot}${v.finished_at ? ` · ${fmtTime(v.finished_at)}` : ""}</span></h2>
+      ${v.reason ? html`<p>${v.reason}</p>` : null}
+      <dl class="kv">
+        <dt>Modules</dt><dd>${sel.modules?.length ? sel.modules.map((m) => html`<code>${m}</code> `) : "–"}</dd>
+        <dt>Tests</dt><dd>${sel.tests?.length ? sel.tests.map((t) => html`<code>${t}</code> `) : "–"}</dd>
+        ${sel.notes?.length ? html`<dt>Notes</dt><dd>${sel.notes.join("; ")}</dd>` : null}
+      </dl>
+      ${v.builds.map((b, i) => html`<${Run} title=${i ? `Build after fix ${i}` : "Build"} r=${b} />`)}
+      ${v.fixes.map((f) => html`<div><b>Fix ${f.attempt}:</b> ${f.answer ? html`${label(f.answer.outcome)} · confidence ${f.answer.confidence.toFixed(2)} · ${f.answer.summary}` : html`<span class="error">${f.error}</span>`}
+        ${f.base_build ? html`<${Run} title="Build of the unpatched target" r=${f.base_build} />` : null}</div>`)}
+      ${v.tests ? html`<${Run} title="Tests" r=${v.tests} />` : null}
+      ${v.tests?.baseline ? html`<${Run} title="Tests on the unpatched target" r=${v.tests.baseline} />` : null}
+    </div>`;
+}
+
 // ---------- pages ----------
 
 function Dashboard({ run }) {
@@ -384,6 +410,7 @@ function ClusterPage({ run, id }) {
     </div>
     <div class="stack"></div>
     ${c.migration ? html`<${Migration} m=${c.migration} />` : null}
+    ${c.verification ? html`<${Verification} v=${c.verification} />` : null}
     <div class="panel"><h2>Net diff <span class="muted">(the patches still needed, folded on the source base)</span></h2><${Diff} text=${c.net_diff} /></div>`}<//>`;
 }
 

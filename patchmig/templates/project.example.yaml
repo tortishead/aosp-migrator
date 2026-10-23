@@ -41,19 +41,23 @@ jira:
   comment_marker: "[migration-agent]"
 
 build:
+  transport: ssh                # or 'local' on the build host, with slots: [tree roots]
   ssh:
     host: build01.example.com
     user: builder
     key: file:~/.ssh/build_key
     workdir: /srv/aosp/oem-a15
   lunch_target: aosp_cf_x86_64_auto-trunk_staging-userdebug
-  module_build_cmd: "m {modules}"
-  full_build_cmd: "m"
-  parallelism: 1
+  module_build_cmd: "m {modules}"   # only the modules a cluster touches are ever built
+  parallelism: 1               # tree slots: workdir, or workdir-1..N
   timeout_minutes: 240
+  module_map: {}                # "glob over tree paths": [modules], when Android.bp lookup misses
 
 tests:
+  enabled: true
   use_test_mapping: true
+  mapping_groups: [presubmit]
+  test_cmd: "atest {tests}"
   extra_modules: []
   cuttlefish: false
   baseline: true

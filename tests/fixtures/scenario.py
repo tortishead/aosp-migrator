@@ -35,6 +35,12 @@ CONFIG = "core/res/res/values/config.xml"
 CAR_POWER = "service/src/com/android/car/CarPowerService.java"
 LEGACY_AUDIO = "service/src/com/android/car/LegacyAudio.java"
 WATCHDOG = "service/src/com/android/car/CarWatchdog.java"
+# Build metadata, for module and test selection (M7).
+FW_BP = "Android.bp"
+SERVICES_BP = "services/Android.bp"
+POWER_TEST_MAPPING = "core/java/android/os/TEST_MAPPING"
+CAR_BP = "service/Android.bp"
+CAR_TEST_MAPPING = "service/TEST_MAPPING"
 
 BASE_FILES = {
     FRAMEWORKS: {
@@ -62,6 +68,33 @@ public class BtManager {
     }
 }
 """,
+        FW_BP: """package {
+    default_visibility: ["//visibility:public"],
+}
+
+java_library {
+    name: "framework",
+    srcs: ["core/java/**/*.java"],
+}
+
+filegroup {
+    name: "framework-res-values",
+    srcs: ["core/res/res/values/*.xml"],
+}
+""",
+        SERVICES_BP: """java_library {
+    name: "services.core",
+    srcs: ["core/java/**/*.java"],
+}
+""",
+        POWER_TEST_MAPPING: """{
+  // Run for every change to android.os.
+  "presubmit": [
+    { "name": "FrameworksCoreTests", "options": [{ "include-filter": "android.os" }] }
+  ],
+  "postsubmit": [{ "name": "PowerStressTests" }]
+}
+""",
         CONFIG: """<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <integer name="config_screenBrightnessSettingDefault">102</integer>
@@ -79,6 +112,15 @@ public class CarPowerService {
 
     private void applyState(int state) {
     }
+}
+""",
+        CAR_BP: """android_app {
+    name: "CarService",
+    srcs: ["src/**/*.java"],
+}
+""",
+        CAR_TEST_MAPPING: """{
+  "presubmit": [{ "name": "CarServiceUnitTest" }]
 }
 """,
         LEGACY_AUDIO: """package com.android.car;
