@@ -18,6 +18,7 @@ from patchmig.config import ConfigError, ProjectConfig, dump_config, load_config
 from patchmig.ingest import IngestError, ingest
 from patchmig.jira_client import HttpJiraClient, JiraClient
 from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
+from patchmig.migrate import migrate
 
 app = typer.Typer(help="Migrate OEM Android framework patches between Android versions.")
 config_app = typer.Typer(help="Inspect and validate the project configuration.")
@@ -289,6 +290,54 @@ def clusters_cmd(
         if c.net_diff:
             typer.echo("")
             typer.echo(c.net_diff, nl=False)
+
+
+@app.command("apply")
+def apply_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    cluster: Annotated[
+        list[int] | None, typer.Option("--cluster", help="Only this cluster id (repeatable)")
+    ] = None,
+    limit: Annotated[int | None, typer.Option(help="Migrate at most N clusters")] = None,
+    no_agent: Annotated[
+        bool, typer.Option("--no-agent", help="Only cherry-pick and net-diff; no agent calls")
+    ] = False,
+) -> None:
+    """Migrate the needed clusters onto the target tree, one branch per cluster.
+
+    Cherry-pick and net-diff cost nothing; the cluster agent is called only when both fail.
+    """
+    from patchmig.mcp_server.server import server_config
+
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    rid = _latest_run_id(store, run_id)
+    with store.session() as s:
+        run = s.get(Run, rid)
+    runner = None
+    if not no_agent and cfg.migrate.agent:
+        runner = AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
+    report = migrate(
+        cfg,
+        store,
+        run,
+        runner,
+        cluster_ids=cluster,
+        limit=limit,
+        mcp=server_config(str(config.resolve()), rid),
+    )
+    if not report.outcomes:
+        typer.echo(f"Run {rid}: no cluster to migrate (run migrate analyse first?)")
+    for o in report.outcomes:
+        conf = f" confidence {o.confidence:.2f}" if o.confidence is not None else ""
+        typer.echo(f"  [{o.cluster_id}] {o.state:<14} {o.name}{conf}")
+        if o.reason:
+            typer.echo(f"        {o.reason}")
+    if runner is not None:
+        typer.echo(f"Estimated credits used in this run so far: {report.credits:.1f}")
+    if report.stopped_by_budget:
+        typer.secho(f"Stopped: {report.stopped_by_budget}", fg=typer.colors.YELLOW)
 
 
 @app.command("serve")

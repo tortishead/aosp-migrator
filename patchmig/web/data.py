@@ -176,8 +176,19 @@ def cluster(store: LedgerStore, run_id: int, cluster_id: int) -> dict:
         "depends_on": [orders[o] for o in r.get("depends_on_order", [])],
         "forecast": r.get("forecast"), "fold_errors": r.get("fold_errors", []),
         "upstream_check": r.get("upstream_check"), "net_diff": _cut(c.net_diff),
+        "migration": _migration(r.get("migration")),
         "history": _history(store, c),
     }  # fmt: skip
+
+
+def _migration(record: dict | None) -> dict | None:
+    if not record:
+        return None
+    projects = [
+        {"project": p, **{k: v for k, v in info.items() if k != "path"}}
+        for p, info in record.get("projects", {}).items()
+    ]
+    return {**record, "projects": projects, "diff": _cut(record.get("diff"))}
 
 
 def knowledge(store: LedgerStore, run_id: int) -> dict:

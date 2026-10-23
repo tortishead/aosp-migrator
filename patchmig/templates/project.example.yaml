@@ -92,5 +92,12 @@ analysis:
   max_cluster_projects: 3
   hot_spot_min_patches: 3
 
+migrate:
+  agent: true                   # call the cluster agent when cherry-pick and net diff fail
+  review: true                  # independent reviewer for agent-made changes
+  guardrail_retries: 1          # agent retries with feedback after a guardrail failure
+  max_change_ratio: 3.0         # agent change at most 3x the net diff's changed lines...
+  min_change_lines: 40          # ...but always at least this many
+
 memory:
   path: null
