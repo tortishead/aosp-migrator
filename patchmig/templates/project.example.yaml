@@ -1,0 +1,91 @@
+# patchmig project configuration.
+# Relative paths are resolved against the folder that holds this file.
+# Secrets are always references: "env:VAR_NAME" or "file:/path/to/secret", never literal values.
+version: 1
+name: example-a14-to-a15
+workdir: .patchmig
+
+migration:
+  source_version: "14"
+  target_version: "15"
+  # label: mig-A14-A15            # default: mig-A<source>-A<target>
+
+trees:
+  source:
+    path: /work/oem-a14
+    manifest: .repo/manifests/default.xml
+    base_ref: android-14.0.0_r1     # unmodified Android base in every project
+    head_ref: oem-a14-release       # end of the OEM patches
+  target:
+    path: /work/oem-a15
+    manifest: .repo/manifests/default.xml
+    base_ref: android-15.0.0_r1
+
+patch_sources:
+  - type: git_range
+    projects: all                   # or a list such as [frameworks/base, packages/services/Car]
+  # - type: spreadsheet
+  #   path: patches.xlsx
+  #   columns: {commit: "Commit", project: "Repo", jira: "Ticket"}
+  # - type: jira_query
+  #   jql: 'project = OEM AND labels = migrate-a15'
+  # - type: diff_folder
+  #   path: diffs/
+
+jira:
+  url: https://jira.example.com
+  project: OEM
+  user: migration-bot
+  token: env:JIRA_TOKEN
+  label_prefix: mig
+  comment_marker: "[migration-agent]"
+
+build:
+  ssh:
+    host: build01.example.com
+    user: builder
+    key: file:~/.ssh/build_key
+    workdir: /srv/aosp/oem-a15
+  lunch_target: aosp_cf_x86_64_auto-trunk_staging-userdebug
+  module_build_cmd: "m {modules}"
+  full_build_cmd: "m"
+  parallelism: 1
+  timeout_minutes: 240
+
+tests:
+  use_test_mapping: true
+  extra_modules: []
+  cuttlefish: false
+  baseline: true
+
+llm:
+  runtime: copilot-cli
+  executable: copilot
+  models: {}                        # e.g. {cluster_agent: <model>, intent_writer: <cheaper model>}
+  timeout_seconds: 900
+
+budget:
+  run_credits: null                 # cap per run; null = no cap
+  cluster_credits: null
+  max_fix_attempts: 3
+
+thresholds:
+  quick_approve: 0.85
+  careful_review: 0.5
+
+output:
+  target: github
+  branch_prefix: migration/
+  draft: true
+  github:
+    owner: example-oem
+    token: env:GITHUB_TOKEN
+    repo_map: {}                    # tree project path -> GitHub repo name
+
+path_rules: []
+#  - pattern: "vendor/qcom/**"
+#    rule: overlay_only
+#    reason: QSSI files change only through overlays
+
+memory:
+  path: null
