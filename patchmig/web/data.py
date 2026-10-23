@@ -13,8 +13,10 @@ from sqlalchemy import func, select
 
 from patchmig.analysis.patches import load_diff
 from patchmig.config import ProjectConfig
+from patchmig.config.schema import ThresholdsConfig
 from patchmig.ledger import Cluster, KnowledgeItem, LedgerStore, Patch, Run, State, Transition
 from patchmig.ledger.models import AgentCall
+from patchmig.review import queue_of, queues
 
 MAX_DIFF_CHARS = 200_000
 
@@ -178,6 +180,9 @@ def cluster(store: LedgerStore, run_id: int, cluster_id: int) -> dict:
         "upstream_check": r.get("upstream_check"), "net_diff": _cut(c.net_diff),
         "migration": _migration(r.get("migration")),
         "verification": r.get("verification"),
+        "review": r.get("review"), "feedback": r.get("feedback", []),
+        "decisions": r.get("decisions", []), "publish": _publish(r.get("publish")),
+        "jira_export": r.get("jira_export"), "queue": _queue(store, c),
         "history": _history(store, c),
     }  # fmt: skip
 
@@ -190,6 +195,44 @@ def _migration(record: dict | None) -> dict | None:
         for p, info in record.get("projects", {}).items()
     ]
     return {**record, "projects": projects, "diff": _cut(record.get("diff"))}
+
+
+def _publish(record: dict | None) -> dict | None:
+    if not record:
+        return None
+    prs = [{"project": p, **e} for p, e in record.get("projects", {}).items()]
+    return {"at": record.get("at"), "error": record.get("error"), "prs": prs}
+
+
+def _thresholds(store: LedgerStore, run_id: int) -> ThresholdsConfig:
+    with store.session() as s:
+        run = s.get(Run, run_id)
+    return ThresholdsConfig(**((run.config_snapshot or {}).get("thresholds") or {}))
+
+
+def _queue(store: LedgerStore, cluster: Cluster) -> str:
+    return queue_of(cluster, _thresholds(store, cluster.run_id))
+
+
+def review(store: LedgerStore, run_id: int) -> dict:
+    _run(store, run_id)
+    out = {}
+    for name, clusters in queues(store, run_id, _thresholds(store, run_id)).items():
+        out[name] = [_queue_item(c) for c in clusters]
+    return {"queues": out, "counts": {k: len(v) for k, v in out.items()}}
+
+
+def _queue_item(c: Cluster) -> dict:
+    r = c.result
+    prs = (r.get("publish") or {}).get("projects", {})
+    return {
+        "id": c.id, "name": c.name, "state": c.state.value, "confidence": c.confidence,
+        "prs": [e["url"] for e in prs.values()],
+        "question": (r.get("migration") or {}).get("question"),
+        "reason": (r.get("verification") or r.get("migration") or {}).get("reason"),
+        "review": r.get("review"),
+        "jira": sorted((r.get("jira_export") or {}).keys()),
+    }  # fmt: skip
 
 
 def knowledge(store: LedgerStore, run_id: int) -> dict:

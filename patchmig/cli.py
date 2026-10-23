@@ -24,8 +24,10 @@ from patchmig.verify import VerifyError, check_host, verify
 app = typer.Typer(help="Migrate OEM Android framework patches between Android versions.")
 config_app = typer.Typer(help="Inspect and validate the project configuration.")
 run_app = typer.Typer(help="Manage migration runs.")
+review_app = typer.Typer(help="Review queues and human decisions on clusters.")
 app.add_typer(config_app, name="config")
 app.add_typer(run_app, name="run")
+app.add_typer(review_app, name="review")
 
 ConfigOption = Annotated[
     Path, typer.Option("--config", "-c", help="Project config file", envvar="PATCHMIG_CONFIG")
@@ -396,6 +398,179 @@ def build_check_cmd(config: ConfigOption = DEFAULT_CONFIG) -> None:
             typer.echo("       " + detail.replace("\n", "\n       "))
         failed |= not ok
     if failed:
+        raise typer.Exit(1)
+
+
+def _open_run(config: Path, run_id: int | None) -> tuple[ProjectConfig, LedgerStore, Run]:
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    rid = _latest_run_id(store, run_id)
+    with store.session() as s:
+        return cfg, store, s.get(Run, rid)
+
+
+def _github(cfg: ProjectConfig):
+    from patchmig.publish.github import HttpGithub
+
+    if cfg.output is None or cfg.output.github is None:
+        typer.secho("No output.github section in the config.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    return HttpGithub(cfg.output.github)
+
+
+RunOption = Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")]
+ByOption = Annotated[str, typer.Option("--by", help="Who decides (recorded as human:<name>)")]
+
+
+@app.command("publish")
+def publish_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+    cluster: Annotated[
+        list[int] | None, typer.Option("--cluster", help="Only this cluster id (repeatable)")
+    ] = None,
+    unverified: Annotated[
+        bool, typer.Option("--unverified", help="Also publish migrated, not yet verified clusters")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be pushed")] = False,
+) -> None:
+    """Push each verified cluster's branch and open (or refresh) one draft PR per repository."""
+    from patchmig.publish import PublishError, publish
+
+    cfg, store, run = _open_run(config, run_id)
+    try:
+        report = publish(cfg, store, run, None if dry_run else _github(cfg), cluster_ids=cluster,
+                         include_unverified=unverified, dry_run=dry_run)  # fmt: skip
+    except PublishError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    if not report.outcomes:
+        typer.echo(f"Run {run.id}: no verified cluster to publish")
+    for o in report.outcomes:
+        typer.echo(f"  [{o.cluster_id}] {o.status:<9} {o.name}")
+        for url in o.urls:
+            typer.echo(f"        {url}")
+        if o.reason:
+            typer.echo(f"        {o.reason}")
+
+
+@review_app.command("list")
+def review_list(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
+    """Clusters by review queue."""
+    from patchmig.review import queues
+
+    cfg, store, run = _open_run(config, run_id)
+    for queue, clusters in queues(store, run.id, cfg.thresholds).items():
+        if not clusters:
+            continue
+        typer.echo(f"{queue.replace('_', ' ')} ({len(clusters)})")
+        for c in clusters:
+            conf = f"{c.confidence:.2f}" if c.confidence is not None else "  – "
+            prs = [e["url"] for e in (c.result.get("publish") or {}).get("projects", {}).values()]
+            typer.echo(f"  [{c.id}] {conf} {c.state.value:<14} {c.name}")
+            for url in prs:
+                typer.echo(f"        {url}")
+            question = (c.result.get("migration") or {}).get("question")
+            if queue == "needs_decision" and question:
+                typer.echo(f"        question: {question}")
+
+
+def _review_action(config: Path, run_id: int | None, action) -> None:
+    from patchmig.review import Reviewer, ReviewError
+
+    _, store, run = _open_run(config, run_id)
+    try:
+        c = action(Reviewer(store, run))
+    except ReviewError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    review = (c.result.get("review") or {}).get("decision", "")
+    typer.echo(f"Cluster {c.id}: {c.state.value}{f' ({review})' if review else ''}")
+
+
+@review_app.command("approve")
+def review_approve(
+    cluster: int, by: ByOption, reason: str = "", config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+) -> None:  # fmt: skip
+    """Approve a verified (or dropped) cluster; approved clusters go to the Jira export."""
+    _review_action(config, run_id, lambda r: r.approve(cluster, by, reason))
+
+
+@review_app.command("reject")
+def review_reject(
+    cluster: int, by: ByOption,
+    reason: Annotated[str, typer.Option(help="What is wrong; the cluster agent gets it")],
+    config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None,
+) -> None:  # fmt: skip
+    """Send a cluster back to the agent (for a dropped cluster: it is needed after all)."""
+    _review_action(config, run_id, lambda r: r.reject(cluster, by, reason))
+
+
+@review_app.command("retry")
+def review_retry(
+    cluster: int, by: ByOption, reason: str = "", config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+) -> None:  # fmt: skip
+    """Retry a failed cluster, optionally with a hint for the agent."""
+    _review_action(config, run_id, lambda r: r.retry(cluster, by, reason))
+
+
+@review_app.command("decide")
+def review_decide(
+    cluster: int,
+    choice: Annotated[str, typer.Argument(help="migrate, upstream or obsolete")],
+    by: ByOption,
+    reason: Annotated[str, typer.Option(help="The answer to the cluster's question")],
+    config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None,
+) -> None:  # fmt: skip
+    """Answer a needs_decision cluster."""
+    _review_action(config, run_id, lambda r: r.decide(cluster, by, choice, reason))
+
+
+@review_app.command("sync")
+def review_sync(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
+    """Read the PRs: merges and approvals approve, change requests and closes reject."""
+    from patchmig.review import sync_github
+
+    cfg, store, run = _open_run(config, run_id)
+    changes = sync_github(store, run, _github(cfg))
+    typer.echo("\n".join(changes) if changes else "No changes.")
+
+
+@app.command("jira-export")
+def jira_export_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print what would be written")] = False,
+    create_missing: Annotated[
+        bool, typer.Option("--create-missing", help="Create tracking tickets for untracked patches")
+    ] = False,
+) -> None:
+    """Write the approved results to Jira: labels, PR links and one marker comment per ticket."""
+    from patchmig.jira_export import export, plan
+
+    cfg, store, run = _open_run(config, run_id)
+    if cfg.jira is None:
+        typer.secho("No jira section in the config.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    if dry_run:
+        tickets = plan(cfg, store, run)
+        if not tickets:
+            typer.echo("Nothing approved to export yet.")
+        for t in tickets:
+            typer.echo(f"{t.key or 'NEW: ' + (t.summary or '')}  labels: {', '.join(t.labels)}")
+            for url, _, _ in t.links:
+                typer.echo(f"  link: {url}")
+            typer.echo("  " + t.comment.replace("\n", "\n  ").rstrip())
+        return
+    report = export(cfg, store, run, HttpJiraClient(cfg.jira), create_missing=create_missing)
+    typer.echo(f"Updated {len(report.updated)} ticket(s), created {len(report.created)}.")
+    for line in report.skipped:
+        typer.echo(f"  skipped: {line} (use --create-missing)")
+    for line in report.errors:
+        typer.secho(f"  error: {line}", fg=typer.colors.RED)
+    if report.errors:
         raise typer.Exit(1)
 
 

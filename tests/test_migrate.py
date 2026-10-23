@@ -188,7 +188,7 @@ def test_agent_resolves_the_conflict_and_the_reviewer_sets_confidence(project):
     assert list(cluster_task.tools.mcp_servers) == ["patchmig"]
     assert cluster_task.tools.deny == ["shell"]
     assert f"`{FRAMEWORKS}/{POWER}`" in cluster_task.brief
-    assert "already migrated by cherry_pick" in cluster_task.brief
+    assert "migrated by cherry_pick and committed" in cluster_task.brief
     assert "setMode" in cluster_task.brief  # upstream signature change is explained
     assert review_task.agent == "reviewer"
     assert "write" in review_task.tools.deny

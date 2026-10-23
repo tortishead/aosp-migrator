@@ -251,7 +251,9 @@ class Migrator:
             else:
                 pending[project] = result
 
-        if not pending:
+        # Human feedback on an earlier attempt: the mechanical result is only a starting point.
+        feedback = bool(cluster.result.get("feedback"))
+        if not pending and not feedback:
             strategies = {i["strategy"] for i in record["projects"].values() if i.get("strategy")}
             strategy = "net_diff" if "net_diff" in strategies else "cherry_pick"
             if not strategies:
@@ -276,7 +278,11 @@ class Migrator:
                 cluster.id,
                 cluster.name,
                 "needs_agent",
-                reason="cherry-pick and net-diff failed in " + ", ".join(sorted(pending)),
+                reason=(
+                    "cherry-pick and net-diff failed in " + ", ".join(sorted(pending))
+                    if pending
+                    else "reviewer feedback needs the agent"
+                ),
             )
         ctx = self._context(cluster, members, changes, fates)
         return self._agent(cluster, members, ctx, worktrees, pending, expected, deletions, record)
@@ -315,6 +321,10 @@ class Migrator:
             intent="\n\n".join(intents),
             net_diff="".join(tree_relative(d, p) for p, d in net.items()),
             fates="\n".join(fate_lines) or "(no upstream information)",
+            review_feedback="\n".join(
+                f"- {f['by']} ({f.get('source', 'review')}): {f['text']}"
+                for f in cluster.result.get("feedback", [])
+            ),
         )
 
     def _situation(self, projects: dict[str, dict], pending: dict[str, ladder.RungResult]) -> str:
@@ -323,7 +333,10 @@ class Migrator:
             rel = f"{project}/"
             if project not in pending:
                 if info.get("strategy"):
-                    lines.append(f"- `{rel}`: already migrated by {info['strategy']}; keep it.")
+                    lines.append(
+                        f"- `{rel}`: migrated by {info['strategy']} and committed; "
+                        "change only what is needed."
+                    )
                 else:
                     lines.append(f"- `{rel}`: checked out because touched code moved here.")
                 continue

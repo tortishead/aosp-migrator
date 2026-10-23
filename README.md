@@ -8,7 +8,7 @@ related patches (patch, fix, improvement, revert), migrates each cluster onto th
 tests. GitHub Copilot CLI is the only agent runtime; a deterministic orchestrator owns
 scheduling, the credit budget, builds and the migration ledger. Humans review every result.
 
-Status: **M7, build and test** (on top of M1 to M6). See the milestones below.
+Status: **M8, publish, review and Jira export** (on top of M1 to M7). See the milestones below.
 
 ## Quick start
 
@@ -28,6 +28,9 @@ migrate apply -c myproject/project.yaml --no-agent   # free rungs only: cherry-p
 migrate apply -c myproject/project.yaml --limit 3    # then the cluster agent where they fail
 migrate build-check -c myproject/project.yaml        # SSH to the build server, slots prepared?
 migrate verify -c myproject/project.yaml     # build affected modules, run TEST_MAPPING tests
+migrate publish -c myproject/project.yaml    # one draft PR per verified cluster and repo
+migrate review list -c myproject/project.yaml        # review queues; approve/reject/decide/sync
+migrate jira-export -c myproject/project.yaml --dry-run   # approved results back to Jira
 migrate serve -c myproject/project.yaml      # web front end on http://127.0.0.1:8765/
 migrate export-site site -c myproject/project.yaml   # static read-only copy of the front end
 migrate status -c myproject/project.yaml
@@ -47,12 +50,16 @@ migrate status -c myproject/project.yaml
 | `patchmig/analysis/` | Upstream rungs, obsolete rule, revert folding, clustering, net diffs, forecasts |
 | `patchmig/migrate/` | Per-cluster sparse worktrees and branches, cherry-pick and net-diff rungs, guardrails, migration orchestration |
 | `patchmig/verify/` | Build host over SSH or local, module and test selection, build/test/fix loop |
+| `patchmig/publish/` | GitHub REST client, branch push, one PR per cluster and repo |
+| `patchmig/review.py` | Review queues, human decisions, PR review sync |
+| `patchmig/jira_export.py` | Export of approved results to Jira (labels, links, one comment) |
 | `patchmig/web/` | Read-only web front end: JSON API (FastAPI), UI (`static/`), static export |
 | `patchmig/mcp_server/` | Read-only MCP tools for agents: trees at the migration refs, ledger, knowledge, Jira cache |
 | `docs/spike-m3.md` | Steps to run the M3 spike on your machine |
 | `docs/analysis-m4.md` | How to run and check the analysis on your trees |
 | `docs/migrate-m6.md` | How the migrate step works and how to try it on your trees |
 | `docs/verify-m7.md` | Preparing the build server and running builds and tests |
+| `docs/review-m8.md` | Publishing PRs, the review loop and the Jira export |
 | `patchmig/templates/` | Example `project.yaml` used by `migrate init` |
 | `patchmig/cli.py` | The `migrate` command |
 | `tests/fixtures/scenario.py` | Generates small synthetic source/target trees with known migration cases |
@@ -153,6 +160,17 @@ TEST_MAPPING tests run; failures are re-run on the unpatched target so existing 
 not blamed on the cluster. Clusters end `verified`, `failed` or `needs_decision`, with logs
 on the cluster page. See `docs/verify-m7.md`.
 
+## Publish, review and Jira export
+
+`migrate publish` pushes each verified cluster and opens one draft PR per GitHub repository
+it touches, with everything a reviewer needs in the body. Clusters sit in review queues
+(quick approve, careful review, needs decision, failed, dropped, approved). Reviewers decide
+on the PRs (approve or merge; request changes; close) or with `migrate review`, and
+`migrate review sync` brings PR outcomes into the ledger. A rejected cluster goes back to the
+cluster agent with the reviewer's words. `migrate jira-export` writes approved results to
+Jira with labels, PR links and one marker comment per ticket, updated in place, and can
+create tracking tickets for untracked patches. See `docs/review-m8.md`.
+
 ## Front end
 
 `migrate serve` starts a read-only web app over the project's ledger: an overview of each run
@@ -160,8 +178,10 @@ on the cluster page. See `docs/verify-m7.md`.
 list with filters and each patch's evidence, intent, history and diff, the clusters in migration
 order with a graph of how their patches are linked and the folded net diff, the knowledge pack
 (hot spots and the upstream fate of every touched file), agent calls with credits, and the
-config snapshot of the run. It listens on 127.0.0.1 by default; review actions, config editing
-and sign-in come with M8.
+config snapshot of the run, plus the review queues and each cluster's PRs, decisions and Jira
+export. It listens on 127.0.0.1 by default and is read-only: decisions are made on the PRs or
+with `migrate review`. Editing in the browser (review buttons, config forms) needs sign-in
+and is not built yet.
 
 The UI is plain JavaScript with Preact and htm vendored as one file (`static/htm-preact.js`), so
 it needs no Node.js, no build step and no CDN. `migrate export-site <folder>` writes the same UI
@@ -189,6 +209,6 @@ dependency. `EXPECTED` in the module lists the verdict and cluster for each.
 | M4 | Knowledge bootstrap and analysis | Done |
 | M5 | Read-only front end | Done |
 | M6 | Cluster agent | Done |
-| M7 | Build and test over SSH | In review |
-| M8 | Publishing, review loop, Jira export | Planned |
+| M7 | Build and test over SSH | In review (#7) |
+| M8 | Publishing, review loop, Jira export | In review |
 | M9 | Migration memory and pilot | Planned |
