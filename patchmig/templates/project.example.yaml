@@ -87,5 +87,10 @@ path_rules: []
 #    rule: overlay_only
 #    reason: QSSI files change only through overlays
 
+analysis:
+  max_cluster_patches: 15       # larger clusters are split at their weakest links
+  max_cluster_projects: 3
+  hot_spot_min_patches: 3
+
 memory:
   path: null

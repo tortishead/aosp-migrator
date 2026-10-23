@@ -114,6 +114,24 @@ class Transition(Base):
     at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class KnowledgeItem(Base):
+    """One item of a run's knowledge pack (footprint map, upstream fate of a file, notes).
+
+    Items are hypotheses with their source; agents confirm them in the code before relying
+    on them.
+    """
+
+    __tablename__ = "knowledge"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))  # "footprint", "file_fate", ...
+    key: Mapped[str] = mapped_column(String(500))  # e.g. "frameworks/base:core/Foo.java"
+    data: Mapped[dict[str, Any]]
+    source: Mapped[str] = mapped_column(String(64), default="deterministic")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class Ticket(Base):
     """Cached Jira ticket text, shared across runs; refreshed on every ingest."""
 

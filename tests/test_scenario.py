@@ -18,6 +18,7 @@ from tests.fixtures.scenario import (
     SOURCE_BASE_TAG,
     SOURCE_HEAD_TAG,
     TARGET_BASE_TAG,
+    WATCHDOG,
     Scenario,
 )
 
@@ -124,3 +125,21 @@ def test_p8_depends_on_symbol_from_p1(scenario: Scenario):
     p8 = git(scenario.source / CAR, "show", scenario.commits["P8"]).stdout
     assert "+    public boolean isOemMode()" in p1
     assert "isOemMode()" in p8
+
+
+def test_p9_line_is_upstream_but_patch_id_differs(scenario: Scenario):
+    fw = scenario.target / FRAMEWORKS
+    config = git(fw, "show", f"{TARGET_BASE_TAG}:core/res/res/values/config.xml").stdout
+    assert '<integer name="config_screenBrightnessSettingDefault">128</integer>' in config
+    oem = patch_id(scenario.source / FRAMEWORKS, scenario.commits["P9"])
+    upstream = git(fw, "rev-list", f"{SOURCE_BASE_TAG}..{TARGET_BASE_TAG}").stdout.split()
+    assert oem not in {patch_id(fw, sha) for sha in upstream}
+
+
+def test_p10_is_a_backport_of_a_target_commit(scenario: Scenario):
+    message = git(scenario.source / CAR, "log", "-1", "--format=%B", scenario.commits["P10"])
+    original = message.stdout.split("cherry picked from commit ")[1][:40]
+    car = scenario.target / CAR
+    assert git(car, "merge-base", "--is-ancestor", original, TARGET_BASE_TAG).returncode == 0
+    assert patch_id(car, original) != patch_id(scenario.source / CAR, scenario.commits["P10"])
+    assert git(car, "show", "--name-only", "--format=", original).stdout.strip() == WATCHDOG

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from patchmig.config import ProjectConfig
 from patchmig.gitutil import GitError, git
 from patchmig.ingest.manifest import tree_projects
-from patchmig.ledger import LedgerStore, Patch, Ticket
+from patchmig.ledger import Cluster, KnowledgeItem, LedgerStore, Patch, Ticket
 
 Tree = Literal["source", "target"]
 MAX_LINES = 400
@@ -67,6 +67,8 @@ def get_patch(ctx: ToolContext, patch_id: int) -> dict:
         "footprint": p.footprint,
         "intent": p.intent,
         "state": p.state.value,
+        "verdict": p.verdict,
+        "cluster_id": p.cluster_id,
     }
 
 
@@ -165,4 +167,42 @@ def file_history(
         raise ToolError(e.stderr) from e
 
 
-TOOLS = [get_patch, list_patches, get_ticket, search_code, find_files, read_file, file_history]
+def get_cluster(ctx: ToolContext, cluster_id: int) -> dict:
+    """A cluster of the current run: members in order, links, net diff and forecast."""
+    with ctx.store.session() as s:
+        c = s.get(Cluster, cluster_id)
+    if c is None or c.run_id != ctx.run_id:
+        raise ToolError(f"cluster {cluster_id} is not part of run {ctx.run_id}")
+    r = c.result
+    return {
+        "id": c.id, "name": c.name, "order": c.order_index, "state": c.state.value,
+        "members": r.get("members", []), "edges": r.get("edges", []),
+        "forecast": r.get("forecast"), "fold_errors": r.get("fold_errors", []),
+        "net_diff": c.net_diff,
+    }  # fmt: skip
+
+
+def upstream_fate(ctx: ToolContext, project: str, path: str) -> dict:
+    """What upstream did to a file the OEM patches touch (source-tree project and path).
+
+    Status is unchanged, modified, renamed, moved_project, deleted or added_upstream, with
+    the new location, upstream commits, changed line ranges and changed method signatures.
+    A hypothesis from the knowledge pack: confirm it in the target code before relying on it.
+    """
+    with ctx.store.session() as s:
+        item = s.scalars(
+            select(KnowledgeItem).where(
+                KnowledgeItem.run_id == ctx.run_id,
+                KnowledgeItem.kind == "file_fate",
+                KnowledgeItem.key == f"{project}:{path}",
+            )
+        ).first()
+    if item is None:
+        raise ToolError(f"{project}:{path} is not in the knowledge pack (not touched by patches?)")
+    return item.data
+
+
+TOOLS = [
+    get_patch, list_patches, get_cluster, get_ticket, upstream_fate, search_code, find_files,
+    read_file, file_history,
+]  # fmt: skip
