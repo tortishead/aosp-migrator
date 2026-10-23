@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "patchmig"
+version = "0.1.0"
+description = "Agentic migration of OEM Android framework patches between Android versions"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+migrate = "patchmig.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["patchmig"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/fixtures/*" = ["E501"]
