@@ -32,9 +32,19 @@ class FakeJira:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
 
-    def add(self, key: str, summary: str, description: str = "", links: list[str] = ()):
+    def add(self, key: str, summary: str, description: str = "", links: list[str] = (),
+            status: str = "Open"):  # fmt: skip
         self.issues[key] = {"summary": summary, "description": description, "links": list(links),
-                            "labels": [], "comments": [], "remotelinks": {}}  # fmt: skip
+                            "labels": [], "comments": [], "remotelinks": {}, "attachments": [],
+                            "status": status}  # fmt: skip
+
+    def attach(self, key: str, filename: str, content: str) -> None:
+        self.issues[key]["attachments"].append((filename, content.encode()))
+
+    def comment(self, key: str, author: str, body: str) -> None:
+        c = {"id": str(len(self.issues[key]["comments"]) + 1), "body": body,
+             "author": {"displayName": author}}  # fmt: skip
+        self.issues[key]["comments"].append(c)
 
     def __enter__(self) -> FakeJira:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -49,8 +59,15 @@ class FakeJira:
             "summary": i["summary"],
             "description": adf(i["description"]) if self.cloud and i["description"] else
             i["description"],
-            "status": {"name": "Open"},
+            "status": {"name": i["status"]},
             "issuelinks": [{"outwardIssue": {"key": k}} for k in i["links"]],
+            "comment": {"comments": [
+                {**c, "body": adf(c["body"]) if self.cloud else c["body"]}
+                for c in i["comments"]]},
+            "attachment": [
+                {"filename": name, "size": len(data), "mimeType": "text/x-diff",
+                 "content": f"{self.url}/secure/attachment/{key}/{n}/{name}"}
+                for n, (name, data) in enumerate(i["attachments"])],
         }  # fmt: skip
 
     def _search(self, jql: str) -> list[str]:
@@ -82,6 +99,13 @@ class FakeJira:
                 if self.headers.get("Authorization") != jira.auth:
                     return self._reply(401, {"errorMessages": ["unauthorized"]})
                 path = urllib.parse.unquote(u.path)
+                if m := re.fullmatch(r"/secure/attachment/([A-Z]+-\d+)/(\d+)/.+", path):
+                    raw = jira.issues[m.group(1)]["attachments"][int(m.group(2))][1]
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
                 if path == "/rest/api/2/search":
                     if jira.cloud:
                         return self._reply(410, {"errorMessages": ["removed"]})
@@ -112,8 +136,9 @@ class FakeJira:
                     jira.add(key, f["summary"], f["description"])
                     jira.issues[key]["labels"] = list(f["labels"])
                     return self._reply(201, {"key": key})
-                m = re.fullmatch(r"/rest/api/2/issue/([A-Z]+-\d+)(?:/(comment|remotelink))?"
-                                 r"(?:/(\d+))?", path)  # fmt: skip
+                m = re.fullmatch(r"/rest/api/2/issue/([A-Z]+-\d+)"
+                                 r"(?:/(comment|remotelink|transitions))?(?:/(\d+))?",
+                                 path)  # fmt: skip
                 if not m or m.group(1) not in jira.issues:
                     return self._reply(404, {})
                 key, sub, cid = m.groups()
@@ -136,6 +161,18 @@ class FakeJira:
                         if c["id"] == cid:
                             c["body"] = body["body"]
                     return self._reply(200, {})
+                if sub == "remotelink" and method == "GET":
+                    return self._reply(200, [{"object": o} for o in issue["remotelinks"].values()])
+                if sub == "transitions" and method == "GET":
+                    open_ = issue["status"] != "Closed"
+                    return self._reply(200, {"transitions": [{"id": "31", "name": "Close"}]
+                                             if open_ else []})  # fmt: skip
+                if sub == "transitions" and method == "POST":
+                    issue["status"] = "Closed"
+                    issue["resolution"] = ((body.get("fields") or {}).get("resolution") or {}).get(
+                        "name"
+                    )
+                    return self._reply(204)
                 if sub == "remotelink" and method == "POST":
                     issue["remotelinks"][body["globalId"]] = body["object"]
                     return self._reply(201, {"id": 1})

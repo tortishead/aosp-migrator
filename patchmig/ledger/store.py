@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, func, select
+from sqlalchemy import Engine, create_engine, func, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from patchmig.config import ProjectConfig, config_hash
@@ -14,6 +14,23 @@ from patchmig.ledger.models import Base, Cluster, Patch, Run, Transition
 from patchmig.ledger.states import InvalidTransition, State, can_transition
 
 ENTITY_TYPES: dict[type, str] = {Patch: "patch", Cluster: "cluster"}
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Ledgers made by an older version lack columns added since: add them (empty).
+
+    New columns are always optional, so old rows read as None and code treats that as empty.
+    """
+    existing = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            have = {c["name"] for c in existing.get_columns(table.name)}
+            for column in table.columns:
+                if column.name not in have:
+                    kind = column.type.compile(dialect=engine.dialect)
+                    conn.execute(
+                        text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {kind}')
+                    )
 
 
 class LedgerStore:
@@ -27,6 +44,7 @@ class LedgerStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         store = cls(create_engine(f"sqlite:///{path}"))
         Base.metadata.create_all(store.engine)
+        _add_missing_columns(store.engine)
         return store
 
     @classmethod

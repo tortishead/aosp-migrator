@@ -39,6 +39,12 @@ class FakeJira:
     def get(self, key: str) -> Ticket | None:
         return self.tickets.get(key)
 
+    def remote_links(self, key: str) -> list[dict]:
+        return []
+
+    def download(self, url: str, max_bytes: int) -> bytes:
+        raise AssertionError("no attachments in this fake")
+
 
 @pytest.fixture
 def make_config(scenario: Scenario, tmp_path: Path):

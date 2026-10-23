@@ -97,7 +97,10 @@ Only approved clusters are exported, and only standard Jira fields are used:
 - a label per outcome: `<label>-migrated`, `-upstream`, `-obsolete`, `-reverted` (the label
   is `migration.label`, for example `mig-A14-A15`);
 - a remote link to each PR;
-- one comment per ticket starting with `<comment_marker> <label>`, updated in place.
+- one comment per ticket starting with `<comment_marker> <label>`, updated in place;
+- with `jira.close_not_needed` set (a transition name and optionally a resolution), the
+  tickets whose patches were all confirmed not needed are closed. A ticket that also carries
+  a migrated patch, or one not yet approved, stays open. `--dry-run` shows "(would close)".
 
 Patches without a ticket get one tracking ticket per cluster with `--create-missing`; its
 key is added to those patches, so the next migration finds them through Jira. The export can

@@ -33,6 +33,7 @@ class IngestReport:
     duplicates_merged: int
     roles: dict[str, int]
     tickets_fetched: int = 0
+    linked_tickets_fetched: int = 0
     tickets_missing: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -69,16 +70,28 @@ def collect(
 
 
 def _fetch_tickets(store: LedgerStore, jira: JiraClient, keys: set[str], report: IngestReport):
+    """Cache the patches' tickets and, one level deep, the tickets they link to."""
+    linked = _cache_tickets(store, jira, keys, report)
+    _cache_tickets(store, jira, linked - keys, report, linked_only=True)
+
+
+def _cache_tickets(
+    store: LedgerStore, jira: JiraClient, keys: set[str], report: IngestReport,
+    linked_only: bool = False,
+) -> set[str]:  # fmt: skip
+    links: set[str] = set()
     with store.session() as s, s.begin():
         for key in sorted(keys):
             try:
                 ticket = jira.get(key)
             except JiraError as e:
                 report.warnings.append(f"jira: {e}")
-                return
+                return links
             if ticket is None:
-                report.tickets_missing.append(key)
+                if not linked_only:
+                    report.tickets_missing.append(key)
                 continue
+            links |= set(ticket.issue_links)
             s.merge(
                 Ticket(
                     key=ticket.key,
@@ -86,10 +99,15 @@ def _fetch_tickets(store: LedgerStore, jira: JiraClient, keys: set[str], report:
                     description=ticket.description,
                     status=ticket.status,
                     issue_links=ticket.issue_links,
+                    comments=ticket.comments,
                     fetched_at=datetime.now(UTC),
                 )
             )
-            report.tickets_fetched += 1
+            if linked_only:
+                report.linked_tickets_fetched += 1
+            else:
+                report.tickets_fetched += 1
+    return links
 
 
 def ingest(

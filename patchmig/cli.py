@@ -145,7 +145,10 @@ def ingest_cmd(
         typer.echo(f"  duplicates merged: {report.duplicates_merged}")
     typer.echo("  roles: " + ", ".join(f"{k} {v}" for k, v in sorted(report.roles.items())))
     if jira is not None:
-        typer.echo(f"  Jira tickets fetched: {report.tickets_fetched}")
+        typer.echo(
+            f"  Jira tickets fetched: {report.tickets_fetched} "
+            f"(+{report.linked_tickets_fetched} linked)"
+        )
         if report.tickets_missing:
             typer.echo(f"  Jira tickets not found: {', '.join(report.tickets_missing)}")
     for w in report.warnings:
@@ -573,15 +576,22 @@ def jira_export_cmd(
         if not tickets:
             typer.echo("Nothing approved to export yet.")
         for t in tickets:
-            typer.echo(f"{t.key or 'NEW: ' + (t.summary or '')}  labels: {', '.join(t.labels)}")
+            closing = "  (would close)" if t.close else ""
+            typer.echo(
+                f"{t.key or 'NEW: ' + (t.summary or '')}  labels: {', '.join(t.labels)}{closing}"
+            )
             for url, _, _ in t.links:
                 typer.echo(f"  link: {url}")
             typer.echo("  " + t.comment.replace("\n", "\n  ").rstrip())
         return
     report = export(cfg, store, run, HttpJiraClient(cfg.jira), create_missing=create_missing)
-    typer.echo(f"Updated {len(report.updated)} ticket(s), created {len(report.created)}.")
+    typer.echo(
+        f"Updated {len(report.updated)} ticket(s), created {len(report.created)}, "
+        f"closed {len(report.closed)}."
+    )
     for line in report.skipped:
-        typer.echo(f"  skipped: {line} (use --create-missing)")
+        hint = " (use --create-missing)" if line.startswith("untracked") else ""
+        typer.echo(f"  skipped: {line}{hint}")
     for line in report.errors:
         typer.secho(f"  error: {line}", fg=typer.colors.RED)
     if report.errors:
