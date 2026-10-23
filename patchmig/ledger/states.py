@@ -13,6 +13,7 @@ class State(StrEnum):
     INGESTED = "ingested"
     UPSTREAM = "upstream"  # intent already met in target: dropped
     OBSOLETE = "obsolete"  # code path removed or replaced in target: dropped
+    REVERTED = "reverted"  # cancelled out by a revert inside the patch set: dropped
     NEEDED = "needed"
     APPLIED = "applied"  # clean cherry-pick
     RESOLVED = "resolved"  # applied after conflict resolution
@@ -22,7 +23,7 @@ class State(StrEnum):
     NEEDS_DECISION = "needs_decision"
 
 
-DROPPED = frozenset({State.UPSTREAM, State.OBSOLETE})
+DROPPED = frozenset({State.UPSTREAM, State.OBSOLETE, State.REVERTED})
 MIGRATED = frozenset({State.APPLIED, State.RESOLVED, State.REWRITTEN})
 
 TRANSITIONS: dict[State, frozenset[State]] = {
@@ -40,6 +41,7 @@ TRANSITIONS: dict[State, frozenset[State]] = {
     # A human may revive a dropped patch.
     State.UPSTREAM: frozenset({State.NEEDED}),
     State.OBSOLETE: frozenset({State.NEEDED}),
+    State.REVERTED: frozenset({State.NEEDED}),
 }
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,9 +16,14 @@ class GitError(Exception):
         super().__init__(f"git {' '.join(args)} failed in {cwd}: {self.stderr}")
 
 
-def git(repo: Path | None, *args: str, input: str | None = None) -> str:
+def git(
+    repo: Path | None, *args: str, input: str | None = None, env: dict[str, str] | None = None
+) -> str:
     cmd = ["git", *args]
-    result = subprocess.run(cmd, cwd=repo, input=input, capture_output=True, text=True)
+    full_env = {**os.environ, **env} if env else None
+    result = subprocess.run(
+        cmd, cwd=repo, input=input, capture_output=True, text=True, env=full_env
+    )
     if result.returncode != 0:
         raise GitError(list(args), repo, result.stderr)
     return result.stdout
@@ -85,3 +91,41 @@ def grep_log(repo: Path, base: str, head: str, pattern: str) -> list[str]:
         f"{base}..{head}",
     )  # fmt: skip
     return out.split()
+
+
+def is_ancestor(repo: Path, ancestor: str, rev: str) -> bool:
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, rev], cwd=repo, capture_output=True
+    )
+    return result.returncode == 0
+
+
+def file_at(repo: Path, rev: str, path: str) -> str | None:
+    """Content of a file at a revision, or None if it doesn't exist there."""
+    result = subprocess.run(
+        ["git", "show", f"{rev}:{path}"], cwd=repo, capture_output=True, text=True,
+        errors="replace",
+    )  # fmt: skip
+    return result.stdout if result.returncode == 0 else None
+
+
+def ls_files(repo: Path, rev: str) -> list[str]:
+    return git(repo, "ls-tree", "-r", "--name-only", rev).splitlines()
+
+
+def name_status(repo: Path, old: str, new: str) -> list[tuple[str, str, str]]:
+    """Rename-aware (status, old path, new path) of every file changed between two revs."""
+    # -l raises the rename-detection limit: A14 -> A15 diffs of big projects exceed the default.
+    out = git(repo, "diff", "-M", "-l5000", "--no-color", "--name-status", "-z", old, new)
+    fields = out.split("\0")
+    changes: list[tuple[str, str, str]] = []
+    i = 0
+    while i < len(fields) - 1:
+        status = fields[i]
+        if status[:1] in "RC":
+            changes.append((status[0], fields[i + 1], fields[i + 2]))
+            i += 3
+        else:
+            changes.append((status[0], fields[i + 1], fields[i + 1]))
+            i += 2
+    return changes

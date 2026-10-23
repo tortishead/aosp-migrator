@@ -2,7 +2,7 @@
 
 Builds two small repo-style trees, each with two projects and a manifest:
 
-* ``source/`` — the Android 14 base plus eight OEM patches (the patch set to migrate)
+* ``source/`` — the Android 14 base plus ten OEM patches (the patch set to migrate)
 * ``target/`` — the same Android 14 base plus "upstream" Android 15 changes
 
 Both trees share byte-identical base commits (fixed authors and dates), just like real
@@ -34,6 +34,7 @@ BT_NEW = "services/core/java/com/android/server/bluetooth/BtManager.java"
 CONFIG = "core/res/res/values/config.xml"
 CAR_POWER = "service/src/com/android/car/CarPowerService.java"
 LEGACY_AUDIO = "service/src/com/android/car/LegacyAudio.java"
+WATCHDOG = "service/src/com/android/car/CarWatchdog.java"
 
 BASE_FILES = {
     FRAMEWORKS: {
@@ -115,6 +116,10 @@ EXPECTED = [
     Expected("P6", CAR, "dropped-by-revert", "power-log", "revert of P5"),
     Expected("P7", FRAMEWORKS, "upstream", "brightness", "identical change already upstream"),
     Expected("P8", CAR, "needed", "power-mode", "uses PowerHelper.isOemMode() added by P1"),
+    Expected(
+        "P9", FRAMEWORKS, "upstream", "brightness", "same line changed upstream, other patch-id"
+    ),
+    Expected("P10", CAR, "upstream", "watchdog", "backport whose original commit is in target"),
 ]
 
 
@@ -203,7 +208,19 @@ def _base(git: _Git, tree: Path, tag: str) -> None:
 OEM = "OEM Dev <oem.dev@oem.example>"
 
 
-def _oem_patches(git: _Git, tree: Path) -> dict[str, str]:
+WATCHDOG_UPSTREAM = """package com.android.car;
+
+public class CarWatchdog {
+    private static final int TIMEOUT_MS = 3000;
+
+    public boolean isHealthy(long lastPingMs, long nowMs) {
+        return nowMs - lastPingMs < TIMEOUT_MS;
+    }
+}
+"""
+
+
+def _oem_patches(git: _Git, tree: Path, upstream: dict[str, str]) -> dict[str, str]:
     fw, car = tree / FRAMEWORKS, tree / CAR
     c: dict[str, str] = {}
 
@@ -294,13 +311,45 @@ def _oem_patches(git: _Git, tree: Path) -> dict[str, str]:
         OEM,
     )
 
+    _edit(
+        fw,
+        CONFIG,
+        '<integer name="config_screenBrightnessSettingDefault">102</integer>',
+        '<integer name="config_screenBrightnessSettingDefault">128</integer>',
+    )
+    c["P9"] = git.commit(
+        fw,
+        "Raise default screen brightness\n\nBug: OEM-808\nChange-Id: I1000000000000000000000000000000000000009",
+        OEM,
+    )
+
+    # A backport adapted to Android 14 (one extra line), so its patch-id differs from the
+    # original; only the "cherry picked from" reference proves the original is in target.
+    _write(
+        car,
+        WATCHDOG,
+        WATCHDOG_UPSTREAM.replace(
+            "public class CarWatchdog {",
+            "// Backported from Android 15.\npublic class CarWatchdog {",
+        ),
+    )
+    c["P10"] = git.commit(
+        car,
+        "Add car watchdog health check\n\nBug: OEM-707\n"
+        "Change-Id: I1000000000000000000000000000000000000010\n"
+        f"(cherry picked from commit {upstream['watchdog']})",
+        OEM,
+    )
+
     for project in PROJECTS:
         git(tree / project, "tag", SOURCE_HEAD_TAG)
     return c
 
 
-def _upstream_changes(git: _Git, tree: Path) -> None:
+def _upstream_changes(git: _Git, tree: Path) -> dict[str, str]:
+    """Android 15 changes in the target; returns the SHAs OEM patches refer to."""
     fw, car = tree / FRAMEWORKS, tree / CAR
+    shas: dict[str, str] = {}
 
     _edit(
         fw, POWER, "public void setMode(int mode) {", "public void setMode(int mode, int reason) {"
@@ -321,11 +370,25 @@ def _upstream_changes(git: _Git, tree: Path) -> None:
     )
     git.commit(fw, "Enable auto brightness by default")
 
+    # Contains OEM patch P9's line change, but together with another line: other patch-id.
+    _edit(
+        fw,
+        CONFIG,
+        '    <integer name="config_screenBrightnessSettingDefault">102</integer>\n',
+        '    <integer name="config_screenBrightnessSettingDefault">128</integer>\n'
+        '    <integer name="config_screenOffTimeout">30000</integer>\n',
+    )
+    git.commit(fw, "Tune display defaults")
+
     git(car, "rm", "-q", LEGACY_AUDIO)
     git.commit(car, "Remove LegacyAudio, replaced by the audio HAL")
 
+    _write(car, WATCHDOG, WATCHDOG_UPSTREAM)
+    shas["watchdog"] = git.commit(car, "Add CarWatchdog health check")
+
     for project in PROJECTS:
         git(tree / project, "tag", TARGET_BASE_TAG)
+    return shas
 
 
 def build_scenario(root: Path) -> Scenario:
@@ -338,8 +401,8 @@ def build_scenario(root: Path) -> Scenario:
     start = 1_700_000_000
     _base(_Git(start), source, SOURCE_BASE_TAG)
     _base(_Git(start), target, SOURCE_BASE_TAG)  # same clock: identical base commits
-    commits = _oem_patches(_Git(start + 100_000), source)
-    _upstream_changes(_Git(start + 200_000), target)
+    upstream = _upstream_changes(_Git(start + 200_000), target)
+    commits = _oem_patches(_Git(start + 100_000), source, upstream)
     _manifest(source, SOURCE_HEAD_TAG)
     _manifest(target, TARGET_BASE_TAG)
     return Scenario(root=root, source=source, target=target, commits=commits)

@@ -252,6 +252,22 @@ class PathRule(Model):
     reason: str
 
 
+class AnalysisConfig(Model):
+    max_cluster_patches: int = Field(
+        default=15, ge=2, description="Larger clusters are split at their weakest links"
+    )
+    max_cluster_projects: int = Field(default=3, ge=1)
+    hot_spot_min_patches: int = Field(
+        default=3, ge=2, description="A file touched by this many patches is a hot spot"
+    )
+    min_symbol_length: int = Field(
+        default=4, ge=1, description="Shorter symbols are ignored for dependencies"
+    )
+    textual_min_line_chars: int = Field(
+        default=6, ge=1, description="Shorter lines (braces, 'break;') don't count as evidence"
+    )
+
+
 class MemoryConfig(Model):
     path: Path | None = Field(default=None, description="Local clone of the migration memory repo")
 
@@ -271,6 +287,7 @@ class ProjectConfig(Model):
     thresholds: ThresholdsConfig = Field(default_factory=ThresholdsConfig)
     output: OutputConfig | None = None
     path_rules: list[PathRule] = Field(default_factory=list)
+    analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
     @model_validator(mode="after")

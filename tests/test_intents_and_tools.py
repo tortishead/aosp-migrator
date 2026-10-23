@@ -30,9 +30,11 @@ from patchmig.mcp_server.tools import (
     read_file,
     search_code,
 )
-from tests.fixtures.scenario import BT_NEW, CAR, FRAMEWORKS, POWER
+from tests.fixtures.scenario import BT_NEW, CAR, EXPECTED, FRAMEWORKS, POWER
 from tests.test_agents import FAKE_COPILOT
 from tests.test_ingest import JIRA, FakeJira, make_config  # noqa: F401  (fixture)
+
+N = len(EXPECTED)
 
 
 def intent_for(task, attempt):
@@ -70,7 +72,7 @@ def test_intents_written_then_reused_in_next_run(ingested):
     _, cfg, store, run = ingested
     adapter = FakeAdapter(intent_for)
     report = write_intents(cfg, store, run, AgentRunner(adapter, store, run, cfg.llm, cfg.budget))
-    assert (report.written, report.reused, report.credits) == (8, 0, 8.0)
+    assert (report.written, report.reused, report.credits) == (N, 0, float(N))
     first_brief = adapter.calls[0][0].brief
     assert "OEM power mode" in first_brief and "For OEM sleep" in first_brief
     assert "+    public boolean isOemMode()" in first_brief
@@ -85,7 +87,7 @@ def test_intents_written_then_reused_in_next_run(ingested):
     report2 = write_intents(
         cfg, store, run2, AgentRunner(adapter2, store, run2, cfg.llm, cfg.budget)
     )
-    assert (report2.written, report2.reused) == (0, 8)
+    assert (report2.written, report2.reused) == (0, N)
     assert adapter2.calls == []
     assert _patches(store, run2)[0].intent_detail["reused_from_patch"] == p.id
 
@@ -103,7 +105,7 @@ def test_intents_limit_budget_and_failures(ingested):
 
     broken = AgentRunner(FakeAdapter(lambda t, a: "nope"), store, run, cfg.llm, cfg.budget)
     report = write_intents(cfg, store, run, broken)
-    assert len(report.failed) == 4 and report.written == 0
+    assert len(report.failed) == N - 4 and report.written == 0
 
 
 @pytest.fixture
@@ -136,7 +138,7 @@ def test_tools_read_the_right_tree_versions(ctx):
 def test_ledger_tools_are_scoped_to_run(ctx, ingested):
     _, cfg, store, run = ingested
     listed = list_patches(ctx)
-    assert len(listed) == 8 and listed[0]["subject"] == "Add OEM power mode"
+    assert len(listed) == N and listed[0]["subject"] == "Add OEM power mode"
     assert get_patch(ctx, listed[0]["id"])["jira_keys"] == ["OEM-101"]
     other = ToolContext(cfg, store, run.id + 1)
     with pytest.raises(ToolError, match="not part of run"):
@@ -151,8 +153,8 @@ def test_mcp_server_exposes_tools(ctx):
 
     async def go():
         names = {t.name for t in await server.list_tools()}
-        assert names == {"get_patch", "list_patches", "get_ticket", "search_code", "find_files",
-                         "read_file", "file_history"}  # fmt: skip
+        assert names == {"get_patch", "list_patches", "get_cluster", "get_ticket", "upstream_fate",
+                         "search_code", "find_files", "read_file", "file_history"}  # fmt: skip
         result = await server.call_tool("find_files", {"tree": "target", "name": "BtManager"})
         assert BT_NEW in str(result)
         with pytest.raises(McpToolError, match="unknown project"):

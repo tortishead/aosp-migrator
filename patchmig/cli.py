@@ -13,10 +13,11 @@ from patchmig.agents.adapter import AgentRuntimeError, AgentTask, ToolPolicy, ex
 from patchmig.agents.copilot import CopilotCliAdapter
 from patchmig.agents.intent import export_review_sheet, write_intents
 from patchmig.agents.runner import AgentRunner
+from patchmig.analysis import AnalysisError, analyse
 from patchmig.config import ConfigError, ProjectConfig, dump_config, load_config
 from patchmig.ingest import IngestError, ingest
 from patchmig.jira_client import HttpJiraClient, JiraClient
-from patchmig.ledger import LedgerStore, Patch, State
+from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
 
 app = typer.Typer(help="Migrate OEM Android framework patches between Android versions.")
 config_app = typer.Typer(help="Inspect and validate the project configuration.")
@@ -190,8 +191,6 @@ def intents_cmd(
     ] = None,
 ) -> None:
     """Write an intent statement for each patch (reusing earlier ones by fingerprint)."""
-    from patchmig.ledger import Run
-
     cfg = _load(config)
     store = LedgerStore.open(cfg.ledger_path)
     rid = _latest_run_id(store, run_id)
@@ -210,6 +209,86 @@ def intents_cmd(
     if export:
         n = export_review_sheet(store, run, export)
         typer.echo(f"Review sheet with {n} intents written to {export}")
+
+
+@app.command("analyse")
+def analyse_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+) -> None:
+    """Decide which patches are still needed, cluster them and forecast each cluster.
+
+    Deterministic: no agent calls, no credits.
+    """
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    rid = _latest_run_id(store, run_id)
+    with store.session() as s:
+        run = s.get(Run, rid)
+    try:
+        report = analyse(cfg, store, run)
+    except AnalysisError as e:
+        typer.secho(f"Analysis failed: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"Run {rid}: {sum(report.states.values())} patches, {report.clusters} clusters")
+    for state in State:
+        if report.states.get(state.value):
+            typer.echo(f"  {state.value:<15} {report.states[state.value]}")
+    decided = {k: v for k, v in report.rungs.items() if k != "none"}
+    if decided:
+        typer.echo("  decided by: " + ", ".join(f"{k} {v}" for k, v in sorted(decided.items())))
+    if report.forecasts:
+        typer.echo(
+            "  clusters to migrate: "
+            + ", ".join(f"{k} {v}" for k, v in sorted(report.forecasts.items()))
+        )
+    for w in report.warnings:
+        typer.secho(f"  warning: {w}", fg=typer.colors.YELLOW)
+
+
+@app.command("clusters")
+def clusters_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    show: Annotated[
+        int | None, typer.Option("--show", help="Print one cluster's details and net diff")
+    ] = None,
+) -> None:
+    """List the clusters of a run in migration order."""
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    rid = _latest_run_id(store, run_id)
+    with store.session() as s:
+        clusters = s.scalars(
+            select(Cluster).where(Cluster.run_id == rid).order_by(Cluster.order_index)
+        ).all()
+        patches = {p.id: p for p in s.scalars(select(Patch).where(Patch.run_id == rid))}
+    if not clusters:
+        typer.echo(f"Run {rid} has no clusters yet. Run: migrate analyse")
+        return
+    for c in clusters:
+        if show is not None and c.id != show:
+            continue
+        level = (c.result.get("forecast") or {}).get("level", "-")
+        members = c.result.get("members", [])
+        typer.echo(
+            f"{c.order_index + 1:>4}. [{c.id}] {c.state.value:<14} {level:<9} "
+            f"{len(members)} patch(es): {c.name}"
+        )
+        if show is None:
+            continue
+        for pid in members:
+            p = patches[pid]
+            typer.echo(f"        {p.state.value:<14} {p.project}: {p.subject}")
+        for e in c.result.get("edges", []):
+            typer.echo(f"        link {e['from']} -> {e['to']}: {e['kind']} {e['detail']}")
+        for reason in (c.result.get("forecast") or {}).get("reasons", []):
+            typer.echo(f"        forecast: {reason}")
+        for error in c.result.get("fold_errors", []):
+            typer.secho(f"        fold: {error}", fg=typer.colors.YELLOW)
+        if c.net_diff:
+            typer.echo("")
+            typer.echo(c.net_diff, nl=False)
 
 
 @app.command("doctor")

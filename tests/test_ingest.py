@@ -19,6 +19,7 @@ from patchmig.ledger import Ticket as TicketRow
 from tests.fixtures.scenario import (
     BT_OLD,
     CAR,
+    EXPECTED,
     FRAMEWORKS,
     SOURCE_BASE_TAG,
     SOURCE_HEAD_TAG,
@@ -64,12 +65,15 @@ def make_config(scenario: Scenario, tmp_path: Path):
     return _make
 
 
+N = len(EXPECTED)  # patches in the scenario
+
+
 def by_subject(patches):
     return {p.subject: p for p in patches}
 
 
 def keyed(scenario: Scenario, patches):
-    """Map scenario keys (P1..P8) to patches via commit SHA."""
+    """Map scenario keys (P1..P10) to patches via commit SHA."""
     sha_to_key = {sha: key for key, sha in scenario.commits.items()}
     return {sha_to_key[p.commit_sha]: p for p in patches if p.commit_sha in sha_to_key}
 
@@ -77,10 +81,10 @@ def keyed(scenario: Scenario, patches):
 def test_git_range_finds_all_patches_with_links(scenario, make_config):
     cfg = load_config(make_config([{"type": "git_range"}]))
     patches, found, ctx = collect(cfg)
-    assert found == {"git_range": 8}
+    assert found == {"git_range": N}
     assert ctx.warnings == []
     p = keyed(scenario, patches)
-    assert len(p) == 8
+    assert len(p) == N
 
     assert p["P1"].change_id == "I1000000000000000000000000000000000000001"
     assert p["P1"].jira_keys == ["OEM-101"]
@@ -95,7 +99,7 @@ def test_git_range_finds_all_patches_with_links(scenario, make_config):
     assert p["P3"].project == FRAMEWORKS and p["P4"].project == CAR
     assert all(x.fingerprint for x in patches)
     # Ordered oldest first.
-    assert [x.commit_sha for x in patches] == [scenario.commits[f"P{i}"] for i in range(1, 9)]
+    assert [x.commit_sha for x in patches] == [scenario.commits[f"P{i}"] for i in range(1, N + 1)]
 
 
 def test_git_range_limited_to_projects(make_config):
@@ -128,7 +132,7 @@ def test_diff_folder_matches_git_fingerprints(scenario, make_config, tmp_path):
     _format_patches(scenario, diffs)
     cfg = load_config(make_config([{"type": "diff_folder", "path": str(diffs)}]))
     from_diffs, found, ctx = collect(cfg)
-    assert found == {"diff_folder": 8}, ctx.warnings
+    assert found == {"diff_folder": N}, ctx.warnings
     git_cfg = load_config(make_config([{"type": "git_range"}]))
     from_git, _, _ = collect(git_cfg)
     assert {p.fingerprint for p in from_diffs} == {p.fingerprint for p in from_git}
@@ -161,13 +165,13 @@ def test_plain_tree_relative_diff_is_mapped_to_project(scenario, make_config, tm
         make_config([{"type": "diff_folder", "path": str(diffs)}, {"type": "git_range"}])
     )
     patches, found, ctx = collect(cfg)
-    assert found == {"diff_folder": 1, "git_range": 8}
+    assert found == {"diff_folder": 1, "git_range": N}
     assert any("empty.patch" in w for w in ctx.warnings)
     # The plain diff merged into the git commit with the same patch-id.
     p3 = keyed(scenario, patches)["P3"]
     assert p3.sources == ["diff_folder", "git_range"]
     assert p3.diff_path.endswith("bt-timeout.diff")
-    assert len(patches) == 8
+    assert len(patches) == N
 
 
 def test_spreadsheet_csv(scenario, make_config, tmp_path):
@@ -199,7 +203,7 @@ def test_spreadsheet_xlsx_enriches_git_range(scenario, make_config, tmp_path):
     wb.save(path)
     src = [{"type": "git_range"}, {"type": "spreadsheet", "path": str(path)}]
     patches, found, _ = collect(load_config(make_config(src)))
-    assert found == {"git_range": 8, "spreadsheet": 1}
+    assert found == {"git_range": N, "spreadsheet": 1}
     p3 = keyed(scenario, patches)["P3"]
     assert p3.jira_keys == ["OEM-202", "OEM-999"]
     assert p3.sources == ["git_range", "spreadsheet"]
@@ -237,14 +241,22 @@ def test_ingest_stores_patches_and_refuses_second_ingest(scenario, make_config):
     run = store.create_run(cfg)
     fake = FakeJira({"OEM-101": Ticket("OEM-101", "OEM power mode")})
     report = ingest(cfg, store, run, jira=fake)
-    assert report.total == 8
-    assert report.roles == {"base": 6, "fix": 1, "revert": 1}
-    assert sorted(report.tickets_missing) == ["OEM-202", "OEM-303", "OEM-404", "OEM-505", "OEM-606"]
+    assert report.total == N
+    assert report.roles == {"base": N - 2, "fix": 1, "revert": 1}
+    assert sorted(report.tickets_missing) == [
+        "OEM-202",
+        "OEM-303",
+        "OEM-404",
+        "OEM-505",
+        "OEM-606",
+        "OEM-707",
+        "OEM-808",
+    ]
     with store.session() as s:
         rows = s.scalars(select(Patch).where(Patch.run_id == run.id).order_by(Patch.seq)).all()
-    assert [r.commit_sha for r in rows] == [scenario.commits[f"P{i}"] for i in range(1, 9)]
+    assert [r.commit_sha for r in rows] == [scenario.commits[f"P{i}"] for i in range(1, N + 1)]
     assert rows[0].footprint["files"][0]["path"] == "core/java/android/os/PowerHelper.java"
-    with pytest.raises(IngestError, match="already has 8 patches"):
+    with pytest.raises(IngestError, match=f"already has {N} patches"):
         ingest(cfg, store, run)
 
 
@@ -262,9 +274,9 @@ def test_cli_ingest_and_list(make_config):
     runner = CliRunner()
     result = runner.invoke(app, ["ingest", "-c", str(path), "--no-jira"])
     assert result.exit_code == 0, result.output
-    assert "Run 1: 8 patches" in result.output
+    assert f"Run 1: {N} patches" in result.output
     assert "revert 1" in result.output
     result = runner.invoke(app, ["patches", "-c", str(path)])
     assert result.exit_code == 0, result.output
     assert 'Revert "Log car power transitions"' in result.output
-    assert result.output.count("\n") == 8
+    assert result.output.count("\n") == N
