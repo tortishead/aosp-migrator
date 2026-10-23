@@ -162,17 +162,20 @@ class Memory:
 
         `files` are the (project, path) pairs the cluster touches.
         """
-        parts = []
+        parts, notes = [], []
         for p in members:
             for h in ((self.history(p) or {}).get("history") or [])[-3:]:
                 line = f"- #{p.id} {p.subject}: in {h['migration']} {h['outcome']}"
                 if h.get("strategy"):
                     line += f" by {h['strategy']}"
-                if h.get("summary"):
-                    line += f"; {h['summary']}"
-                line += "".join(f"; decision: {d}" for d in h.get("decisions", []))
-                line += "".join(f"; reviewer: {f}" for f in h.get("feedback", []))
                 parts.append(line)
+                # Summary, decisions and feedback belong to the whole cluster: say them once.
+                mig = h["migration"]
+                if h.get("summary"):
+                    notes.append(f"- {mig} agent summary: {h['summary']}")
+                notes += [f"- {mig} decision: {d}" for d in h.get("decisions", [])]
+                notes += [f"- {mig} reviewer: {f}" for f in h.get("feedback", [])]
+        parts += notes
         for project, path in files:
             if m := self.mappings(project).get(path):
                 to = f" -> {m['to']}" if m.get("to") else ""
@@ -241,6 +244,9 @@ class Memory:
             "approved_by": (c.result.get("review") or {}).get("by"),
             "recorded_at": _now(),
         }  # fmt: skip
+        old = next((h for h in data["history"] if h["migration"] == label), None)
+        if old is not None and {**old, "recorded_at": None} == {**entry, "recorded_at": None}:
+            entry["recorded_at"] = old["recorded_at"]  # unchanged: no new commit
         history = [h for h in data["history"] if h["migration"] != label]
         data["history"] = [*history, entry]
         self._write(rel, data)

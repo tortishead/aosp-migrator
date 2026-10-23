@@ -17,7 +17,9 @@ pilot. If `migrate doctor --mcp` fails, stop there: everything below depends on 
 
 ## 1. Configure
 
-`migrate init pilot` and edit `pilot/project.yaml`. Beyond trees and patch sources:
+`migrate init pilot` and edit `pilot/project.yaml`. Give it its own `name`: cluster
+branches in the target tree and on GitHub are named after it, so the pilot and the full
+migration later can share the same trees and repos. Beyond trees and patch sources:
 
 ```yaml
 budget:
@@ -45,9 +47,9 @@ memory:
 
 ```bash
 migrate ingest   -c pilot/project.yaml
-migrate intents  -c pilot/project.yaml        # reuses intents from the memory first
 migrate analyse  -c pilot/project.yaml
 migrate clusters -c pilot/project.yaml        # check the clusters and forecasts
+migrate intents  -c pilot/project.yaml        # needed patches only; memory reuse first
 migrate apply    -c pilot/project.yaml        # cherry-pick, net diff, then the agent
 migrate verify   -c pilot/project.yaml        # affected modules only, then tests
 migrate publish  -c pilot/project.yaml

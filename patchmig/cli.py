@@ -206,7 +206,7 @@ def intents_cmd(
         Path | None, typer.Option(help="Also write a Markdown review sheet to this file")
     ] = None,
 ) -> None:
-    """Write an intent statement for each patch (reusing earlier ones by fingerprint)."""
+    """Write an intent for each needed patch (run after analyse; earlier intents are reused)."""
     cfg = _load(config)
     store = LedgerStore.open(cfg.ledger_path)
     rid = _latest_run_id(store, run_id)
@@ -216,7 +216,8 @@ def intents_cmd(
     report = write_intents(cfg, store, run, runner, limit=limit, memory=_memory(cfg))
     typer.echo(
         f"Run {rid}: {report.written} written, {report.reused} reused, "
-        f"{report.skipped} already had one; estimated credits {report.credits:.1f}"
+        f"{report.skipped} already had one, {report.not_needed} not needed; "
+        f"estimated credits {report.credits:.1f}"
     )
     for failure in report.failed:
         typer.secho(f"  failed: {failure}", fg=typer.colors.YELLOW)

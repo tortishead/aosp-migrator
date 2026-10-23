@@ -41,7 +41,7 @@ migrate publish -c project.yaml --unverified   # also migrated clusters not yet 
 ```
 
 Each cluster becomes one draft PR per repository it touches, from
-`migration/r<run>-c<cluster>` against `base_branch`, linked to each other. The body has the
+`migration/<project name>/r<run>-c<cluster>` against `base_branch`, linked to each other. The body has the
 review queue and confidence, the original patches with their Jira keys, the intents, how
 each project was migrated, the cluster agent's summary and risks, the reviewer agent's
 verdict, and the build and test results. Publishing again force-pushes the branch (it belongs

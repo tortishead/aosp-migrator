@@ -21,9 +21,9 @@ migrate config validate -c myproject/project.yaml
 migrate ingest -c myproject/project.yaml     # new run: read all patch sources (+ Jira tickets)
 migrate patches -c myproject/project.yaml    # list the run's patches in order
 migrate doctor -c myproject/project.yaml --mcp   # check Copilot CLI headless + MCP tools
-migrate intents -c myproject/project.yaml --limit 20 --export review.md
 migrate analyse -c myproject/project.yaml    # upstream/obsolete/needed, clusters, forecasts
 migrate clusters -c myproject/project.yaml   # clusters in migration order (--show ID for detail)
+migrate intents -c myproject/project.yaml --export review.md   # needed patches only
 migrate apply -c myproject/project.yaml --no-agent   # free rungs only: cherry-pick, net diff
 migrate apply -c myproject/project.yaml --limit 3    # then the cluster agent where they fail
 migrate build-check -c myproject/project.yaml        # SSH to the build server, slots prepared?
@@ -133,7 +133,7 @@ stay `needed` for review.
 ## Migrate
 
 `migrate apply` moves each needed cluster onto the target tree, in dependency order, on its own
-branch `patchmig/r<run>/c<cluster>` in every target project it touches (a dependent cluster
+branch `patchmig/<project name>/r<run>/c<cluster>` in every target project it touches (a dependent cluster
 branches from its dependency's branch). Worktrees are sparse: only the touched directories are
 checked out, under `<workdir>/worktrees/`. Per project it tries, cheapest first:
 

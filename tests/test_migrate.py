@@ -141,7 +141,7 @@ def test_without_agent_cherry_pick_migrates_the_moved_file(project):
     assert bt.state == State.APPLIED and bt.confidence == 0.9
     assert by_cluster[bt.id].strategy == "cherry_pick"
     assert project.patch("P3").state == State.APPLIED
-    branch = branch_name(project.run.id, bt.id)
+    branch = branch_name(project.config.name, project.run.id, bt.id)
     log = project.target_git(FRAMEWORKS, "log", "-1", "--format=%an|%cn|%B", branch)
     assert log.startswith("OEM Dev|patchmig|Tune BT reconnect timeout")
     assert f"(cherry picked from commit {project.scenario.commits['P3']})" in log
@@ -173,7 +173,7 @@ def test_agent_resolves_the_conflict_and_the_reviewer_sets_confidence(project):
     assert power.confidence == 0.8  # min(agent 0.9, reviewer 0.8)
     for key in ("P1", "P2", "P8"):
         assert project.patch(key).state == State.RESOLVED
-    branch = branch_name(project.run.id, power.id)
+    branch = branch_name(project.config.name, project.run.id, power.id)
     migrated = project.target_git(FRAMEWORKS, "show", f"{branch}:{POWER}")
     assert RESOLVED in migrated and "<<<<<<<" not in migrated
     msg = project.target_git(FRAMEWORKS, "log", "-1", "--format=%B", branch)
@@ -311,7 +311,9 @@ def test_dependent_cluster_waits_then_builds_on_its_dependency(tmp_path):
     assert (
         fw["base"] == project.cluster_of("P1").result["migration"]["projects"][FRAMEWORKS]["head"]
     )
-    text = project.target_git(FRAMEWORKS, "show", f"{branch_name(project.run.id, p2.id)}:{POWER}")
+    text = project.target_git(
+        FRAMEWORKS, "show", f"{branch_name(project.config.name, project.run.id, p2.id)}:{POWER}"
+    )
     assert "mMode >= 0" in text and RESOLVED in text
 
 
@@ -360,3 +362,40 @@ def test_web_cluster_view_shows_the_migration(project):
         data.cluster(project.store, project.run.id, project.cluster_of("P7").id)["migration"]
         is None
     )
+
+
+def test_two_projects_on_one_target_tree_keep_their_own_branches(project, tmp_path):
+    bt = project.cluster_of("P3")
+    project.migrate(None, cluster_ids=[bt.id])
+    first = branch_name(project.config.name, project.run.id, bt.id)
+    head = project.target_git(FRAMEWORKS, "rev-parse", first).strip()
+
+    pilot = project.config.model_copy(update={"name": "Pilot slice", "workdir": tmp_path / "w2"})
+    store = LedgerStore.open(pilot.ledger_path)
+    run = store.create_run(pilot)
+    ingest(pilot, store, run)
+    analyse(pilot, store, run)
+    with store.session() as s:
+        other = s.scalars(
+            select(Cluster).where(Cluster.run_id == run.id, Cluster.id == bt.id)
+        ).one()
+    migrate(pilot, store, run, None, cluster_ids=[other.id])
+    second = branch_name("Pilot slice", run.id, other.id)
+    assert second == f"patchmig/pilot-slice/r{run.id}/c{other.id}" and second != first
+    assert project.target_git(FRAMEWORKS, "rev-parse", first).strip() == head  # untouched
+    assert project.target_git(FRAMEWORKS, "rev-parse", second).strip()
+
+
+def test_intents_are_not_bought_for_dropped_patches(project):
+    from patchmig.agents.intent import write_intents
+
+    asked = []
+
+    def writer(task, attempt):
+        asked.append(task.subject_id)
+        return {"problem": "p", "change": "c", "verification": "v", "components": [],
+                "sources": ["diff"], "confidence": 0.7}  # fmt: skip
+
+    report = write_intents(project.config, project.store, project.run, project.runner(writer))
+    assert report.not_needed == 6 and report.written == 4
+    assert {project.patch(k).id for k in ("P1", "P2", "P3", "P8")} == set(asked)
