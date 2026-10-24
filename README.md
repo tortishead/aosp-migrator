@@ -83,13 +83,14 @@ snapshot and hash of the config it used. See `patchmig/templates/project.example
 | `git_range` | `base_ref..head_ref` of every project in the source manifest (or a listed subset) |
 | `diff_folder` | `.patch`/`.diff` files; `git format-patch` mails or plain diffs. A subfolder named after a project path assigns the project; otherwise tree-relative paths are mapped to the owning project |
 | `spreadsheet` | CSV or Excel rows with a commit and/or Jira key (column names configurable) |
-| `jira_query` | Commits in the source range that mention tickets returned by a JQL query |
+| `jira_query` | For each ticket a JQL query returns: commits in the source range that mention it, its `.diff`/`.patch` attachments, and commit or PR links (GitHub, GitLab, Bitbucket Cloud/Server) in it and in the tickets it links to (description, comments, remote links). Linked commits are taken from the source tree; a PR's commits too, or its diff from the host's API when they are not there (squash merge) |
 
 Each patch gets its Change-Id, `git patch-id` fingerprint, Jira keys (from ticket trailers and
 the subject only), a footprint (files with add/modify/delete/rename, line counts, declared and
 touched symbols), and links: reverts, `Fixes:` references and cherry-pick origins. Chain roles
 are `base`, `fix` or `revert`. The same patch listed by several sources is merged (by commit,
-or by patch-id for diff files). Referenced Jira tickets are cached in the ledger.
+or by patch-id for diff files). Referenced Jira tickets are cached in the ledger with their
+latest comments, together with the tickets they link to; the intent writer sees all of it.
 
 ## Agents
 

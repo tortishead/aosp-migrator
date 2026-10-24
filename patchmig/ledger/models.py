@@ -142,6 +142,7 @@ class Ticket(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(100), default="")
     issue_links: Mapped[list[Any]] = mapped_column(default=list)
+    comments: Mapped[list[Any] | None] = mapped_column(default=list)  # "author: text"
     fetched_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

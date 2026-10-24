@@ -8,6 +8,9 @@ Only clusters a human approved are exported. Per Jira ticket of their patches:
 
 Patches without a ticket get one tracking ticket per cluster when asked (create_missing);
 its key is added to those patches, so the next migration finds them through Jira.
+With `jira.close_not_needed`, a ticket is also moved through the configured transition once
+every patch of the run that carries it was confirmed not needed (upstream, obsolete,
+reverted) by a human; a ticket that also has a migrated or open patch stays open.
 Running the export again changes nothing that is already there.
 """
 
@@ -40,6 +43,7 @@ class TicketExport:
     comment: str
     patch_ids: list[int] = field(default_factory=list)
     summary: str | None = None  # for a ticket to create
+    close: bool = False  # every patch carrying it confirmed not needed
 
     def to_json(self) -> dict:
         return {
@@ -49,6 +53,7 @@ class TicketExport:
             "links": [{"url": u, "title": t} for u, t, _ in self.links],
             "comment": self.comment,
             "summary": self.summary,
+            "close": self.close,
         }
 
 
@@ -56,6 +61,7 @@ class TicketExport:
 class ExportReport:
     updated: list[str] = field(default_factory=list)
     created: list[str] = field(default_factory=list)
+    closed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -134,6 +140,17 @@ def plan(config: ProjectConfig, store: LedgerStore, run: Run) -> list[TicketExpo
 
     label = config.migration.label
     out = []
+    close_cfg = config.jira.close_not_needed if config.jira else None
+    closing = {State(o) for o in close_cfg.outcomes} if close_cfg else set()
+    carriers: dict[str, list[Patch]] = {}
+    for p in patches:
+        for key in p.jira_keys:
+            carriers.setdefault(key, []).append(p)
+
+    def closes(key: str) -> bool:
+        return bool(closing) and all(
+            p.state in closing and p.cluster_id in approved for p in carriers.get(key, [])
+        )
 
     def links(rows) -> list[tuple[str, str, str]]:
         found = {}
@@ -154,6 +171,7 @@ def plan(config: ProjectConfig, store: LedgerStore, run: Run) -> list[TicketExpo
                 links=links(rows),
                 comment=_comment(config, run, rows),
                 patch_ids=[p.id for p, _ in rows],
+                close=closes(key),
             )
         )
     for cid, ps in untracked.items():
@@ -206,6 +224,14 @@ def export(
                     jira.update_comment(key, existing[0]["id"], t.comment)
             else:
                 jira.add_comment(key, t.comment)
+            if t.close and t.key is not None:
+                close = config.jira.close_not_needed
+                if jira.transition(key, close.transition, close.resolution):
+                    report.closed.append(key)
+                else:
+                    report.skipped.append(
+                        f"{key} not closed: no '{close.transition}' transition (already closed?)"
+                    )
             report.updated.append(key)
             _record(store, t, key)
         except JiraError as e:

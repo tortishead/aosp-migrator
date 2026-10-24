@@ -62,13 +62,29 @@ def _diff_for(config: ProjectConfig, patch: Patch) -> str:
     return "(diff not available)"
 
 
-def build_brief(config: ProjectConfig, patch: Patch, tickets: list[Ticket]) -> str:
+MAX_COMMENTS = 5
+
+
+def _ticket_section(t: Ticket, linked: dict[str, Ticket]) -> str:
+    """A ticket with its latest comments and, briefly, the tickets it links to."""
+    parts = [f"### {t.key}: {t.summary}\nStatus: {t.status}\n\n{_truncate(t.description, 4000)}"]
+    comments = (t.comments or [])[-MAX_COMMENTS:]
+    if comments:
+        parts.append("Latest comments:\n" + "\n".join(f"- {_truncate(c, 600)}" for c in comments))
+    for key in t.issue_links or []:
+        if other := linked.get(key):
+            parts.append(f"Linked {key}: {other.summary} ({other.status})\n"
+                         f"{_truncate(other.description, 1500)}")  # fmt: skip
+    return "\n\n".join(parts)
+
+
+def build_brief(
+    config: ProjectConfig, patch: Patch, tickets: list[Ticket], linked: dict | None = None
+) -> str:
+    linked = linked or {}
     template = files("patchmig.agents.briefs").joinpath("intent_writer.md").read_text()
     if tickets:
-        ticket_text = "\n\n".join(
-            f"### {t.key}: {t.summary}\nStatus: {t.status}\n\n{_truncate(t.description, 4000)}"
-            for t in tickets
-        )
+        ticket_text = "\n\n".join(_ticket_section(t, linked) for t in tickets)
     else:
         ticket_text = "(no ticket available: derive the intent from the commit and diff only)"
     return template.format(
@@ -145,10 +161,11 @@ def write_intents(
             continue
         with store.session() as s:
             tickets = [t for k in patch.jira_keys if (t := s.get(Ticket, k))]
+            linked = {k: t for x in tickets for k in x.issue_links or [] if (t := s.get(Ticket, k))}
         task = AgentTask(
             agent="intent_writer",
             key=f"patch:{patch.id}",
-            brief=build_brief(config, patch, tickets),
+            brief=build_brief(config, patch, tickets, linked),
             schema=IntentResult,
             workdir=config.workdir,
             subject_type="patch",

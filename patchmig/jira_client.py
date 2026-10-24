@@ -27,12 +27,22 @@ class Ticket:
     description: str = ""
     status: str = ""
     issue_links: list[str] = field(default_factory=list)  # keys of linked issues
+    comments: list[str] = field(default_factory=list)  # "author: text", oldest first
+    attachments: list[dict] = field(default_factory=list)  # filename, url, size, mime
 
 
 class JiraClient(Protocol):
     def search(self, jql: str) -> list[Ticket]: ...
 
     def get(self, key: str) -> Ticket | None: ...
+
+
+class JiraReader(JiraClient, Protocol):
+    """What ingest needs beyond search and get: linked material of a ticket."""
+
+    def remote_links(self, key: str) -> list[dict]: ...  # [{"url", "title"}]
+
+    def download(self, url: str, max_bytes: int) -> bytes: ...
 
 
 class JiraWriter(Protocol):
@@ -49,6 +59,8 @@ class JiraWriter(Protocol):
     def create_issue(
         self, project: str, issue_type: str, summary: str, description: str, labels: list[str]
     ) -> str: ...
+
+    def transition(self, key: str, name: str, resolution: str | None) -> bool: ...
 
 
 class JiraError(Exception):
@@ -80,12 +92,24 @@ def _ticket(issue: dict) -> Ticket:
     description = f.get("description") or ""
     if not isinstance(description, str):  # Jira Cloud v3 rich text
         description = adf_text(description).strip()
+    comments = []
+    for c in (f.get("comment") or {}).get("comments", []) or []:
+        body = c.get("body") or ""
+        body = body if isinstance(body, str) else adf_text(body).strip()
+        comments.append(f"{(c.get('author') or {}).get('displayName', '?')}: {body}")
+    attachments = [
+        {"filename": a.get("filename", ""), "url": a.get("content", ""),
+         "size": a.get("size", 0), "mime": a.get("mimeType", "")}
+        for a in f.get("attachment") or []
+    ]  # fmt: skip
     return Ticket(
         key=issue["key"],
         summary=f.get("summary") or "",
         description=description,
         status=(f.get("status") or {}).get("name", ""),
         issue_links=links,
+        comments=comments,
+        attachments=attachments,
     )
 
 
@@ -110,7 +134,7 @@ class HttpJiraClient:
     Bearer token, or basic auth when a user is set (Cloud: account email + API token).
     """
 
-    FIELDS = "summary,description,status,issuelinks"
+    FIELDS = "summary,description,status,issuelinks,comment,attachment"
 
     def __init__(self, config: JiraConfig, timeout: float = 30):
         self.base = config.url.rstrip("/")
@@ -231,6 +255,40 @@ class HttpJiraClient:
         # Jira updates the existing remote link with the same globalId: idempotent.
         self._send("POST", f"{self._issue(key)}/remotelink",
                    {"globalId": global_id, "object": {"url": url, "title": title}})  # fmt: skip
+
+    def remote_links(self, key: str) -> list[dict]:
+        data = self._get(f"{self._issue(key)}/remotelink", {}) or []
+        return [{"url": (r.get("object") or {}).get("url", ""),
+                 "title": (r.get("object") or {}).get("title", "")} for r in data]  # fmt: skip
+
+    def download(self, url: str, max_bytes: int) -> bytes:
+        """An attachment's content (its URL as Jira gave it), at most max_bytes."""
+        if not url.startswith(self.base + "/"):
+            raise JiraError(f"refusing to send Jira credentials to {url}")
+        req = urllib.request.Request(url, headers={"Authorization": self.auth})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = resp.read(max_bytes + 1)
+        except urllib.error.HTTPError as e:
+            raise JiraError(f"Jira attachment download failed: HTTP {e.code}") from e
+        except urllib.error.URLError as e:
+            raise JiraError(f"Jira not reachable at {self.base}: {e.reason}") from e
+        if len(data) > max_bytes:
+            raise JiraError(f"attachment larger than {max_bytes} bytes: {url}")
+        return data
+
+    def transition(self, key: str, name: str, resolution: str | None) -> bool:
+        """Move a ticket through the workflow transition `name`; False if it has none such
+        (for example because it is already closed)."""
+        data = self._get(f"{self._issue(key)}/transitions", {}) or {}
+        match = [t for t in data.get("transitions", []) if t["name"].lower() == name.lower()]
+        if not match:
+            return False
+        body: dict = {"transition": {"id": match[0]["id"]}}
+        if resolution:
+            body["fields"] = {"resolution": {"name": resolution}}
+        self._send("POST", f"{self._issue(key)}/transitions", body)
+        return True
 
     def create_issue(self, project, issue_type, summary, description, labels) -> str:
         data = self._send("POST", "issue", {"fields": {

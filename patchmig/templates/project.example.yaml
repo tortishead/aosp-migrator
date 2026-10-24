@@ -29,6 +29,8 @@ patch_sources:
   #   columns: {commit: "Commit", project: "Repo", jira: "Ticket"}
   # - type: jira_query
   #   jql: 'project = OEM AND labels = migrate-a15'
+  #   attachments: true             # .diff/.patch attachments of the matching tickets
+  #   linked_tickets: true          # commit/PR links in the tickets they link to
   # - type: diff_folder
   #   path: diffs/
 
@@ -40,6 +42,18 @@ jira:
   token: env:JIRA_TOKEN         # Server/DC: personal access token; Cloud: API token
   label_prefix: mig
   comment_marker: "[migration-agent]"   # finds the one comment per ticket to update
+  # close_not_needed:             # close tickets a human confirmed are not needed
+  #   transition: Close           # workflow transition name in your Jira
+  #   resolution: "Won't Do"      # if the transition screen asks for one
+
+# Git hosts that tickets link patches on (commit or PR/merge request links). github.com,
+# gitlab.com and bitbucket.org work without an entry for public repositories.
+code_hosts: []
+#  - url: https://github.example.com
+#    kind: github                 # github, gitlab, bitbucket_cloud, bitbucket_server
+#    token: env:GITHUB_SOURCE_TOKEN
+#    repo_map:                    # host repo -> source tree project
+#      oem/platform_frameworks_base: frameworks/base
 
 build:
   transport: ssh                # or 'local' on the build host, with slots: [tree roots]

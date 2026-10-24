@@ -110,12 +110,42 @@ class SpreadsheetSource(Model):
 class JiraQuerySource(Model):
     type: Literal["jira_query"]
     jql: str
+    attachments: bool = Field(
+        default=True, description="Import .diff/.patch attachments of the matching tickets"
+    )
+    linked_tickets: bool = Field(
+        default=True,
+        description="Follow linked tickets for commit and PR links (GitHub, GitLab, Bitbucket)",
+    )
+    max_attachment_kb: int = Field(default=2048, ge=1)
+
+
+class CodeHost(Model):
+    url: str = Field(description="Web base URL, e.g. https://github.com or https://git.oem.com")
+    kind: Literal["github", "gitlab", "bitbucket_cloud", "bitbucket_server"]
+    api_url: str | None = Field(default=None, description="Only if not the usual one for the kind")
+    user: str | None = Field(default=None, description="For basic auth (e.g. Bitbucket)")
+    token: SecretRef | None = None
+    repo_map: dict[str, str] = Field(
+        default_factory=dict, description="Host repo (owner/name) -> source tree project path"
+    )
 
 
 PatchSource = Annotated[
     GitRangeSource | DiffFolderSource | SpreadsheetSource | JiraQuerySource,
     Field(discriminator="type"),
 ]
+
+
+class JiraCloseConfig(Model):
+    transition: str = Field(description="Workflow transition name, e.g. 'Close' or 'Done'")
+    resolution: str | None = Field(
+        default=None, description="Resolution to set if the transition screen asks, e.g. 'Won't Do'"
+    )
+    outcomes: list[Literal["upstream", "obsolete", "reverted"]] = Field(
+        default_factory=lambda: ["upstream", "obsolete", "reverted"],
+        description="Which not-needed outcomes close a ticket",
+    )
 
 
 class JiraConfig(Model):
@@ -133,6 +163,10 @@ class JiraConfig(Model):
     comment_marker: str = "[migration-agent]"
     issue_type: str = Field(
         default="Task", description="Type of tracking tickets created for untracked patches"
+    )
+    close_not_needed: JiraCloseConfig | None = Field(
+        default=None,
+        description="Close tickets whose patches a human confirmed are not needed; off if unset",
     )
 
 
@@ -378,6 +412,9 @@ class ProjectConfig(Model):
     trees: TreesConfig
     patch_sources: list[PatchSource] = Field(min_length=1)
     jira: JiraConfig | None = None
+    code_hosts: list[CodeHost] = Field(
+        default_factory=list, description="Git hosts that tickets link patches on (commits, PRs)"
+    )
     build: BuildConfig | None = None
     tests: TestsConfig = Field(default_factory=TestsConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)

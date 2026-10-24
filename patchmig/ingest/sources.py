@@ -17,11 +17,20 @@ from patchmig.config.schema import (
     JiraQuerySource,
     SpreadsheetSource,
 )
-from patchmig.gitutil import GitError, commit_info, grep_log, resolve, rev_list
+from patchmig.gitutil import (
+    GitError,
+    commit_info,
+    file_at,
+    grep_log,
+    is_ancestor,
+    resolve,
+    rev_list,
+)
+from patchmig.ingest.codehosts import CodeHostError, CodeRef, HostClient, find_refs, host_for
 from patchmig.ingest.diffparse import parse_diff
 from patchmig.ingest.manifest import project_for_path
 from patchmig.ingest.normalize import RawPatch
-from patchmig.jira_client import JiraClient
+from patchmig.jira_client import JiraError, JiraReader, Ticket
 
 SPREADSHEET_FIELDS = ("commit", "project", "jira", "subject")
 
@@ -30,7 +39,7 @@ SPREADSHEET_FIELDS = ("commit", "project", "jira", "subject")
 class SourceContext:
     config: ProjectConfig
     projects: list[str]  # project paths in the source tree
-    jira: JiraClient | None = None
+    jira: JiraReader | None = None
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -44,6 +53,11 @@ class SourceContext:
     @property
     def head(self) -> str:
         return self.config.trees.source.head_ref  # validated non-None
+
+    @property
+    def downloads(self) -> Path:
+        """Where diffs fetched from Jira or a code host are kept (patches point at them)."""
+        return self.config.workdir / "downloads"
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
@@ -225,16 +239,162 @@ def from_spreadsheet(src: SpreadsheetSource, ctx: SourceContext) -> list[RawPatc
 
 
 def from_jira_query(src: JiraQuerySource, ctx: SourceContext) -> list[RawPatch]:
+    """Patches of the tickets a JQL query finds, from every place a ticket can carry them:
+
+    - commits in the source range that mention the ticket key;
+    - .diff/.patch attachments of the ticket;
+    - commit and PR links (GitHub, GitLab, Bitbucket) in the ticket and in the tickets it
+      links to (the implementation tickets), in their text, comments and remote links.
+    """
     if ctx.jira is None:
         ctx.warn("jira_query: no Jira connection available; skipped")
         return []
     patches: list[RawPatch] = []
     for ticket in ctx.jira.search(src.jql):
         found = _jira_commits(ctx, ticket.key, "jira_query")
+        if src.attachments:
+            found += _attachment_patches(ctx, ticket, src.max_attachment_kb * 1024)
+        if src.linked_tickets:
+            found += _linked_patches(ctx, ticket)
         if not found:
-            ctx.warn(f"jira_query: no commit in the source range mentions {ticket.key}")
+            ctx.warn(f"jira_query: no patch found for {ticket.key} (commits, attachments, links)")
         patches += found
     return patches
+
+
+def _in_range(ctx: SourceContext, project: str, sha: str) -> bool:
+    repo = ctx.tree / project
+    return is_ancestor(repo, sha, ctx.head) and not is_ancestor(repo, sha, ctx.base)
+
+
+def _project_for_diff(ctx: SourceContext, diff: str, hint: str | None) -> tuple[str, str] | None:
+    """(project, project-relative diff): from a repo mapping, tree paths, or existing files."""
+    if hint in ctx.projects:
+        return hint, diff
+    files = parse_diff(diff).files
+    if not files:
+        return None
+    owners = {project_for_path(f.path, ctx.projects) for f in files}
+    if len(owners) == 1 and None not in owners:
+        project = owners.pop()
+        return project, strip_project_prefix(diff, project)
+    existing = [f.old_path or f.path for f in files if f.status != "A"] or [f.path for f in files]
+    matches = [
+        p for p in ctx.projects
+        if all(file_at(ctx.tree / p, ctx.head, path) is not None for path in existing[:5])
+    ]  # fmt: skip
+    return (matches[0], diff) if len(matches) == 1 else None
+
+
+def _diff_patch(
+    ctx: SourceContext,
+    diff: str,
+    name: str,
+    subject: str,
+    message: str,
+    source: str,
+    keys: list[str],
+    hint: str | None = None,
+) -> RawPatch | None:
+    if "diff --git" not in diff and "\n+++ " not in diff:
+        return None
+    where = _project_for_diff(ctx, diff, hint)
+    if where is None:
+        ctx.warn(f"{source}: cannot tell which project {name} belongs to (set a repo_map)")
+        return None
+    project, diff = where
+    path = ctx.downloads / re.sub(r"[^\w.-]+", "_", name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(diff)
+    return RawPatch(project=project, subject=subject, message=message, diff=diff, source=source,
+                    diff_path=str(path), jira_keys=list(keys))  # fmt: skip
+
+
+def _attachment_patches(ctx: SourceContext, ticket: Ticket, max_bytes: int) -> list[RawPatch]:
+    found = []
+    for a in ticket.attachments:
+        if not a["filename"].endswith((".diff", ".patch")):
+            continue
+        try:
+            data = ctx.jira.download(a["url"], max_bytes).decode(errors="replace")
+        except JiraError as e:
+            ctx.warn(f"jira_query: {ticket.key} attachment {a['filename']}: {e}")
+            continue
+        tmp = ctx.downloads / ticket.key / a["filename"]
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(data)
+        subject, message, author, diff = _parse_patch_file(tmp)
+        if subject == tmp.stem:  # a plain diff: the ticket says what it is
+            subject, message = ticket.summary, f"{ticket.summary}\n\n{ticket.description}".strip()
+        raw = _diff_patch(ctx, diff, f"{ticket.key}/{a['filename']}", subject, message,
+                          "jira_attachment", [ticket.key])  # fmt: skip
+        if raw:
+            raw.author = author
+            found.append(raw)
+    return found
+
+
+def _ticket_text(ctx: SourceContext, ticket: Ticket) -> str:
+    try:
+        remote = ctx.jira.remote_links(ticket.key)
+    except JiraError as e:
+        ctx.warn(f"jira_query: {ticket.key} remote links: {e}")
+        remote = []
+    return "\n".join([ticket.description, *ticket.comments, *(r["url"] for r in remote)])
+
+
+def _linked_patches(ctx: SourceContext, ticket: Ticket) -> list[RawPatch]:
+    found: list[RawPatch] = []
+    sources = [(ticket, [ticket.key])]
+    for key in ticket.issue_links:
+        try:
+            linked = ctx.jira.get(key)
+        except JiraError as e:
+            ctx.warn(f"jira_query: linked ticket {key}: {e}")
+            continue
+        if linked:
+            sources.append((linked, [ticket.key, key]))
+    for t, keys in sources:
+        for ref in find_refs(_ticket_text(ctx, t), ctx.config.code_hosts):
+            found += _ref_patches(ctx, ref, keys)
+    return found
+
+
+def _local_commit(ctx: SourceContext, sha: str, project: str | None) -> RawPatch | None:
+    hit = _find_commit(ctx, sha, project)
+    if hit is None or not _in_range(ctx, *hit):
+        return None
+    return RawPatch.from_commit(hit[0], commit_info(ctx.tree / hit[0], hit[1]), "jira_link")
+
+
+def _ref_patches(ctx: SourceContext, ref: CodeRef, keys: list[str]) -> list[RawPatch]:
+    host = host_for(ref, ctx.config.code_hosts)
+    hint = host.repo_map.get(ref.repo)
+    found: list[RawPatch] = []
+    try:
+        if ref.sha:
+            raw = _local_commit(ctx, ref.sha, hint)
+            if raw is None:  # not in the source tree: take the diff from the host
+                diff = HostClient(host).diff(ref)
+                raw = _diff_patch(ctx, diff, f"{ref.repo}/{ref.sha}", ref.sha[:12], ref.url,
+                                  "jira_link", keys, hint)  # fmt: skip
+            found += [raw] if raw else []
+        else:
+            client = HostClient(host)
+            pr = client.pull_request(ref)
+            local = [r for sha, _ in pr.commits if (r := _local_commit(ctx, sha, hint))]
+            if local:
+                found += local
+            else:  # squashed or rebased on merge: the PR's diff stands for it
+                text = f"{pr.title}\n\n{pr.body}\n\n{ref.url}".strip()
+                raw = _diff_patch(ctx, client.diff(ref), f"{ref.repo}/pr-{ref.number}",
+                                  pr.title or ref.url, text, "jira_link", keys, hint)  # fmt: skip
+                found += [raw] if raw else []
+    except (CodeHostError, KeyError, OSError) as e:
+        ctx.warn(f"jira_query: {ref.url}: {e}")
+    for raw in found:
+        raw.jira_keys = list(dict.fromkeys([*raw.jira_keys, *keys]))
+    return found
 
 
 ADAPTERS = {
