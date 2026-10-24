@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from patchmig.confidence import describe
 from patchmig.config import ProjectConfig
 from patchmig.gitutil import GitError
 from patchmig.knowledge.trees import Trees
@@ -86,7 +87,7 @@ def pr_body(
     mig = r.get("migration") or {}
     ver = r.get("verification") or {}
     queue = queue_of(cluster, config.thresholds).replace("_", " ")
-    conf = f"{cluster.confidence:.2f}" if cluster.confidence is not None else "–"
+    conf = describe(cluster.confidence)
     m = config.migration
     lines = [
         f"Migration of an OEM patch cluster from Android {m.source_version} to Android "
@@ -118,14 +119,14 @@ def pr_body(
     final = (mig.get("agent") or {}).get("final")
     if final:
         lines += ["", f"Cluster agent ({final['outcome']}, confidence "
-                  f"{final['confidence']:.2f}): {final['summary']}"]  # fmt: skip
+                  f"{describe(final['confidence'])}): {final['summary']}"]  # fmt: skip
         lines += [f"- Risk to check: {risk}" for risk in final.get("risks", [])]
     soft = (mig.get("guardrails") or {}).get("soft", [])
     lines += [f"- Note: {s}" for s in soft]
     review = mig.get("review")
     if review and not review.get("error"):
         lines += ["", f"Reviewer agent ({review['verdict']}, confidence "
-                  f"{review['confidence']:.2f}): {review['summary']}"]  # fmt: skip
+                  f"{describe(review['confidence'])}): {review['summary']}"]  # fmt: skip
         lines += [f"- {issue}" for issue in review.get("issues", [])]
     if ver:
         sel = ver.get("selection") or {}

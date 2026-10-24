@@ -10,7 +10,9 @@ connection test, which uses the stored credentials) needs the admin token as a B
 from __future__ import annotations
 
 import hmac
+import json
 from dataclasses import dataclass
+from html import escape
 from importlib.resources import files
 from pathlib import Path
 
@@ -19,7 +21,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from patchmig import steps
+from patchmig import confidence, steps
 from patchmig.config import ConfigError, ProjectConfig, load_config
 from patchmig.config.editor import SettingsEditor, SettingsError
 from patchmig.ledger import LedgerStore, Run
@@ -30,9 +32,11 @@ STATIC = Path(str(files("patchmig.web").joinpath("static")))
 
 
 def index_html(static: bool) -> str:
+    """The page, with the mode and the confidence scale (shared with the agents' briefs)."""
     html = (STATIC / "index.html").read_text()
     mode = "static" if static else "live"
-    return html.replace('data-mode="live"', f'data-mode="{mode}"')
+    levels = escape(json.dumps(confidence.scale()), quote=True)
+    return html.replace('data-mode="live"', f'data-mode="{mode}" data-confidence="{levels}"')
 
 
 @dataclass

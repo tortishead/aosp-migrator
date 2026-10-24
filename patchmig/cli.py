@@ -12,6 +12,7 @@ from sqlalchemy import select
 from patchmig import steps
 from patchmig.agents.adapter import AgentRuntimeError, AgentTask, ToolPolicy, extract_json
 from patchmig.agents.copilot import CopilotCliAdapter
+from patchmig.confidence import describe
 from patchmig.config import ConfigError, ProjectConfig, dump_config, load_config
 from patchmig.jira_client import HttpJiraClient, JiraClient
 from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
@@ -391,7 +392,7 @@ def review_list(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None)
             continue
         typer.echo(f"{queue.replace('_', ' ')} ({len(clusters)})")
         for c in clusters:
-            conf = f"{c.confidence:.2f}" if c.confidence is not None else "  – "
+            conf = describe(c.confidence) if c.confidence is not None else "  – "
             prs = [e["url"] for e in (c.result.get("publish") or {}).get("projects", {}).values()]
             typer.echo(f"  [{c.id}] {conf} {c.state.value:<14} {c.name}")
             for url in prs:

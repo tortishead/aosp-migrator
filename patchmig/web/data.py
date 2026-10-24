@@ -111,6 +111,7 @@ def patches(store: LedgerStore, run_id: int) -> list[dict]:
          "commit": p.commit_sha, "jira_keys": p.jira_keys, "role": p.chain_role,
          "state": p.state.value, "cluster_id": p.cluster_id,
          "rung": (p.verdict or {}).get("rung"), "confidence": p.confidence,
+         "intent_confidence": (p.intent_detail or {}).get("confidence"),
          "has_intent": bool(p.intent), "author": p.author,
          "files": len(p.footprint.get("files", []))}
         for p in rows
@@ -147,7 +148,7 @@ def clusters(store: LedgerStore, run_id: int) -> list[dict]:
     by_order = {c.order_index: c.id for c in rows}
     return [
         {"id": c.id, "order": c.order_index, "name": c.name, "state": c.state.value,
-         "members": c.result.get("members", []),
+         "confidence": c.confidence, "members": c.result.get("members", []),
          "projects": sorted({projects[m] for m in c.result.get("members", [])}),
          "forecast": (c.result.get("forecast") or {}).get("level"),
          "depends_on": [by_order[o] for o in c.result.get("depends_on_order", [])],

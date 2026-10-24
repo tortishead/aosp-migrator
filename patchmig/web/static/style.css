@@ -279,3 +279,19 @@ ul.notes > li.note { padding: 6px 0; border-bottom: 1px solid var(--line); }
 ul.notes > li.note:last-child { border-bottom: 0; }
 .note-text { white-space: pre-wrap; }
 ul.plain.notes { list-style: none; padding-left: 0; }
+
+/* confidence scale (patchmig/confidence.py) */
+:root { --c-certain: #17663a; --c-confident: #1f8a8a; --c-unsure: #c77700; --c-weak: #d4502a; --c-guess: #c62828; }
+@media (prefers-color-scheme: dark) {
+  :root { --c-certain: #4fb878; --c-confident: #4cc2c2; --c-unsure: #f0a83a; --c-weak: #f08a5d; --c-guess: #f07067; }
+}
+.conf { display: inline-block; white-space: nowrap; font-size: 12px; font-weight: 600; border: 1.5px solid currentColor; border-radius: 10px; padding: 0 7px; font-variant-numeric: tabular-nums; }
+h1 .conf { vertical-align: 2px; }
+.conf-certain { color: var(--c-certain); }
+.conf-confident { color: var(--c-confident); }
+.conf-unsure { color: var(--c-unsure); }
+.conf-weak { color: var(--c-weak); }
+.conf-guess { color: var(--c-guess); }
+details.conf-scale { margin: 0 0 12px; }
+details.conf-scale table { width: auto; }
+details.conf-scale td { border-bottom: 0; padding: 2px 10px 2px 0; }

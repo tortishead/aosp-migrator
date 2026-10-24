@@ -259,6 +259,7 @@ def apply(
 ) -> None:
     """Migrate the needed clusters onto the target tree, one branch per cluster."""
     from patchmig import notes as engineer_notes
+    from patchmig.confidence import describe
     from patchmig.migrate import migrate
 
     cfg, store = ctx.config, ctx.store
@@ -292,7 +293,7 @@ def apply(
     if not report.outcomes:
         ctx.info(f"Run {rid}: no cluster to migrate (run migrate analyse first?)")
     for o in report.outcomes:
-        conf = f" confidence {o.confidence:.2f}" if o.confidence is not None else ""
+        conf = f" confidence {describe(o.confidence)}" if o.confidence is not None else ""
         ctx.info(f"  [{o.cluster_id}] {o.state:<14} {o.name}{conf}")
         if o.reason:
             ctx.info(f"        {o.reason}")
