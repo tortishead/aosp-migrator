@@ -24,8 +24,14 @@ migration later can share the same trees and repos. Beyond trees and patch sourc
 ```yaml
 budget:
   run_credits: 150               # stop the run at this many premium requests
-  cluster_credits: 15
+  cluster_credits: 15            # a cluster over it waits for a decision; others go on
   max_fix_attempts: 2
+llm:
+  models:                        # per agent; measure cheaper ones in the spike
+    cluster_agent: <model>
+    build_fixer: <model>
+    intent_writer: <cheaper model>
+    reviewer: <cheaper model>
 build:
   transport: ssh
   ssh:
