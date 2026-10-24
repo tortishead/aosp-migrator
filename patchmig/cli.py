@@ -519,13 +519,17 @@ def _open_run(config: Path, run_id: int | None) -> tuple[ProjectConfig, LedgerSt
         return cfg, store, s.get(Run, rid)
 
 
-def _github(cfg: ProjectConfig):
-    from patchmig.publish.github import HttpGithub
+def _review_host(cfg: ProjectConfig):
+    from patchmig.publish.hosts import ReviewHostError, client_for
 
-    if cfg.output is None or cfg.output.github is None:
-        typer.secho("No output.github section in the config.", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
-    return HttpGithub(cfg.output.github)
+    try:
+        return client_for(cfg)
+    except ReviewHostError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+    except (KeyError, OSError) as e:
+        typer.secho(f"The output host's token is not available ({e}).", fg="red", err=True)
+        raise typer.Exit(1) from e
 
 
 RunOption = Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")]
@@ -549,7 +553,8 @@ def publish_cmd(
 
     cfg, store, run = _open_run(config, run_id)
     try:
-        report = publish(cfg, store, run, None if dry_run else _github(cfg), cluster_ids=cluster,
+        api = None if dry_run else _review_host(cfg)
+        report = publish(cfg, store, run, api, cluster_ids=cluster,
                          include_unverified=unverified, dry_run=dry_run)  # fmt: skip
     except PublishError as e:
         typer.secho(str(e), fg=typer.colors.RED, err=True)
@@ -641,10 +646,10 @@ def review_decide(
 @review_app.command("sync")
 def review_sync(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
     """Read the PRs: merges and approvals approve, change requests and closes reject."""
-    from patchmig.review import sync_github
+    from patchmig.review import sync_reviews
 
     cfg, store, run = _open_run(config, run_id)
-    changes = sync_github(store, run, _github(cfg))
+    changes = sync_reviews(store, run, _review_host(cfg), cfg.output.target)
     typer.echo("\n".join(changes) if changes else "No changes.")
 
 

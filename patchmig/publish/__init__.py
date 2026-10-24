@@ -1,12 +1,13 @@
-"""Publish: one draft PR per verified cluster and GitHub repository.
+"""Publish: one draft PR per verified cluster and repository (GitHub, GitLab, Bitbucket).
 
-For each cluster, every target project with migrated commits is pushed to its GitHub repo
-(output.github.repo_map) as `<branch_prefix><project name>/r<run>-c<cluster>`, and a PR is
-opened against the target branch, or updated if it exists. A cluster spanning several repos gets
-one PR per repo, linked to each other. The PR body carries what a reviewer needs: intent, original
-patches, how each project was migrated, what the agents said, build and test results, and
-the review queue. Publishing again force-pushes the branch and refreshes the body, so it is
-safe to repeat after a fix or a re-migration.
+For each cluster, every target project with migrated commits is pushed to its repo on the
+output host (output.<target>.repo_map) as `<branch_prefix><project name>/r<run>-c<cluster>`,
+and a PR (GitLab: merge request) is opened against the target branch, or updated if it
+exists. A cluster spanning several repos gets one PR per repo, linked to each other. The PR
+body carries what a reviewer needs: intent, original patches, how each project was migrated,
+what the agents said, build and test results, and the review queue. Publishing again
+force-pushes the branch and refreshes the body, so it is safe to repeat after a fix or a
+re-migration.
 """
 
 from __future__ import annotations
@@ -22,7 +23,14 @@ from patchmig.knowledge.trees import Trees
 from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
 from patchmig.ledger.states import MIGRATED
 from patchmig.migrate.workspace import namespace
-from patchmig.publish.github import GithubApi, GithubError, push, push_token
+from patchmig.publish.hosts import (
+    ReviewApi,
+    ReviewHostError,
+    git_url_for,
+    output_of,
+    push,
+    push_env,
+)
 from patchmig.review import queue_of
 
 MARKER = "<!-- patchmig:cluster -->"
@@ -153,11 +161,12 @@ def pr_body(
 
 
 class Publisher:
-    def __init__(self, config: ProjectConfig, store: LedgerStore, run: Run, api: GithubApi):
-        if config.output is None or config.output.target != "github":
-            raise PublishError("publishing needs output.target 'github' with output.github")
+    def __init__(self, config: ProjectConfig, store: LedgerStore, run: Run, api: ReviewApi):
+        try:
+            self.kind, self.gh = output_of(config)
+        except ReviewHostError as e:
+            raise PublishError(str(e)) from e
         self.config = config
-        self.gh = config.output.github
         self.store = store
         self.run = run
         self.api = api
@@ -196,7 +205,7 @@ class Publisher:
         if unmapped:
             return PublishOutcome(
                 cluster.id, cluster.name, "failed",
-                reason=f"no GitHub repo for {', '.join(unmapped)} in output.github.repo_map",
+                reason=f"no repo for {', '.join(unmapped)} in output.{self.kind}.repo_map",
             )  # fmt: skip
         branch = branch_for(self.config, self.run.id, cluster.id)
         if dry_run:
@@ -205,14 +214,14 @@ class Publisher:
         members = _members(self.store, cluster)
         record = dict(cluster.result.get("publish") or {"projects": {}})
         record["projects"] = dict(record.get("projects", {}))
-        token = push_token(self.gh)
+        env = push_env(self.config)
         status = "updated" if record["projects"] else "published"
         title = pr_title(self.config, cluster)
         try:
             for project, info in projects.items():
                 repo = self.gh.repo_map[project]
-                url = self.gh.git_url.format(owner=self.gh.owner, repo=repo)
-                push(self.trees.target_repo(project), info["head"], url, branch, token)
+                url = git_url_for(self.config, repo)
+                push(self.trees.target_repo(project), info["head"], url, branch, env)
                 base = self.gh.base_branch_map.get(repo, self.gh.base_branch)
                 pr = self.api.find_pr(repo, branch)
                 merged = pr is not None and (pr.get("merged") or pr.get("merged_at"))
@@ -236,7 +245,7 @@ class Publisher:
                 e = record["projects"][project]
                 body = pr_body(self.config, cluster, members, project, urls)
                 self.api.update_pr(e["repo"], e["number"], title, body)
-        except (GitError, GithubError) as err:
+        except (GitError, ReviewHostError) as err:
             self._save(cluster, record | {"error": str(err), "at": _now()})
             return PublishOutcome(cluster.id, cluster.name, "failed", reason=str(err)[:500])
         record.pop("error", None)
@@ -254,7 +263,7 @@ def publish(
     config: ProjectConfig,
     store: LedgerStore,
     run: Run,
-    api: GithubApi,
+    api: ReviewApi,
     *,
     cluster_ids: list[int] | None = None,
     include_unverified: bool = False,

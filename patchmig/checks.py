@@ -66,9 +66,19 @@ def _who(host: RepoHost) -> str:
 
 def check_hosts(config: ProjectConfig) -> list[Check]:
     from patchmig.ingest.codehosts import CodeHostError
+    from patchmig.publish.hosts import PR_HOSTS, host_of
 
     out: list[Check] = []
-    for host in config.hosts():
+    hosts = list(config.hosts())
+    if (
+        config.output
+        and config.output.target in PR_HOSTS
+        and getattr(config.output, config.output.target)
+    ):
+        publish_to = host_of(config)  # its own token may differ from the target tree's
+        if all((h.url, h.token) != (publish_to.url, publish_to.token) for h in hosts):
+            hosts.append(publish_to)
+    for host in hosts:
         name = f"{host.kind} {host.url}"
         if not host.token:
             out.append((name, True, "no token: public repositories only"))
