@@ -98,9 +98,12 @@ class AgentRunner:
             try:
                 answer = self.adapter.run(current, attempt)
             except AgentRuntimeError as e:
+                # A timeout or crash mid-call was most likely billed: count it against the caps.
+                spent = cost if e.charged else 0.0
                 self._log(
-                    current, attempt, model=model, started_at=started, duration_s=0.0,
-                    credits=0.0, ok=False, error=str(e)[:2000], output="",
+                    current, attempt, model=model, started_at=started,
+                    duration_s=(datetime.now(UTC) - started).total_seconds(),
+                    credits=spent, ok=False, error=str(e)[:2000], output="",
                 )  # fmt: skip
                 raise AgentFailed(str(e)) from e
             credits += cost

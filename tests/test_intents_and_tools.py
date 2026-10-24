@@ -135,6 +135,18 @@ def test_tools_read_the_right_tree_versions(ctx):
     assert "record the reason for mode changes" in history
 
 
+def test_tools_read_the_manifest_once_per_tree(ctx, monkeypatch):
+    import patchmig.mcp_server.tools as tools
+
+    reads = []
+    real = tools.tree_projects
+    monkeypatch.setattr(tools, "tree_projects", lambda *a: reads.append(a) or real(*a))
+    for _ in range(3):
+        search_code(ctx, "target", "class", fixed=True)
+        find_files(ctx, "source", "Power")
+    assert len(reads) == 2  # source and target, not once per project and call
+
+
 def test_ledger_tools_are_scoped_to_run(ctx, ingested):
     _, cfg, store, run = ingested
     listed = list_patches(ctx)

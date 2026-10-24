@@ -25,9 +25,10 @@ from patchmig.analysis.clustering import ClusterPlan, find_edges, plan_clusters
 from patchmig.analysis.diffs import split_diff
 from patchmig.analysis.fold import fold, tree_relative
 from patchmig.analysis.forecast import forecast
-from patchmig.analysis.patches import PatchView, view
+from patchmig.analysis.patches import PatchView, load_diff, view
 from patchmig.analysis.reverts import cancelled
 from patchmig.config import ProjectConfig
+from patchmig.gitutil import has_binary
 from patchmig.knowledge import history
 from patchmig.knowledge.footprint import footprint_map
 from patchmig.knowledge.trees import Trees
@@ -125,7 +126,12 @@ def _fold_cluster(
     net: dict[str, str] = {}
     errors: list[str] = []
     for project in sorted({m.project for m in active}):
-        diff, error = fold(trees, project, [m.diff for m in active if m.project == project])
+        diffs = [
+            load_diff(config, m.patch, binary=True) if has_binary(m.diff) else m.diff
+            for m in active
+            if m.project == project
+        ]
+        diff, error = fold(trees, project, diffs)
         if error:
             errors.append(error)
         elif diff is not None:

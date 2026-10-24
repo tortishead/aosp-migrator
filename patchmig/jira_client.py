@@ -242,8 +242,15 @@ class HttpJiraClient:
         self._send("PUT", self._issue(key), {"update": {"labels": [{"add": x} for x in labels]}})
 
     def comments(self, key: str) -> list[dict]:
-        data = self._get(f"{self._issue(key)}/comment", {"maxResults": 1000}) or {}
-        return [{"id": str(c["id"]), "body": c.get("body") or ""} for c in data.get("comments", [])]
+        """Every comment, oldest first. Paged: Jira caps a page, often below 100."""
+        out: list[dict] = []
+        while True:
+            params = {"startAt": len(out), "maxResults": 100}
+            data = self._get(f"{self._issue(key)}/comment", params) or {}
+            page = data.get("comments", [])
+            out += [{"id": str(c["id"]), "body": c.get("body") or ""} for c in page]
+            if not page or len(out) >= data.get("total", 0):
+                return out
 
     def add_comment(self, key: str, body: str) -> str:
         return str(self._send("POST", f"{self._issue(key)}/comment", {"body": body})["id"])

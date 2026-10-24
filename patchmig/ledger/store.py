@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, func, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from patchmig.config import ProjectConfig, config_hash
 from patchmig.config.loader import config_to_dict
@@ -14,6 +15,9 @@ from patchmig.ledger.models import Base, Cluster, Patch, Run, Transition
 from patchmig.ledger.states import InvalidTransition, State, can_transition
 
 ENTITY_TYPES: dict[type, str] = {Patch: "patch", Cluster: "cluster"}
+# Writers wait this long for each other (parallel verify slots, the web settings, a CLI run)
+# instead of failing at once with "database is locked".
+BUSY_TIMEOUT_S = 30
 
 
 def _add_missing_columns(engine: Engine) -> None:
@@ -42,14 +46,20 @@ class LedgerStore:
     def open(cls, path: Path | str) -> LedgerStore:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        store = cls(create_engine(f"sqlite:///{path}"))
+        engine = create_engine(f"sqlite:///{path}", connect_args={"timeout": BUSY_TIMEOUT_S})
+        store = cls(engine)
         Base.metadata.create_all(store.engine)
         _add_missing_columns(store.engine)
         return store
 
     @classmethod
     def in_memory(cls) -> LedgerStore:
-        store = cls(create_engine("sqlite://"))
+        """A throwaway ledger (tests, demos). One shared connection, so every thread sees the
+        same database: by default each thread would get a new, empty one."""
+        engine = create_engine(
+            "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+        )
+        store = cls(engine)
         Base.metadata.create_all(store.engine)
         return store
 
@@ -65,6 +75,15 @@ class LedgerStore:
             )
             s.add(run)
         return run
+
+    def discard_run(self, run: Run) -> bool:
+        """Delete a run that holds nothing yet (a failed ingest); True if it was deleted."""
+        with self.session() as s, s.begin():
+            if s.scalar(select(func.count()).select_from(Patch).where(Patch.run_id == run.id)):
+                return False
+            if (row := s.get(Run, run.id)) is not None:
+                s.delete(row)
+        return True
 
     def latest_run(self) -> Run | None:
         with self.session() as s:

@@ -39,6 +39,7 @@ from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
 from patchmig.ledger.states import MIGRATED
 from patchmig.migrate import Migrator, guardrails, ladder
 from patchmig.migrate.workspace import IDENTITY, ProjectWorktree
+from patchmig.review import below_quick
 from patchmig.verify.host import BuildHost, CommandResult, host_for
 from patchmig.verify.selection import Selection, select
 
@@ -271,10 +272,12 @@ class Verifier:
                 "no affected module or test found for the changed files; add build.module_map "
                 "entries for them, then verify again",
             )  # fmt: skip
+        res: CommandResult | None = None  # the build of the current change; None: to build
         while sel.modules:
-            cmd, res = self._build(slot, sel)
-            record["builds"].append(self._record(cmd, res, attempt=attempt))
-            self._save(cluster, record)
+            if res is None:
+                cmd, res = self._build(slot, sel)
+                record["builds"].append(self._record(cmd, res, attempt=attempt))
+                self._save(cluster, record)
             if res.ok:
                 break
             if attempt >= self.config.budget.max_fix_attempts or self.runner is None:
@@ -299,7 +302,7 @@ class Verifier:
                                 f"{fix.summary}")  # fmt: skip
                 if error := self._apply_all(slot, projects):
                     return self._finish(cluster, State.FAILED, record, error)
-                continue
+                continue  # nothing changed: the failed build stands, ask again without one
             if fix.outcome == "cannot_fix":
                 return self._finish(
                     cluster, State.FAILED, record, f"build fails; agent cannot fix: {fix.summary}"
@@ -308,6 +311,7 @@ class Verifier:
             previous.append(fix.summary)
             if error := self._apply_all(slot, projects):
                 return self._finish(cluster, State.FAILED, record, error)
+            res = None
 
         confidence = cluster.confidence
         if fix_confidence is not None and confidence is not None:
@@ -333,7 +337,7 @@ class Verifier:
             return self._finish(
                 cluster, State.FAILED, record, "tests fail with the cluster and pass without it"
             )
-        cap = round(max(self.config.thresholds.quick_approve - 0.01, 0.0), 2)
+        cap = below_quick(self.config.thresholds)
         return self._finish(
             cluster, State.VERIFIED, record,
             "built; tests fail on the unpatched target too (not caused by the cluster)",

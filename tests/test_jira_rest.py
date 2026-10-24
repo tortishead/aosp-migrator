@@ -72,6 +72,15 @@ def test_export_writes_through_rest(jira):
     assert fake.issues[key]["labels"] == ["mig-A14-A15-migrated"]
 
 
+def test_comments_are_read_past_the_first_page(jira):
+    """The export finds its marker comment by reading them all: else it would add another."""
+    fake, client, _ = jira
+    for n in range(5):
+        fake.comment("OEM-3", "bot", f"comment {n}")
+    assert [c["body"] for c in client.comments("OEM-3")] == [f"comment {n}" for n in range(5)]
+    assert fake.requests.count("GET /rest/api/2/issue/OEM-3/comment") == 3  # pages of 2
+
+
 def test_wrong_endpoint_or_token_says_what_to_fix(jira, monkeypatch):
     fake, _, cfg = jira
     if fake.cloud:  # a Cloud site configured as Server hits the removed search

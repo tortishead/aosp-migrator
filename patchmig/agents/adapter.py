@@ -48,7 +48,15 @@ class RawAnswer:
 
 
 class AgentRuntimeError(Exception):
-    """The runtime could not produce an answer (not installed, timed out, crashed)."""
+    """The runtime could not produce an answer (not installed, timed out, crashed).
+
+    `charged` says whether the request probably reached the model, and so cost credits: a
+    timeout or a crash after the start does, a missing executable or sign-in does not.
+    """
+
+    def __init__(self, message: str, charged: bool = False):
+        super().__init__(message)
+        self.charged = charged
 
 
 class LlmAdapter(Protocol):
@@ -94,6 +102,13 @@ Do not add fields. Do not wrap it in other text after the block.
 {schema}
 ```
 """
+
+
+def truncate(text: str, limit: int) -> str:
+    """At most `limit` characters of a brief section, saying how much was cut."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n[... truncated, {len(text) - limit} more characters ...]"
 
 
 def answer_instructions(schema: type[BaseModel]) -> str:

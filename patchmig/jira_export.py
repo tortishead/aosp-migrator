@@ -24,7 +24,7 @@ from sqlalchemy import select
 from patchmig.config import ProjectConfig
 from patchmig.jira_client import JiraError, JiraWriter
 from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
-from patchmig.review import APPROVABLE
+from patchmig.review import is_approved
 
 OUTCOME_LABEL = {
     State.VERIFIED: "migrated",
@@ -121,11 +121,7 @@ def plan(config: ProjectConfig, store: LedgerStore, run: Run) -> list[TicketExpo
             select(Cluster).where(Cluster.run_id == run.id).order_by(Cluster.order_index)
         ).all()
         patches = s.scalars(select(Patch).where(Patch.run_id == run.id).order_by(Patch.seq)).all()
-    approved = {
-        c.id: c
-        for c in clusters
-        if (c.result.get("review") or {}).get("decision") == "approved" and c.state in APPROVABLE
-    }
+    approved = {c.id: c for c in clusters if is_approved(c)}
     by_key: dict[str, list[tuple[Patch, Cluster]]] = {}
     untracked: dict[int, list[Patch]] = {}
     for p in patches:

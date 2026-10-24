@@ -104,18 +104,21 @@ def test_copilot_subprocess_success_and_errors(tmp_path: Path, fake_copilot, mon
     assert calls()[0]["cwd"] == str(tmp_path) and calls()[0]["auto_update"] == "false"
 
     monkeypatch.setenv("FAKE_COPILOT_MODE", "fail")
-    with pytest.raises(AgentRuntimeError, match="exited with 3: boom"):
+    with pytest.raises(AgentRuntimeError, match="exited with 3: boom") as failed:
         adapter.run(_task(tmp_path), 1)
+    assert failed.value.charged  # the request reached Copilot
 
     monkeypatch.setenv("FAKE_COPILOT_MODE", "sleep")
     slow = CopilotCliAdapter(LlmConfig(executable=str(exe), timeout_seconds=10), tmp_path)
     slow.config.timeout_seconds = 1  # below the schema minimum, for test speed
-    with pytest.raises(AgentRuntimeError, match="timed out"):
+    with pytest.raises(AgentRuntimeError, match="timed out") as timed_out:
         slow.run(_task(tmp_path), 1)
+    assert timed_out.value.charged
 
     missing = CopilotCliAdapter(LlmConfig(executable=str(tmp_path / "nope")), tmp_path)
-    with pytest.raises(AgentRuntimeError, match="not found"):
+    with pytest.raises(AgentRuntimeError, match="not found") as not_found:
         missing.run(_task(tmp_path), 1)
+    assert not not_found.value.charged
 
 
 @pytest.fixture
@@ -165,6 +168,19 @@ def test_runtime_error_is_logged_without_credits(runner_env, tmp_path):
         runner.run(_task(tmp_path))
     (row,) = _calls(store)
     assert not row.ok and row.credits == 0.0
+
+
+def test_charged_runtime_error_counts_against_the_budget(runner_env, tmp_path):
+    """A timeout after the model started was billed: the caps must see it."""
+    store, _, make = runner_env
+    timeout = AgentRuntimeError("Copilot CLI timed out after 900s", charged=True)
+    runner, _ = make(lambda t, a: timeout, BudgetConfig(cluster_credits=1.5))
+    with pytest.raises(AgentFailed, match="timed out"):
+        runner.run(_task(tmp_path, cluster_id=4))
+    (row,) = _calls(store)
+    assert not row.ok and row.credits == 1.0
+    with pytest.raises(BudgetExceeded, match="cluster 4"):
+        runner.run(_task(tmp_path, cluster_id=4))
 
 
 def test_run_and_cluster_budgets(runner_env, tmp_path):

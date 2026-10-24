@@ -7,7 +7,7 @@ working tree, so agents see exactly the versions being migrated.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +32,7 @@ class ToolContext:
     config: ProjectConfig
     store: LedgerStore
     run_id: int
+    _projects: dict[str, list[str]] = field(default_factory=dict, repr=False)
 
     def tree(self, tree: Tree) -> tuple[Path, str]:
         t = self.config.trees.source if tree == "source" else self.config.trees.target
@@ -39,8 +40,11 @@ class ToolContext:
         return t.path, ref
 
     def projects(self, tree: Tree) -> list[str]:
-        t = self.config.trees.source if tree == "source" else self.config.trees.target
-        return tree_projects(t.path, t.manifest)
+        """The tree's projects, from its manifest (read once: tools look them up per project)."""
+        if tree not in self._projects:
+            t = self.config.trees.source if tree == "source" else self.config.trees.target
+            self._projects[tree] = tree_projects(t.path, t.manifest)
+        return self._projects[tree]
 
     def repo(self, tree: Tree, project: str) -> tuple[Path, str]:
         if project not in self.projects(tree):

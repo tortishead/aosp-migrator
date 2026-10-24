@@ -15,6 +15,7 @@ Run ``python -m tests.fixtures.scenario <dir>`` to write a tree for manual inspe
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -448,6 +449,37 @@ def build_scenario(root: Path) -> Scenario:
     _manifest(source, SOURCE_HEAD_TAG)
     _manifest(target, TARGET_BASE_TAG)
     return Scenario(root=root, source=source, target=target, commits=commits)
+
+
+def variant(scenario: Scenario, root: Path) -> Scenario:
+    """A private copy of the scenario's trees, for a test that adds a situation of its own.
+
+    The shared scenario and EXPECTED stay as they are; the test adds commits to the copy
+    (oem_commit) and proves its situation exists before testing the behaviour.
+    """
+    shutil.copytree(scenario.root, root, symlinks=True)
+    return Scenario(root, root / "source", root / "target", dict(scenario.commits))
+
+
+def oem_commit(
+    scenario: Scenario, project: str, files: dict[str, str | bytes], message: str, *, at: int
+) -> str:
+    """Commit `files` on the source head of `project`, dated `at`, and move the head tag.
+
+    A date older than the parent's is what a rebase or a cherry-pick leaves behind.
+    """
+    repo = scenario.source / project
+    for rel, content in files.items():
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content)
+    git = _Git(at - 3600)  # commit() advances the clock by an hour first
+    sha = git.commit(repo, message, OEM)
+    git(repo, "tag", "-f", SOURCE_HEAD_TAG)
+    return sha
 
 
 if __name__ == "__main__":

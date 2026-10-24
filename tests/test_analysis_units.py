@@ -50,6 +50,17 @@ def test_project_limit_also_splits_and_dependencies_order_clusters():
     assert plans[1].depends_on == {0}
 
 
+def test_interleaved_split_clusters_do_not_wait_for_each_other():
+    from patchmig.analysis.clustering import ClusterPlan, _order
+
+    v = {i: _view(i) for i in range(1, 5)}
+    cut = [Edge(1, 2, "overlap", "a"), Edge(3, 4, "overlap", "b")]
+    x, y = ClusterPlan([v[1], v[4]], cut=cut), ClusterPlan([v[2], v[3]], cut=cut)
+    plans = _order([y, x])
+    assert [[m.id for m in p.members] for p in plans] == [[1, 4], [2, 3]]
+    assert plans[0].depends_on == set() and plans[1].depends_on == {0}
+
+
 DIFF = """diff --git a/A.java b/A.java
 index 1..2 100644
 --- a/A.java

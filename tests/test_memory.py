@@ -204,3 +204,13 @@ def test_needs_a_person_lists_open_questions(tmp_path, monkeypatch):
     text = run_report(p.store, p.run.id)
     assert "## Needs a person" in text and "Keep mode on suspend?" in text
     assert p.cluster_of("P1").state == State.NEEDS_DECISION
+
+
+def test_lesson_names_cannot_leave_the_lessons_folder(tmp_path):
+    mem = Memory(tmp_path / "mem")
+    (tmp_path / "mem").mkdir()
+    victim = tmp_path / "notes.md"
+    victim.write_text("keep me")
+    with pytest.raises(MemoryRepoError, match="no proposed lesson"):
+        mem.reject("../../../notes", "mallory")
+    assert victim.read_text() == "keep me"

@@ -21,6 +21,7 @@ class FileDiff:
     added: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     changed: list[tuple[int, int]] = field(default_factory=list)  # old-side ranges, inclusive
+    binary: bool = False  # content not in the diff ("Binary files ... differ")
 
     @property
     def path(self) -> str:
@@ -60,6 +61,8 @@ def split_diff(diff: str) -> list[FileDiff]:
                 current.old_path = line.removeprefix("rename from ")
             elif line.startswith("rename to "):
                 current.new_path = line.removeprefix("rename to ")
+            elif line.startswith(("Binary files ", "GIT binary patch")):
+                current.binary = True
             continue
         if line.startswith("-"):
             current.removed.append(line[1:])

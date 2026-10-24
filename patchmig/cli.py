@@ -12,7 +12,7 @@ from sqlalchemy import select
 from patchmig.agents.adapter import AgentRuntimeError, AgentTask, ToolPolicy, extract_json
 from patchmig.agents.copilot import CopilotCliAdapter
 from patchmig.agents.intent import export_review_sheet, write_intents
-from patchmig.agents.runner import AgentRunner
+from patchmig.agents.runner import AgentFailed, AgentRunner, BudgetExceeded
 from patchmig.analysis import AnalysisError, analyse
 from patchmig.config import ConfigError, ProjectConfig, dump_config, load_config
 from patchmig.ingest import IngestError, ingest
@@ -37,6 +37,8 @@ ConfigOption = Annotated[
     Path, typer.Option("--config", "-c", help="Project config file", envvar="PATCHMIG_CONFIG")
 ]
 DEFAULT_CONFIG = Path("project.yaml")
+RunOption = Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")]
+ByOption = Annotated[str, typer.Option("--by", help="Who decides (recorded as human:<name>)")]
 
 
 def _load(path: Path) -> ProjectConfig:
@@ -138,6 +140,7 @@ def ingest_cmd(
     try:
         report = ingest(cfg, store, run, jira)
     except IngestError as e:
+        store.discard_run(run)  # else the empty run would become "the latest run"
         typer.secho(f"Ingest failed: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from e
     typer.echo(f"Run {run.id}: {report.total} patches")
@@ -160,7 +163,7 @@ def ingest_cmd(
 @app.command("patches")
 def patches_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
-    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    run_id: RunOption = None,
 ) -> None:
     """List the patches of a run in order."""
     cfg = _load(config)
@@ -188,11 +191,26 @@ def _memory(cfg: ProjectConfig):
 
 
 def _latest_run_id(store: LedgerStore, run_id: int | None) -> int:
-    run_id = run_id or getattr(store.latest_run(), "id", None)
-    if run_id is None:
+    if run_id is not None:
+        with store.session() as s:
+            if s.get(Run, run_id) is None:
+                typer.secho(f"There is no run {run_id}.", fg=typer.colors.RED, err=True)
+                raise typer.Exit(1)
+        return run_id
+    latest = store.latest_run()
+    if latest is None:
         typer.echo("No runs yet. Start one with: migrate ingest")
         raise typer.Exit(1)
-    return run_id
+    return latest.id
+
+
+def _open_run(config: Path, run_id: int | None) -> tuple[ProjectConfig, LedgerStore, Run]:
+    """The config, the ledger and the run (the latest unless --run names one)."""
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    rid = _latest_run_id(store, run_id)
+    with store.session() as s:
+        return cfg, store, s.get(Run, rid)
 
 
 def _adapter(cfg: ProjectConfig) -> CopilotCliAdapter:
@@ -202,7 +220,7 @@ def _adapter(cfg: ProjectConfig) -> CopilotCliAdapter:
 @app.command("intents")
 def intents_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
-    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    run_id: RunOption = None,
     limit: Annotated[int | None, typer.Option(help="Ask the agent for at most N intents")] = None,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Only reuse earlier intents; no agent calls")
@@ -222,11 +240,8 @@ def intents_cmd(
 
     After adding, editing or removing notes, `--stale` rewrites only the affected intents.
     """
-    cfg = _load(config)
-    store = LedgerStore.open(cfg.ledger_path)
-    rid = _latest_run_id(store, run_id)
-    with store.session() as s:
-        run = s.get(Run, rid)
+    cfg, store, run = _open_run(config, run_id)
+    rid = run.id
     runner = None if dry_run else AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
     report = write_intents(
         cfg, store, run, runner, limit=limit, memory=_memory(cfg), redo=patch, stale=stale
@@ -291,17 +306,14 @@ def history_cmd(
 @app.command("analyse")
 def analyse_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
-    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    run_id: RunOption = None,
 ) -> None:
     """Decide which patches are still needed, cluster them and forecast each cluster.
 
     Deterministic: no agent calls, no credits.
     """
-    cfg = _load(config)
-    store = LedgerStore.open(cfg.ledger_path)
-    rid = _latest_run_id(store, run_id)
-    with store.session() as s:
-        run = s.get(Run, rid)
+    cfg, store, run = _open_run(config, run_id)
+    rid = run.id
     try:
         report = analyse(cfg, store, run)
     except AnalysisError as e:
@@ -326,7 +338,7 @@ def analyse_cmd(
 @app.command("clusters")
 def clusters_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
-    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    run_id: RunOption = None,
     show: Annotated[
         int | None, typer.Option("--show", help="Print one cluster's details and net diff")
     ] = None,
@@ -371,7 +383,7 @@ def clusters_cmd(
 @app.command("apply")
 def apply_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
-    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    run_id: RunOption = None,
     cluster: Annotated[
         list[int] | None, typer.Option("--cluster", help="Only this cluster id (repeatable)")
     ] = None,
@@ -398,11 +410,8 @@ def apply_cmd(
     from patchmig import notes as engineer_notes
     from patchmig.mcp_server.server import server_config
 
-    cfg = _load(config)
-    store = LedgerStore.open(cfg.ledger_path)
-    rid = _latest_run_id(store, run_id)
-    with store.session() as s:
-        run = s.get(Run, rid)
+    cfg, store, run = _open_run(config, run_id)
+    rid = run.id
     if redo and not cluster:
         typer.secho("--redo needs --cluster", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
@@ -456,7 +465,7 @@ def apply_cmd(
 @app.command("verify")
 def verify_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
-    run_id: Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")] = None,
+    run_id: RunOption = None,
     cluster: Annotated[
         list[int] | None, typer.Option("--cluster", help="Only this cluster id (repeatable)")
     ] = None,
@@ -468,11 +477,8 @@ def verify_cmd(
     """Build the affected modules of each migrated cluster on the build host, then test it."""
     from patchmig.mcp_server.server import server_config
 
-    cfg = _load(config)
-    store = LedgerStore.open(cfg.ledger_path)
-    rid = _latest_run_id(store, run_id)
-    with store.session() as s:
-        run = s.get(Run, rid)
+    cfg, store, run = _open_run(config, run_id)
+    rid = run.id
     runner = None if no_fix else AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
     try:
         report = verify(
@@ -511,14 +517,6 @@ def build_check_cmd(config: ConfigOption = DEFAULT_CONFIG) -> None:
         raise typer.Exit(1)
 
 
-def _open_run(config: Path, run_id: int | None) -> tuple[ProjectConfig, LedgerStore, Run]:
-    cfg = _load(config)
-    store = LedgerStore.open(cfg.ledger_path)
-    rid = _latest_run_id(store, run_id)
-    with store.session() as s:
-        return cfg, store, s.get(Run, rid)
-
-
 def _review_host(cfg: ProjectConfig):
     from patchmig.publish.hosts import ReviewHostError, client_for
 
@@ -530,10 +528,6 @@ def _review_host(cfg: ProjectConfig):
     except (KeyError, OSError) as e:
         typer.secho(f"The output host's token is not available ({e}).", fg="red", err=True)
         raise typer.Exit(1) from e
-
-
-RunOption = Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")]
-ByOption = Annotated[str, typer.Option("--by", help="Who decides (recorded as human:<name>)")]
 
 
 @app.command("publish")
@@ -682,7 +676,7 @@ def jira_export_cmd(
                 typer.echo(f"  link: {url}")
             typer.echo("  " + t.comment.replace("\n", "\n  ").rstrip())
         return
-    report = export(cfg, store, run, HttpJiraClient(cfg.jira), create_missing=create_missing)
+    report = export(cfg, store, run, _jira(cfg, True), create_missing=create_missing)
     typer.echo(
         f"Updated {len(report.updated)} ticket(s), created {len(report.created)}, "
         f"closed {len(report.closed)}."
@@ -761,7 +755,11 @@ def memory_curate(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = Non
     cfg, store, run = _open_run(config, run_id)
     mem = _open_memory(cfg, create=True)
     runner = AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
-    r = curate(cfg, store, run, runner, mem)
+    try:
+        r = curate(cfg, store, run, runner, mem)
+    except (AgentFailed, BudgetExceeded) as e:
+        typer.secho(f"Curator: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
     if not r.signals:
         typer.echo("Nothing to learn from in this run (no feedback, decisions or fixes).")
         return

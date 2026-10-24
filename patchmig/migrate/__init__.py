@@ -31,10 +31,10 @@ from patchmig.agents.cluster import (
 )
 from patchmig.agents.runner import AgentFailed, AgentRunner, BudgetExceeded
 from patchmig.analysis.diffs import split_diff
-from patchmig.analysis.fold import tree_relative
+from patchmig.analysis.fold import fold, tree_relative
 from patchmig.analysis.patches import load_diff
 from patchmig.config import ProjectConfig
-from patchmig.gitutil import git
+from patchmig.gitutil import git, has_binary
 from patchmig.knowledge.trees import Trees
 from patchmig.knowledge.upstream import FileFate
 from patchmig.ledger import Cluster, KnowledgeItem, LedgerStore, Patch, Run, State
@@ -42,6 +42,7 @@ from patchmig.ledger.states import DROPPED, MIGRATED
 from patchmig.memory import Memory
 from patchmig.migrate import guardrails, ladder
 from patchmig.migrate.workspace import ProjectWorktree, WorkspaceError, Workspaces, dirs_for
+from patchmig.review import below_quick
 
 ACTOR = "orchestrator"
 AGENT_ACTOR = "agent:cluster_agent"
@@ -259,7 +260,7 @@ class Migrator:
                 result = ladder.cherry_pick(wt, [m.commit_sha for m in own])
                 info["cherry_pick"] = result.to_json()
             if (result is None or not result.ok) and project in net and not fold_errors:
-                result = ladder.apply_net_diff(wt, net[project])
+                result = ladder.apply_net_diff(wt, self._applicable(project, net[project], own))
                 info["net_diff"] = result.to_json()
                 if result.ok:
                     ladder.commit(wt, self._message(cluster, own or members, "net_diff"))
@@ -308,6 +309,14 @@ class Migrator:
             )
         ctx = self._context(cluster, members, changes, fates)
         return self._agent(cluster, members, ctx, worktrees, pending, expected, deletions, record)
+
+    def _applicable(self, project: str, net_diff: str, members: list[Patch]) -> str:
+        """The net diff as git can apply it: refolded with the binary files it changes."""
+        if not has_binary(net_diff) or not members:
+            return net_diff
+        diffs = [load_diff(self.config, m, binary=True) for m in members]
+        diff, error = fold(self.trees, project, diffs, binary=True)
+        return diff if error is None and diff is not None else net_diff
 
     # ---- the agent rung ---------------------------------------------------------------
 
@@ -503,7 +512,7 @@ class Migrator:
         )  # fmt: skip
 
     def _below_quick(self) -> float:
-        return round(max(self.config.thresholds.quick_approve - 0.01, 0.0), 2)
+        return below_quick(self.config.thresholds)
 
     def _review(self, cluster, ctx, worktrees, answer, report, record, confidence):
         if not self.config.migrate.review:
@@ -524,7 +533,9 @@ class Migrator:
                 notes,
                 self.mcp,
             )
-        except AgentFailed as e:
+        except (AgentFailed, BudgetExceeded) as e:
+            # The agent's change is paid for and passed the guardrails: keep it, unreviewed,
+            # out of the quick-approve queue. (Over a cap, the next agent call stops the run.)
             record["review"] = {"error": str(e)}
             return min(confidence, self._below_quick()), None, ""
         review: ReviewAnswer = outcome.data

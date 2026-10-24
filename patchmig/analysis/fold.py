@@ -16,8 +16,14 @@ from patchmig.knowledge.trees import Trees
 _PATH_LINE = re.compile(r"^(diff --git a/|--- a/|\+\+\+ b/|rename from |rename to )")
 
 
-def fold(trees: Trees, project: str, diffs: list[str]) -> tuple[str | None, str | None]:
-    """Return (net diff, error). The net diff is project-relative and may be empty."""
+def fold(
+    trees: Trees, project: str, diffs: list[str], binary: bool = False
+) -> tuple[str | None, str | None]:
+    """Return (net diff, error). The net diff is project-relative and may be empty.
+
+    Diffs that touch binary files must carry them (commit_info(binary=True)) to apply. The
+    net diff is text only unless `binary`, which makes it applicable to a binary file too.
+    """
     repo, base = trees.source_repo(project), trees.source_base(project)
     if base is None:
         return None, f"{project}: source base {trees.source.base_ref} not found"
@@ -37,7 +43,8 @@ def fold(trees: Trees, project: str, diffs: list[str]) -> tuple[str | None, str 
                         f"this cluster): {e.stderr.splitlines()[-1] if e.stderr else e}"
                     )
             tree = git(repo, "write-tree", env=env).strip()
-            return git(repo, "diff", "-M", "--no-color", "--no-ext-diff", base, tree), None
+            extra = ["--binary"] if binary else []
+            return git(repo, "diff", "-M", *extra, "--no-color", "--no-ext-diff", base, tree), None
         except GitError as e:
             return None, f"{project}: {e}"
 

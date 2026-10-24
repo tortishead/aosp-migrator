@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from patchmig.agents.adapter import AgentTask, ToolPolicy, answer_instructions
+from patchmig.agents.adapter import AgentTask, ToolPolicy, answer_instructions, truncate
 from patchmig.agents.intent import notes_section
 from patchmig.agents.runner import AgentOutcome, AgentRunner
 from patchmig.config import ProjectConfig
@@ -66,12 +66,6 @@ class ClusterContext:
     notes: str = ""  # what the engineers noted for this cluster (patchmig.notes)
 
 
-def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"\n[... truncated, {len(text) - limit} more characters ...]"
-
-
 def _policy(mcp: dict | None, write: bool) -> ToolPolicy:
     allow = (["write"] if write else []) + ([SERVER] if mcp else [])
     deny = ["shell"] if write else ["shell", "write"]
@@ -112,7 +106,7 @@ def cluster_brief(
             else ""
         ),
         fates=ctx.fates,
-        net_diff=_truncate(ctx.net_diff, config.migrate.brief_max_diff_chars),
+        net_diff=truncate(ctx.net_diff, config.migrate.brief_max_diff_chars),
         feedback=feedback,
     ) + answer_instructions(ClusterAnswer)
 
@@ -154,8 +148,8 @@ def review_brief(
         members=ctx.members,
         intent=ctx.intent,
         engineer_notes=notes_section(ctx.notes),
-        net_diff=_truncate(ctx.net_diff, limit),
-        migrated_diff=_truncate(migrated_diff, limit),
+        net_diff=truncate(ctx.net_diff, limit),
+        migrated_diff=truncate(migrated_diff, limit),
         agent_summary=agent_summary,
         notes=notes or "(none)",
     ) + answer_instructions(ReviewAnswer)
@@ -214,7 +208,7 @@ def fix_brief(
         members=ctx.members,
         intent=ctx.intent,
         engineer_notes=notes_section(ctx.notes),
-        migrated_diff=_truncate(migrated_diff, config.migrate.brief_max_diff_chars),
+        migrated_diff=truncate(migrated_diff, config.migrate.brief_max_diff_chars),
         command=command,
         errors=errors,
         previous=earlier,

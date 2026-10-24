@@ -148,7 +148,11 @@ def textual(
     matched = total = added_total = 0
     missing: list[str] = []
     located: list[str] = []
+    binary: list[str] = []
     for fd in files:
+        if fd.binary:  # no lines to compare: such a patch is never proven upstream here
+            binary.append(fd.path)
+            continue
         fate = fates.get((project, fd.path))
         location = fate.target_location if fate else (project, fd.new_path or fd.path)
         if location is None:
@@ -179,7 +183,9 @@ def textual(
     evidence = {"matched": matched, "total": total, "target_files": located}
     if missing:
         evidence["missing"] = missing
-    if added_total and matched == total:
+    if binary:
+        evidence["binary"] = binary
+    if added_total and matched == total and not binary:
         return Check("textual", True, "upstream", 0.9, evidence)
     return Check("textual", False, evidence=evidence)
 

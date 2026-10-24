@@ -153,6 +153,21 @@ def test_jira_query_reads_attachments_links_and_linked_tickets(
     assert imp.comments == [f"Dev: Follow-up: {github.url}/oem/fw/pull/7"]
 
 
+def test_links_to_unconfigured_hosts_are_not_fetched(make_config, github, monkeypatch):  # noqa: F811
+    """Ticket text must not make the tool call arbitrary servers (here: an internal one)."""
+    monkeypatch.setenv("JIRA_TOKEN", "t0ken")
+    with FakeJira(cloud=False, auth=AUTH) as jira:
+        jira.add("MIG-2", "Squashed PR", f"Done in {github.url}/oem/fw/pull/7")
+        cfg = load_config(make_config(
+            [{"type": "jira_query", "jql": "project = MIG"}],
+            jira={"url": jira.url, "project": "MIG", "token": "env:JIRA_TOKEN"},
+        ))  # fmt: skip
+        store = LedgerStore.in_memory()
+        report = ingest(cfg, store, store.create_run(cfg), jira=HttpJiraClient(cfg.jira))
+    assert report.total == 0 and github.requests == []
+    assert any("is not configured; add it under code_hosts" in w for w in report.warnings)
+
+
 def test_intent_brief_has_comments_and_linked_tickets(make_config):  # noqa: F811
     cfg = load_config(make_config([{"type": "git_range"}]))
     t = TicketRow(key="OEM-1", summary="Power mode", description="Need OEM sleep", status="Done",

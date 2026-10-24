@@ -118,3 +118,16 @@ def test_cli_export_site_for_one_run(project, tmp_path: Path):
     assert "python -m http.server" in result.output
     runs = json.loads((out / "data" / "runs.json").read_text())
     assert [r["id"] for r in runs] == [run.id]
+
+
+def test_review_view_reads_runs_of_other_versions(client, project):
+    """A run's config snapshot may hold thresholds fields this version no longer knows."""
+    from patchmig.ledger import Run
+
+    _, _, store, run, _ = project
+    with store.session() as s, s.begin():
+        row = s.get(Run, run.id)
+        thresholds = {**row.config_snapshot["thresholds"], "retired_field": 1}
+        row.config_snapshot = {**row.config_snapshot, "thresholds": thresholds}
+    response = client.get(f"/api/runs/{run.id}/review")
+    assert response.status_code == 200 and "queues" in response.json()

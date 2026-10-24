@@ -13,7 +13,8 @@ Responder = Callable[[AgentTask, int], str | dict | Exception]
 class FakeAdapter:
     """Answers each task from a responder (task, attempt) -> text | dict | exception.
 
-    A dict is returned as a fenced JSON block; an exception is raised as a runtime error.
+    A dict is returned as a fenced JSON block; an exception is raised as a runtime error
+    (an AgentRuntimeError as it is, so a test can say whether it was charged).
     Every task seen is kept in ``calls`` for assertions.
     """
 
@@ -25,6 +26,8 @@ class FakeAdapter:
     def run(self, task: AgentTask, attempt: int) -> RawAnswer:
         self.calls.append((task, attempt))
         answer = self.responder(task, attempt)
+        if isinstance(answer, AgentRuntimeError):
+            raise answer
         if isinstance(answer, Exception):
             raise AgentRuntimeError(str(answer))
         if isinstance(answer, dict):

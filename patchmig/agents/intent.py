@@ -15,10 +15,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from patchmig import notes as engineer_notes
-from patchmig.agents.adapter import AgentTask, answer_instructions
+from patchmig.agents.adapter import AgentTask, answer_instructions, truncate
 from patchmig.agents.runner import AgentFailed, AgentRunner, BudgetExceeded
+from patchmig.analysis.patches import load_diff
 from patchmig.config import ProjectConfig
-from patchmig.gitutil import GitError, commit_info
 from patchmig.ledger import LedgerStore, Patch, Run, Ticket
 from patchmig.ledger.states import DROPPED
 
@@ -45,37 +45,19 @@ def render_intent(r: IntentResult) -> str:
     return "\n".join(lines)
 
 
-def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"\n[... truncated, {len(text) - limit} more characters ...]"
-
-
-def _diff_for(config: ProjectConfig, patch: Patch) -> str:
-    if patch.commit_sha:
-        repo = config.trees.source.path / patch.project
-        try:
-            return commit_info(repo, patch.commit_sha).diff
-        except GitError:
-            pass
-    if patch.diff_path and Path(patch.diff_path).exists():
-        return Path(patch.diff_path).read_text(errors="replace")
-    return "(diff not available)"
-
-
 MAX_COMMENTS = 5
 
 
 def _ticket_section(t: Ticket, linked: dict[str, Ticket]) -> str:
     """A ticket with its latest comments and, briefly, the tickets it links to."""
-    parts = [f"### {t.key}: {t.summary}\nStatus: {t.status}\n\n{_truncate(t.description, 4000)}"]
+    parts = [f"### {t.key}: {t.summary}\nStatus: {t.status}\n\n{truncate(t.description, 4000)}"]
     comments = (t.comments or [])[-MAX_COMMENTS:]
     if comments:
-        parts.append("Latest comments:\n" + "\n".join(f"- {_truncate(c, 600)}" for c in comments))
+        parts.append("Latest comments:\n" + "\n".join(f"- {truncate(c, 600)}" for c in comments))
     for key in t.issue_links or []:
         if other := linked.get(key):
             parts.append(f"Linked {key}: {other.summary} ({other.status})\n"
-                         f"{_truncate(other.description, 1500)}")  # fmt: skip
+                         f"{truncate(other.description, 1500)}")  # fmt: skip
     return "\n\n".join(parts)
 
 
@@ -110,7 +92,9 @@ def build_brief(
         message=patch.message,
         tickets=ticket_text,
         notes=notes_section(notes),
-        diff=_truncate(_diff_for(config, patch), config.llm.intent_max_diff_chars),
+        diff=truncate(
+            load_diff(config, patch) or "(diff not available)", config.llm.intent_max_diff_chars
+        ),
     ) + answer_instructions(IntentResult)
 
 

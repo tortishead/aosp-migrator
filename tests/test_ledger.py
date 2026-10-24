@@ -85,3 +85,13 @@ def test_ledger_file_persists(write_config, tmp_path):
     cfg = load_config(write_config())
     LedgerStore.open(cfg.ledger_path).create_run(cfg)
     assert LedgerStore.open(cfg.ledger_path).latest_run() is not None
+
+
+def test_in_memory_ledger_is_shared_by_threads(store_and_run):
+    """Verify runs clusters in threads; an in-memory ledger must not be empty there."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    store, run = store_and_run
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        latest = pool.submit(store.latest_run).result()
+    assert latest is not None and latest.id == run.id

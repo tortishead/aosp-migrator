@@ -62,10 +62,15 @@ class CommitInfo:
 _SEP = "\x1e"
 
 
-def commit_info(repo: Path, sha: str) -> CommitInfo:
-    """Metadata and full diff (rename-aware) of one commit."""
+def commit_info(repo: Path, sha: str, binary: bool = False) -> CommitInfo:
+    """Metadata and full diff (rename-aware) of one commit.
+
+    The diff is text only ("Binary files ... differ") unless `binary`, which includes binary
+    patches so the diff can be applied; keep those out of briefs and displays.
+    """
     fmt = f"%H{_SEP}%an <%ae>{_SEP}%at{_SEP}%B{_SEP}"
-    out = git(repo, "show", "-M", "--no-color", "--no-ext-diff", f"--format={fmt}", sha)
+    extra = ["--binary"] if binary else []
+    out = git(repo, "show", "-M", *extra, "--no-color", "--no-ext-diff", f"--format={fmt}", sha)
     full_sha, author, ts, message, diff = out.split(_SEP, 4)
     return CommitInfo(
         sha=full_sha,
@@ -84,13 +89,23 @@ def patch_id(diff: str) -> str | None:
     return out.split()[0] if out.strip() else None
 
 
-def grep_log(repo: Path, base: str, head: str, pattern: str) -> list[str]:
-    """Non-merge commits in base..head whose message matches pattern (fixed string)."""
+def range_log(repo: Path, base: str, head: str) -> list[tuple[str, str]]:
+    """(sha, message) of the non-merge commits in base..head, oldest first (as rev_list)."""
     out = git(
-        repo, "log", "--reverse", "--no-merges", "--format=%H", "-F", f"--grep={pattern}",
+        repo, "log", "--reverse", "--topo-order", "--no-merges", f"--format=%H%n%B{_SEP}",
         f"{base}..{head}",
     )  # fmt: skip
-    return out.split()
+    commits = []
+    for entry in out.split(_SEP):
+        sha, _, message = entry.strip("\n").partition("\n")
+        if sha:
+            commits.append((sha, message))
+    return commits
+
+
+def has_binary(diff: str) -> bool:
+    """Whether a text diff leaves out binary content ("Binary files a/x and b/x differ")."""
+    return diff.startswith("Binary files ") or "\nBinary files " in diff
 
 
 def is_ancestor(repo: Path, ancestor: str, rev: str) -> bool:

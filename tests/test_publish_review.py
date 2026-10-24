@@ -257,6 +257,48 @@ def test_merge_or_approval_approves_and_a_closed_pr_rejects(published):
     assert "PR closed without merge" in p.cluster_of("P1").result["feedback"][-1]["text"]
 
 
+def test_a_closed_pr_rejects_once_and_unreadable_prs_are_skipped(published):
+    from patchmig.publish.hosts import ReviewHostError
+
+    p = published
+    p.publish()
+    bt = p.cluster_of("P3")
+    e = bt.result["publish"]["projects"][FRAMEWORKS]
+    p.gh.get_pr(e["repo"], e["number"])["state"] = "closed"
+    assert f"cluster {bt.id}: rejected by github: PR closed without merge" in sync_github(
+        p.store, p.run, p.gh
+    )
+
+    def rework(task, attempt):
+        path = task.workdir / FRAMEWORKS / BT_NEW
+        path.write_text(path.read_text().replace("12000", "15000"))
+        return answer("rewritten", confidence=0.8)
+
+    p.migrate(p.runner(rework), cluster_ids=[bt.id])
+    p.verify(cluster_ids=[bt.id])
+    assert p.cluster_of("P3").state == State.VERIFIED
+    # Synced again before the rework is published: the old close is not a new rejection.
+    assert sync_github(p.store, p.run, p.gh) == []
+    assert p.cluster_of("P3").state == State.VERIFIED
+
+    car_repo = REPOS[CAR]
+    real_get = p.gh.get_pr
+
+    def flaky(repo, number):
+        if repo == car_repo:
+            raise ReviewHostError("github: HTTP 502")
+        return real_get(repo, number)
+
+    p.gh.get_pr = flaky
+    p.gh.review_list[(e["repo"], e["number"])] = [
+        {"id": 9, "state": "APPROVED", "user": {"login": "lead"}, "body": "ok"}
+    ]
+    changes = sync_github(p.store, p.run, p.gh)
+    power = p.cluster_of("P1")
+    assert f"cluster {power.id}: PRs not readable, skipped: github: HTTP 502" in changes
+    assert f"cluster {bt.id}: approved by lead" in changes  # the others still sync
+
+
 def test_decisions_answer_needs_decision_clusters(tmp_path, monkeypatch):
     p = Published(tmp_path, verify=False)
     question = "Keep OEM mode across suspend?"
