@@ -17,7 +17,11 @@ OUTPUT_KEEP_CHARS = 20_000
 
 
 class BudgetExceeded(Exception):
-    pass
+    """A call would pass a credit cap: the run's (stop everything) or one cluster's."""
+
+    def __init__(self, message: str, scope: str = "run"):
+        super().__init__(message)
+        self.scope = scope  # "run" or "cluster"
 
 
 class AgentFailed(Exception):
@@ -62,7 +66,9 @@ class AgentRunner:
         cap = self.budget.cluster_credits
         cluster = task.cluster_id
         if cap is not None and cluster is not None and self.spent(cluster) + cost > cap:
-            raise BudgetExceeded(f"cluster {cluster} budget of {cap} credits would be exceeded")
+            raise BudgetExceeded(
+                f"cluster {cluster} budget of {cap} credits would be exceeded", scope="cluster"
+            )
 
     def _log(self, task: AgentTask, attempt: int, **fields) -> None:
         with self.store.session() as s, s.begin():

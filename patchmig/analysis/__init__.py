@@ -28,6 +28,7 @@ from patchmig.analysis.forecast import forecast
 from patchmig.analysis.patches import PatchView, view
 from patchmig.analysis.reverts import cancelled
 from patchmig.config import ProjectConfig
+from patchmig.knowledge import history
 from patchmig.knowledge.footprint import footprint_map
 from patchmig.knowledge.trees import Trees
 from patchmig.knowledge.upstream import FileFate, build_change_map
@@ -216,7 +217,9 @@ def analyse(config: ProjectConfig, store: LedgerStore, run: Run) -> AnalysisRepo
         clusters=len(results),
         forecasts=dict(Counter(r.forecast["level"] for r in results if r.forecast)),
         rungs=dict(Counter(v.verdict.get("rung") or "none" for v in views)),
-        warnings=trees.warnings + [e for r in results for e in r.fold_errors],
+        warnings=history.gaps(config, sorted({v.project for v in views}))
+        + trees.warnings
+        + [e for r in results for e in r.fold_errors],
     )
 
 

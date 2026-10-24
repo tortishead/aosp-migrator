@@ -24,8 +24,14 @@ migration later can share the same trees and repos. Beyond trees and patch sourc
 ```yaml
 budget:
   run_credits: 150               # stop the run at this many premium requests
-  cluster_credits: 15
+  cluster_credits: 15            # a cluster over it waits for a decision; others go on
   max_fix_attempts: 2
+llm:
+  models:                        # per agent; measure cheaper ones in the spike
+    cluster_agent: <model>
+    build_fixer: <model>
+    intent_writer: <cheaper model>
+    reviewer: <cheaper model>
 build:
   transport: ssh
   ssh:
@@ -46,8 +52,10 @@ memory:
 ## 2. Run
 
 ```bash
+migrate history  -c pilot/project.yaml        # depth-1 repo sync: OEM range in the source
 migrate ingest   -c pilot/project.yaml
-migrate analyse  -c pilot/project.yaml
+migrate history  -c pilot/project.yaml        # target history for the upstream checks
+migrate analyse  -c pilot/project.yaml        # warns about any project still too shallow
 migrate clusters -c pilot/project.yaml        # check the clusters and forecasts
 migrate intents  -c pilot/project.yaml        # needed patches only; memory reuse first
 migrate apply    -c pilot/project.yaml        # cherry-pick, net diff, then the agent

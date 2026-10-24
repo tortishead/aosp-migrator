@@ -19,7 +19,9 @@ pip install -e '.[dev]'
 migrate init myproject                       # writes myproject/project.yaml
 migrate config validate -c myproject/project.yaml
 migrate jira-check -c myproject/project.yaml     # Jira sign-in, project, JQL (Server/DC or Cloud)
+migrate history -c myproject/project.yaml    # shallow (depth 1) trees: fetch the OEM range
 migrate ingest -c myproject/project.yaml     # new run: read all patch sources (+ Jira tickets)
+migrate history -c myproject/project.yaml    # shallow trees: fetch target history for the checks
 migrate patches -c myproject/project.yaml    # list the run's patches in order
 migrate doctor -c myproject/project.yaml --mcp   # check Copilot CLI headless + MCP tools
 migrate analyse -c myproject/project.yaml    # upstream/obsolete/needed, clusters, forecasts
@@ -102,6 +104,11 @@ the task's schema, retries once with a correction, and logs every call (credits,
 output tail) in the ledger. Credits are estimates from `llm.credits_per_call`, calibrated by the
 spike.
 
+Models are set per agent in `llm.models` (`intent_writer`, `cluster_agent`, `reviewer`,
+`build_fixer`, `memory_curator`); unset agents use the CLI default. `budget.run_credits` stops a
+step for every cluster; `budget.cluster_credits` caps one cluster's agent, reviewer and build-fix
+calls in a run: a cluster that reaches it goes to `needs_decision` and the other clusters go on.
+
 The intent writer gives each patch a short, sourced intent and reuses intents by patch
 fingerprint, so a patch never costs twice, also across runs.
 
@@ -165,6 +172,17 @@ own, and a forecast: clean, conflict, rewrite or obsolete, with reasons.
 Without shared history between the trees (for example, an imported vendor drop), the analysis
 compares file contents instead; identity and provenance then rarely conclude, so more patches
 stay `needed` for review.
+
+Trees synced with `repo sync --depth=1` hold one commit per project, which is not enough: the
+OEM range cannot be listed, and the identity and provenance rungs cannot find a Google fix
+that is already in the target. They find nothing rather than fail, so the fix looks needed.
+`migrate history` deepens only what the checks need, in growing `git fetch --deepen` steps:
+each source project until `base_ref..head_ref` is complete, and each target project with
+patches until its history reaches the source base or `trees.history_commits` commits
+(default 20000, also the identity rung's search depth without shared history). Run it before
+ingest (for `git_range`) and again after ingest. It fetches from the project's only remote,
+or `trees.<side>.remote`. `ingest` refuses a shallow `git_range` project and `analyse` warns
+about every target project still too shallow.
 
 ## Migrate
 

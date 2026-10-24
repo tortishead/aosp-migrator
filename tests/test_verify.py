@@ -132,8 +132,24 @@ def test_build_break_is_fixed_by_the_agent_and_tested(built):
     branch = branch_name(built.config.name, built.run.id, power.id)
     assert built.target_git(FRAMEWORKS, "rev-parse", branch).strip() == new_head
     assert "setMode(mode, 0);" in m["diff"]
-    assert [t.agent for t, _ in built.fake.calls] == ["cluster_agent"]
+    assert [t.agent for t, _ in built.fake.calls] == ["build_fixer"]
     assert built.fake.calls[0][0].key.endswith(":fix:1")
+
+
+def test_cluster_credit_cap_parks_only_that_cluster(built):
+    from patchmig.agents.runner import AgentRunner
+    from patchmig.config.schema import BudgetConfig
+
+    built.migrate(built.runner(naive_resolve))  # agent + reviewer: 2 credits on the cluster
+    built.config = built.config.model_copy(update={"budget": BudgetConfig(cluster_credits=2.5)})
+    runner = AgentRunner(built.runner(fix_call).adapter, built.store, built.run,
+                         built.config.llm, built.config.budget)  # fmt: skip
+    report = built.verify(runner)
+    assert report.stopped_by_budget is None
+    power = built.cluster_of("P1")
+    assert power.state == State.NEEDS_DECISION
+    assert "cluster_credits" in power.result["verification"]["reason"]
+    assert built.cluster_of("P3").state == State.VERIFIED  # the other cluster went on
 
 
 def test_build_break_without_agent_fails(built):

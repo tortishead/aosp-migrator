@@ -20,7 +20,7 @@ from pydantic import (
     model_validator,
 )
 
-AGENT_NAMES = ("intent_writer", "cluster_agent", "reviewer", "memory_curator")
+AGENT_NAMES = ("intent_writer", "cluster_agent", "reviewer", "build_fixer", "memory_curator")
 
 
 def _check_secret_ref(value: str) -> str:
@@ -72,11 +72,22 @@ class TreeConfig(Model):
     head_ref: str | None = Field(
         default=None, description="Tag or branch with the OEM patches (source tree only)"
     )
+    remote: str | None = Field(
+        default=None,
+        description="Remote that `migrate history` deepens shallow projects from; default: the "
+        "project's only remote",
+    )
 
 
 class TreesConfig(Model):
     source: TreeConfig
     target: TreeConfig
+    history_commits: int = Field(
+        default=20_000,
+        ge=100,
+        description="Target commits searched for an upstream fix when the trees share no "
+        "history; also how deep `migrate history` fetches a shallow target project",
+    )
 
     @model_validator(mode="after")
     def _source_needs_head(self) -> TreesConfig:
@@ -295,8 +306,15 @@ class LlmConfig(Model):
 
 class BudgetConfig(Model):
     run_credits: float | None = Field(default=None, gt=0, description="Cap per run; None = no cap")
-    cluster_credits: float | None = Field(default=None, gt=0)
-    max_fix_attempts: int = Field(default=3, ge=0)
+    cluster_credits: float | None = Field(
+        default=None,
+        gt=0,
+        description="Cap per cluster and run (cluster agent, reviewer and build fixes); a "
+        "cluster that reaches it goes to needs_decision and the others go on",
+    )
+    max_fix_attempts: int = Field(
+        default=3, ge=0, description="Build-fix rounds per cluster in verify"
+    )
 
 
 class ThresholdsConfig(Model):

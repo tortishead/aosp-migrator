@@ -20,6 +20,8 @@ trees:
     path: /work/oem-a15
     manifest: .repo/manifests/default.xml
     base_ref: android-15.0.0_r1
+    # remote: aosp                  # for migrate history, when a project has several remotes
+  history_commits: 20000            # target history searched for Google fixes (migrate history)
 
 patch_sources:
   - type: git_range
@@ -80,13 +82,15 @@ tests:
 llm:
   runtime: copilot-cli
   executable: copilot
-  models: {}                        # e.g. {cluster_agent: <model>, intent_writer: <cheaper model>}
+  models: {}                        # per agent: intent_writer, cluster_agent, reviewer, build_fixer,
+                                    # memory_curator; e.g. {cluster_agent: <model>, intent_writer: <cheaper>}
+  credits_per_call: {default: 1.0}  # estimated credits per call by model name; calibrate in the spike
   timeout_seconds: 900
 
 budget:
   run_credits: null                 # cap per run; null = no cap
-  cluster_credits: null
-  max_fix_attempts: 3
+  cluster_credits: null             # cap per cluster; a cluster over it waits for a decision
+  max_fix_attempts: 3               # build-fix rounds per cluster in verify
 
 thresholds:
   quick_approve: 0.85

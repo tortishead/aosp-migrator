@@ -340,6 +340,21 @@ def test_revived_cluster_is_rewritten_from_the_patch_itself(project):
     assert project.patch("P4").state == State.REWRITTEN
 
 
+def test_cluster_credit_cap_parks_only_that_cluster(project):
+    from patchmig.config.schema import BudgetConfig
+
+    project.config = project.config.model_copy(
+        update={"budget": BudgetConfig(cluster_credits=0.5)}  # less than one call
+    )
+    report = project.migrate(project.runner(resolve_power))
+    assert report.stopped_by_budget is None
+    power = project.cluster_of("P1")
+    assert power.state == State.NEEDS_DECISION
+    assert "cluster_credits" in power.result["migration"]["question"]
+    assert project.patch("P1").state == State.NEEDS_DECISION
+    assert project.cluster_of("P3").state == State.APPLIED  # the other cluster went on
+
+
 def test_cli_apply_without_agent(project):
     result = CliRunner().invoke(app, ["apply", "--config", str(project.config_path), "--no-agent"])
     assert result.exit_code == 0, result.output
