@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import email
 import email.utils
@@ -21,12 +22,19 @@ from patchmig.gitutil import (
     GitError,
     commit_info,
     file_at,
-    grep_log,
     is_ancestor,
+    range_log,
     resolve,
     rev_list,
 )
-from patchmig.ingest.codehosts import CodeHostError, CodeRef, HostClient, find_refs, host_for
+from patchmig.ingest.codehosts import (
+    CodeHostError,
+    CodeRef,
+    HostClient,
+    find_refs,
+    host_for,
+    is_known,
+)
 from patchmig.ingest.diffparse import parse_diff
 from patchmig.ingest.manifest import project_for_path
 from patchmig.ingest.normalize import RawPatch
@@ -42,6 +50,7 @@ class SourceContext:
     projects: list[str]  # project paths in the source tree
     jira: JiraReader | None = None
     warnings: list[str] = field(default_factory=list)
+    _range: dict[str, list[tuple[str, str]]] = field(default_factory=dict, repr=False)
 
     @property
     def tree(self) -> Path:
@@ -62,6 +71,19 @@ class SourceContext:
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
+
+    def range_log(self, project: str) -> list[tuple[str, str]]:
+        """(sha, message) of the project's OEM-range commits, oldest first; read once.
+
+        Empty for a project without the range (no such repo, or base/head missing in it).
+        """
+        if project not in self._range:
+            repo = self.tree / project
+            self._range[project] = []
+            if repo.is_dir():
+                with contextlib.suppress(GitError):
+                    self._range[project] = range_log(repo, self.base, self.head)
+        return self._range[project]
 
 
 def from_git_range(src: GitRangeSource, ctx: SourceContext) -> list[RawPatch]:
@@ -201,11 +223,20 @@ def _rows(src: SpreadsheetSource) -> list[dict[str, str]]:
         ]
 
 
+def mentions(key: str) -> re.Pattern:
+    """A Jira key as a whole word: AUTO-12 must not match AUTO-123 or XAUTO-12."""
+    return re.compile(rf"(?<![\w-]){re.escape(key)}(?!\d)")
+
+
 def _jira_commits(ctx: SourceContext, key: str, source: str) -> list[RawPatch]:
+    """OEM-range commits whose message mentions the key (each project's log is read once)."""
+    pattern = mentions(key)
     found: list[RawPatch] = []
     for project in ctx.projects:
         repo = ctx.tree / project
-        for sha in grep_log(repo, ctx.base, ctx.head, key):
+        for sha, message in ctx.range_log(project):
+            if not pattern.search(message):
+                continue
             raw = RawPatch.from_commit(project, commit_info(repo, sha), source)
             raw.jira_keys.append(key)
             found.append(raw)
@@ -374,16 +405,20 @@ def _local_commit(ctx: SourceContext, sha: str, project: str | None) -> RawPatch
 
 
 def _ref_patches(ctx: SourceContext, ref: CodeRef, keys: list[str]) -> list[RawPatch]:
-    host = host_for(ref, ctx.config.hosts())
+    hosts = ctx.config.hosts()
+    host = host_for(ref, hosts)
     hint = getattr(host, "repo_map", {}).get(ref.repo)
     found: list[RawPatch] = []
     try:
-        if ref.sha:
-            raw = _local_commit(ctx, ref.sha, hint)
-            if raw is None:  # not in the source tree: take the diff from the host
-                diff = HostClient(host).diff(ref)
-                raw = _diff_patch(ctx, diff, f"{ref.repo}/{ref.sha}", ref.sha[:12], ref.url,
-                                  "jira_link", keys, hint)  # fmt: skip
+        if ref.sha and (raw := _local_commit(ctx, ref.sha, hint)):
+            found.append(raw)  # a commit link needs no host: the commit is in the source tree
+        elif not is_known(ref, hosts):
+            ctx.warn(f"jira_query: {ref.url}: {ref.base} is not configured; add it under "
+                     "code_hosts to fetch this link")  # fmt: skip
+        elif ref.sha:  # not in the source tree: take the diff from the host
+            diff = HostClient(host).diff(ref)
+            raw = _diff_patch(ctx, diff, f"{ref.repo}/{ref.sha}", ref.sha[:12], ref.url,
+                              "jira_link", keys, hint)  # fmt: skip
             found += [raw] if raw else []
         else:
             client = HostClient(host)

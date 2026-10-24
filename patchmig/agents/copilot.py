@@ -112,12 +112,13 @@ class CopilotCliAdapter:
             ) from e
         except subprocess.TimeoutExpired as e:
             raise AgentRuntimeError(
-                f"Copilot CLI timed out after {self.config.timeout_seconds}s"
+                f"Copilot CLI timed out after {self.config.timeout_seconds}s", charged=True
             ) from e
         duration = time.monotonic() - start
         if proc.returncode != 0:
             raise AgentRuntimeError(
-                f"Copilot CLI exited with {proc.returncode}: {proc.stderr.strip()[-2000:]}"
+                f"Copilot CLI exited with {proc.returncode}: {proc.stderr.strip()[-2000:]}",
+                charged=True,
             )
         return RawAnswer(
             text=proc.stdout,

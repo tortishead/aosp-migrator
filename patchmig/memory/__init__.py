@@ -30,8 +30,9 @@ from sqlalchemy import select
 from patchmig.config import ProjectConfig
 from patchmig.gitutil import git, is_repo
 from patchmig.ledger import Cluster, KnowledgeItem, LedgerStore, Patch, Run, State
-from patchmig.review import APPROVABLE
+from patchmig.review import is_approved
 
+_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")  # a lesson's file stem
 ORIGINAL_CHANGE_ID = re.compile(r"^Original-Change-Id:\s*(I[0-9a-f]{40})\s*$", re.M)
 _IDENTITY = {
     "GIT_AUTHOR_NAME": "patchmig",
@@ -89,6 +90,8 @@ class Lesson:
         if raw.startswith("---\n"):
             head, _, text = raw[4:].partition("\n---\n")
             meta = yaml.safe_load(head) or {}
+            if not isinstance(meta, dict):  # a hand-edited file: keep its text at least
+                meta, text = {}, raw
         return cls(
             name=path.stem, status=status, title=meta.pop("title", path.stem),
             text=text.strip(), applies_to=meta.pop("applies_to", []) or [], meta=meta,
@@ -205,8 +208,7 @@ class Memory:
             ).all()
         for p in patches:
             c = clusters.get(p.cluster_id)
-            review = (c.result.get("review") or {}) if c else {}
-            if not c or review.get("decision") != "approved" or c.state not in APPROVABLE:
+            if c is None or not is_approved(c):
                 continue
             key = patch_key(p)
             if key is None:
@@ -304,10 +306,15 @@ class Memory:
         path.write_text(lesson.render())
         return lesson
 
-    def approve(self, name: str, by: str) -> Lesson:
+    def _proposed(self, name: str) -> Path:
+        # A name is a slug (see propose); anything else could point outside the folder.
         src = self.path / "lessons" / "proposed" / f"{name}.md"
-        if not src.exists():
+        if not _NAME.fullmatch(name) or not src.exists():
             raise MemoryRepoError(f"no proposed lesson '{name}'")
+        return src
+
+    def approve(self, name: str, by: str) -> Lesson:
+        src = self._proposed(name)
         lesson = Lesson.parse(src, "approved")
         lesson.meta |= {"approved_by": by, "approved_at": _now()}
         dst = self.path / "lessons" / "approved" / f"{name}.md"
@@ -318,8 +325,5 @@ class Memory:
         return lesson
 
     def reject(self, name: str, by: str) -> None:
-        src = self.path / "lessons" / "proposed" / f"{name}.md"
-        if not src.exists():
-            raise MemoryRepoError(f"no proposed lesson '{name}'")
-        src.unlink()
+        self._proposed(name).unlink()
         self.commit(f"Reject lesson {name} ({by})")

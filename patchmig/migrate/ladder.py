@@ -39,7 +39,8 @@ class RungResult:
 
 
 def unmerged(wt: ProjectWorktree) -> list[str]:
-    return sorted(set(wt.git("diff", "--name-only", "--diff-filter=U").split()))
+    out = wt.git("diff", "--name-only", "--diff-filter=U", "-z")
+    return sorted({p for p in out.split("\0") if p})
 
 
 def reset(wt: ProjectWorktree, rev: str | None = None) -> None:

@@ -87,6 +87,16 @@ def parse_ref(url: str, hosts: list[RepoHost]) -> CodeRef | None:
     return None
 
 
+def is_known(ref: CodeRef, hosts: list[RepoHost]) -> bool:
+    """A configured host, or one of the public hosts: the only ones the tool calls.
+
+    A link in a ticket can name any server; calling it would let ticket text make the tool
+    send requests anywhere in the network.
+    """
+    configured = any(h.url.rstrip("/") == ref.base for h in hosts)
+    return configured or urllib.parse.urlparse(ref.base).hostname in _DEFAULT_KIND
+
+
 def host_for(ref: CodeRef, hosts: list[RepoHost]) -> RepoHost:
     for h in hosts:
         if h.url.rstrip("/") == ref.base:

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from patchmig import notes as engineer_notes
@@ -229,9 +230,16 @@ def _publish(record: dict | None) -> dict | None:
 
 
 def _thresholds(store: LedgerStore, run_id: int) -> ThresholdsConfig:
+    """The run's thresholds; a snapshot from another version keeps only the fields known now."""
     with store.session() as s:
         run = s.get(Run, run_id)
-    return ThresholdsConfig(**((run.config_snapshot or {}).get("thresholds") or {}))
+    saved = (run.config_snapshot or {}).get("thresholds") or {}
+    try:
+        return ThresholdsConfig(
+            **{k: v for k, v in saved.items() if k in ThresholdsConfig.model_fields}
+        )
+    except ValidationError:
+        return ThresholdsConfig()
 
 
 def _queue(store: LedgerStore, cluster: Cluster) -> str:

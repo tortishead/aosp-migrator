@@ -38,10 +38,15 @@ class PatchView:
         return [(self.project, f.path) for f in self.files]
 
 
-def load_diff(config: ProjectConfig, patch: Patch) -> str:
+def load_diff(config: ProjectConfig, patch: Patch, binary: bool = False) -> str:
+    """A patch's diff: its commit's from the source tree, else its diff file; "" if neither.
+
+    With `binary`, a commit's diff carries binary files too (for applying, not for showing).
+    """
     if patch.commit_sha:
+        repo = config.trees.source.path / patch.project
         try:
-            return commit_info(config.trees.source.path / patch.project, patch.commit_sha).diff
+            return commit_info(repo, patch.commit_sha, binary=binary).diff
         except GitError:
             pass
     if patch.diff_path and Path(patch.diff_path).exists():

@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 from patchmig.cli import app
 from patchmig.config import load_config
 from patchmig.ingest import IngestError, collect, ingest
-from patchmig.jira_client import Ticket
+from patchmig.jira_client import JiraError, Ticket
 from patchmig.ledger import LedgerStore, Patch
 from patchmig.ledger import Ticket as TicketRow
 from tests.fixtures.scenario import (
@@ -25,6 +25,8 @@ from tests.fixtures.scenario import (
     SOURCE_HEAD_TAG,
     TARGET_BASE_TAG,
     Scenario,
+    oem_commit,
+    variant,
 )
 
 
@@ -48,18 +50,19 @@ class FakeJira:
 
 @pytest.fixture
 def make_config(scenario: Scenario, tmp_path: Path):
-    def _make(sources: list[dict], **extra) -> Path:
+    def _make(sources: list[dict], tree: Scenario | None = None, **extra) -> Path:
+        tree = tree or scenario
         cfg = {
             "name": "ingest-test",
             "migration": {"source_version": "14", "target_version": "15"},
             "trees": {
                 "source": {
-                    "path": str(scenario.source),
+                    "path": str(tree.source),
                     "manifest": ".repo/manifests/default.xml",
                     "base_ref": SOURCE_BASE_TAG,
                     "head_ref": SOURCE_HEAD_TAG,
                 },
-                "target": {"path": str(scenario.target), "base_ref": TARGET_BASE_TAG},
+                "target": {"path": str(tree.target), "base_ref": TARGET_BASE_TAG},
             },
             "patch_sources": sources,
             **extra,
@@ -241,6 +244,66 @@ def test_jira_query_and_ticket_cache(scenario, make_config):
     assert ticket.summary == "OEM power mode"
 
 
+def test_history_order_beats_author_dates(scenario, make_config, tmp_path):
+    """A rebased fix keeps its old author date; the branch order still puts it after its base."""
+    tree = variant(scenario, tmp_path / "rebased")
+    thermal = "service/src/com/android/car/Thermal.java"
+    base = oem_commit(
+        tree,
+        CAR,
+        {thermal: "class Thermal { int limit = 80; }\n"},
+        "Add OEM thermal limit\n\nBug: OEM-909",
+        at=1_800_000_000,
+    )
+    fix = oem_commit(tree, CAR, {thermal: "class Thermal { int limit = 85; }\n"},
+                     "Fix OEM thermal limit\n\nBug: OEM-909", at=1_750_000_000)  # fmt: skip
+    patches, _, _ = collect(load_config(make_config([{"type": "git_range"}], tree=tree)))
+    order = [p.commit_sha for p in patches]
+    p = {x.commit_sha: x for x in patches}
+    assert p[fix].authored_at < p[base].authored_at  # the situation: dates disagree with history
+    assert order.index(base) < order.index(fix)
+    assert p[fix].chain_role == "fix"
+    known = set(scenario.commits.values())  # the other patches keep their order
+    assert [x for x in order if x in known] == [scenario.commits[f"P{i}"] for i in range(1, N + 1)]
+
+
+def test_jira_key_must_match_as_a_whole_word(scenario, make_config, tmp_path):
+    tree = variant(scenario, tmp_path / "keys")
+    other = oem_commit(tree, FRAMEWORKS, {"oem/Note.txt": "x\n"},
+                       "Unrelated change\n\nBug: OEM-1010", at=1_800_000_000)  # fmt: skip
+    fake = FakeJira({"OEM-101": Ticket("OEM-101", "OEM power mode")}, search_results=["OEM-101"])
+    cfg = load_config(make_config([{"type": "jira_query", "jql": "x"}], tree=tree, jira=JIRA))
+    patches, _, _ = collect(cfg, fake)
+    shas = {p.commit_sha for p in patches}
+    assert shas == {scenario.commits["P1"], scenario.commits["P2"]}
+    assert other not in shas  # OEM-1010 is not OEM-101
+
+
+def test_rejected_jql_is_an_ingest_error(make_config):
+    class BadQuery(FakeJira):
+        def search(self, jql):
+            raise JiraError("Jira search failed: HTTP 400")
+
+    cfg = load_config(make_config([{"type": "jira_query", "jql": "x"}], jira=JIRA))
+    with pytest.raises(IngestError, match="jira_query: Jira search failed"):
+        collect(cfg, BadQuery({}))
+
+
+def test_one_unreadable_ticket_does_not_stop_the_others(make_config):
+    class Partly(FakeJira):
+        def get(self, key):
+            if key == "OEM-101":
+                raise JiraError("Jira issue/OEM-101 failed: HTTP 403")
+            return super().get(key)
+
+    cfg = load_config(make_config([{"type": "git_range"}], jira=JIRA))
+    store = LedgerStore.in_memory()
+    fake = Partly({"OEM-202": Ticket("OEM-202", "BT"), "OEM-909": Ticket("OEM-909", "x")})
+    report = ingest(cfg, store, store.create_run(cfg), jira=fake)
+    assert report.tickets_fetched == 1  # OEM-202, after the failed OEM-101
+    assert any("OEM-101" in w and "403" in w for w in report.warnings)
+
+
 def test_ingest_stores_patches_and_refuses_second_ingest(scenario, make_config):
     cfg = load_config(make_config([{"type": "git_range"}], jira=JIRA))
     store = LedgerStore.in_memory()
@@ -286,3 +349,19 @@ def test_cli_ingest_and_list(make_config):
     assert result.exit_code == 0, result.output
     assert 'Revert "Log car power transitions"' in result.output
     assert result.output.count("\n") == N
+
+
+def test_cli_failed_ingest_leaves_no_empty_run_and_unknown_runs_are_refused(make_config):
+    path = make_config([{"type": "git_range"}])
+    runner = CliRunner()
+    assert runner.invoke(app, ["ingest", "-c", str(path), "--no-jira"]).exit_code == 0
+    raw = yaml.safe_load(path.read_text())
+    raw["trees"]["source"]["manifest"] = "missing.xml"
+    path.write_text(yaml.safe_dump(raw))
+    result = runner.invoke(app, ["ingest", "-c", str(path), "--no-jira"])
+    assert result.exit_code == 1 and "Ingest failed" in result.output
+    store = LedgerStore.open(load_config(path).ledger_path)
+    assert store.latest_run().id == 1  # the good run is still the latest
+
+    result = runner.invoke(app, ["analyse", "-c", str(path), "--run", "7"])
+    assert result.exit_code == 1 and "There is no run 7" in result.output

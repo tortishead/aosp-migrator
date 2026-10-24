@@ -150,8 +150,17 @@ class FakeJira:
                         if op["add"] not in issue["labels"]:
                             issue["labels"].append(op["add"])
                     return self._reply(204)
-                if sub == "comment" and method == "GET":
-                    return self._reply(200, {"comments": issue["comments"]})
+                if sub == "comment" and method == "GET":  # paged, as Jira caps maxResults
+                    start = int(q.get("startAt", 0))
+                    size = min(jira.page_size, int(q.get("maxResults", 50)))
+                    return self._reply(
+                        200,
+                        {
+                            "startAt": start,
+                            "total": len(issue["comments"]),
+                            "comments": issue["comments"][start : start + size],
+                        },
+                    )
                 if sub == "comment" and method == "POST":
                     c = {"id": str(len(issue["comments"]) + 1), "body": body["body"]}
                     issue["comments"].append(c)

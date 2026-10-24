@@ -48,8 +48,8 @@ def signals(store: LedgerStore, run: Run) -> list[str]:
     out = []
     for c in clusters:
         r = c.result
-        files = sorted({p for i in ((r.get("migration") or {}).get("projects") or {}) for p in [i]})
-        head = f"### {c.name} ({c.state}; projects: {', '.join(files) or '-'})"
+        projects = sorted((r.get("migration") or {}).get("projects") or {})
+        head = f"### {c.name} ({c.state}; projects: {', '.join(projects) or '-'})"
         lines = []
         lines += [f"- reviewer {f['by']}: {f['text']}" for f in r.get("feedback", [])]
         lines += [f"- decision on '{d.get('question')}': {d['choice']}, {d['reason']}"

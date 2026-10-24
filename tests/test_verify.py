@@ -176,6 +176,8 @@ def test_fixer_blaming_the_target_is_checked(built):
     assert power.state == State.VERIFIED
     fixes = power.result["verification"]["fixes"]
     assert fixes[0]["base_build"]["ok"] and fixes[1]["answer"]["outcome"] == "fixed"
+    # The unchanged cluster is not built again: one failed build, one after the fix.
+    assert [b["ok"] for b in power.result["verification"]["builds"]] == [False, True]
 
 
 def test_test_regressions_fail_and_existing_failures_do_not(built, tmp_path):

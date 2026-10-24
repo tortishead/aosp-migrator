@@ -53,16 +53,25 @@ class GuardrailReport:
 def changes(wt: ProjectWorktree, since: str) -> list[Change]:
     """Changes in the worktree (committed after `since`, staged or not), untracked included."""
     wt.git("add", "-A", "--sparse")
+    # -z: paths unquoted (spaces, non-ASCII) and renames as separate old and new paths.
     stats = {}
-    for line in wt.git("diff", "--cached", "--numstat", "-M", since).splitlines():
-        added, removed, path = line.split("\t", 2)
-        if " => " in path or "{" in path:
-            continue  # renames are reported by name-status below
+    fields = wt.git("diff", "--cached", "--numstat", "-M", "-z", since).split("\0")
+    i = 0
+    while i < len(fields) - 1:
+        added, removed, path = fields[i].split("\t", 2)
+        if path:
+            i += 1
+        else:  # a rename: "added<TAB>removed<TAB>" NUL old NUL new
+            path, i = fields[i + 2], i + 3
         stats[path] = (added, removed)
     found = []
-    for line in wt.git("diff", "--cached", "--name-status", "-M", since).splitlines():
-        parts = line.split("\t")
-        status, path = parts[0], parts[-1]
+    fields = wt.git("diff", "--cached", "--name-status", "-M", "-z", since).split("\0")
+    i = 0
+    while i < len(fields) - 1:
+        status = fields[i]
+        step = 3 if status[:1] in "RC" else 2
+        path = fields[i + step - 1]
+        i += step
         added, removed = stats.get(path, ("0", "0"))
         binary = added == "-"
         found.append(
@@ -98,15 +107,16 @@ def check(
             tree_path = f"{wt.project}/{c.path}"
             report.files.append(tree_path)
             report.changed_lines += c.added + c.removed
-            if c.binary:
+            expected = c.path in expected_files.get(wt.project, set())
+            if c.binary and not expected:  # the patches' own binaries (icons...) may change
                 report.hard.append(f"{tree_path}: binary file changed")
             if c.status == "D" and c.path not in expected_deletions.get(wt.project, set()):
                 report.hard.append(f"{tree_path}: deleted, but the patches do not delete it")
-            if c.status != "D":
+            if c.status != "D" and not c.binary:
                 text = (wt.path / c.path).read_text(errors="replace")
                 if _MARKER.search(text):
                     report.hard.append(f"{tree_path}: conflict markers left in the file")
-            if c.path not in expected_files.get(wt.project, set()):
+            if not expected:
                 report.soft.append(f"{tree_path}: not touched by the original patches")
             for rule in path_rules:
                 if not fnmatch(tree_path, rule.pattern):

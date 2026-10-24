@@ -23,11 +23,13 @@ from tests.fixtures.scenario import (
     CAR,
     CAR_POWER,
     FRAMEWORKS,
+    FW_BP,
     POWER,
     SOURCE_BASE_TAG,
     SOURCE_HEAD_TAG,
     TARGET_BASE_TAG,
     build_scenario,
+    oem_commit,
 )
 
 CONFLICT = (
@@ -40,8 +42,10 @@ RESOLVED = "    public synchronized void setMode(int mode, int reason) {\n"
 class Project:
     """A fresh scenario (migration writes branches into the target), ingested and analysed."""
 
-    def __init__(self, root: Path, **extra):
+    def __init__(self, root: Path, setup=None, **extra):
         self.scenario = build_scenario(root / "trees")
+        if setup:  # a situation of the test's own, added before ingest
+            setup(self.scenario)
         cfg = {
             "name": "migrate-test",
             "workdir": str(root / "work"),
@@ -355,6 +359,22 @@ def test_cluster_credit_cap_parks_only_that_cluster(project):
     assert project.cluster_of("P3").state == State.APPLIED  # the other cluster went on
 
 
+def test_cap_reached_by_the_reviewer_keeps_the_agents_change(project):
+    """The agent's paid, guardrail-checked change is kept when only the review is over budget."""
+    from patchmig.config.schema import BudgetConfig
+
+    project.config = project.config.model_copy(
+        update={"budget": BudgetConfig(cluster_credits=1.5)}  # the agent call, not the review
+    )
+    report = project.migrate(project.runner(resolve_power))
+    assert report.stopped_by_budget is None
+    power = project.cluster_of("P1")
+    assert power.state == State.RESOLVED
+    assert "budget of 1.5 credits" in power.result["migration"]["review"]["error"]
+    assert power.confidence < project.config.thresholds.quick_approve
+    assert [c.agent for c in project.agent_calls()] == ["cluster_agent"]
+
+
 def test_cli_apply_without_agent(project):
     result = CliRunner().invoke(app, ["apply", "--config", str(project.config_path), "--no-agent"])
     assert result.exit_code == 0, result.output
@@ -414,3 +434,111 @@ def test_intents_are_not_bought_for_dropped_patches(project):
     report = write_intents(project.config, project.store, project.run, project.runner(writer))
     assert report.not_needed == 6 and report.written == 4
     assert {project.patch(k).id for k in ("P1", "P2", "P3", "P8")} == set(asked)
+
+
+ICON = "core/res/res/drawable/oem_icon.png"
+PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(256))
+
+
+def _upstream_commit(scenario, project: str, rel: str, old: str, new: str) -> None:
+    """An extra Android 15 change in the target (moves the target base tag)."""
+    repo = scenario.target / project
+    path = repo / rel
+    path.write_text(path.read_text().replace(old, new, 1))
+    for args in (["add", "-A"], ["-c", "user.name=AOSP Dev", "-c", "user.email=dev@android.example",
+                                 "commit", "-q", "-m", "Upstream change"],
+                 ["tag", "-f", TARGET_BASE_TAG]):  # fmt: skip
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def test_binary_files_fold_and_apply_by_net_diff(tmp_path):
+    """An icon in a chain whose first commit conflicts: the net diff must carry the icon."""
+    shas = {}
+    name = 'name: "framework",'
+
+    def add_icon_chain(scenario):
+        _upstream_commit(scenario, FRAMEWORKS, FW_BP, name, name + '\n    sdk_version: "core",')
+        bp = (scenario.source / FRAMEWORKS / FW_BP).read_text()
+        shas["icon"] = oem_commit(
+            scenario, FRAMEWORKS, {ICON: PNG, FW_BP: bp.replace(name, 'name: "framework-oem",')},
+            "Add OEM framework icon\n\nBug: OEM-1111", at=1_800_000_000,
+        )  # fmt: skip
+        shas["fix"] = oem_commit(
+            scenario, FRAMEWORKS, {FW_BP: bp},
+            "Fix OEM framework module name\n\nBug: OEM-1111", at=1_800_003_600,
+        )  # fmt: skip
+
+    project = Project(tmp_path, setup=add_icon_chain)
+    with project.store.session() as s:
+        icon = s.scalars(select(Patch).where(Patch.commit_sha == shas["icon"])).one()
+        fix = s.scalars(select(Patch).where(Patch.commit_sha == shas["fix"])).one()
+        cluster = s.get(Cluster, icon.cluster_id)
+    assert fix.cluster_id == cluster.id
+    # Folding needs the binary content: no fold error, and the patch is not dropped.
+    assert cluster.result.get("fold_errors", []) == []
+    assert cluster.state == State.NEEDED
+    assert "Binary files" in cluster.result["net_diff_by_project"][FRAMEWORKS]
+
+    report = project.migrate(cluster_ids=[cluster.id])
+    (outcome,) = report.outcomes
+    with project.store.session() as s:
+        cluster = s.get(Cluster, cluster.id)
+    info = cluster.result["migration"]["projects"][FRAMEWORKS]
+    assert not info["cherry_pick"]["ok"]  # the situation: the first commit conflicts
+    assert outcome.state == State.APPLIED.value and info["strategy"] == "net_diff"
+    blob = subprocess.run(
+        ["git", "show", f"{info['head']}:{ICON}"], cwd=project.scenario.target / FRAMEWORKS,
+        check=True, capture_output=True,
+    ).stdout  # fmt: skip
+    assert blob == PNG
+
+
+def test_guardrail_changes_read_odd_paths_and_renames(tmp_path):
+    from patchmig.migrate.guardrails import changes
+    from patchmig.migrate.workspace import ProjectWorktree
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = ProjectWorktree("p", repo, repo, "main", "")
+    wt.git("init", "-q", "-b", "main")
+    (repo / "res").mkdir()
+    (repo / "res" / "Grüße.txt").write_text("a\n")
+    (repo / "Old.java").write_text("".join(f"line {i}\n" for i in range(20)))
+    wt.git("add", "-A")
+    wt.git("commit", "-q", "-m", "base")
+    base = wt.head()
+    (repo / "res" / "Grüße.txt").write_text("a\nb\n")
+    (repo / "res" / "with space.txt").write_text("x\n")
+    wt.git("mv", "Old.java", "New.java")
+    (repo / "New.java").write_text((repo / "New.java").read_text() + "line 20\n")
+    found = {c.path: c for c in changes(wt, base)}
+    assert set(found) == {"res/Grüße.txt", "res/with space.txt", "New.java"}
+    assert found["res/Grüße.txt"].added == 1 and found["res/with space.txt"].added == 1
+    assert found["New.java"].status.startswith("R") and found["New.java"].added == 1
+
+
+def test_binary_file_diff_is_never_proven_upstream():
+    from patchmig.analysis.diffs import split_diff
+
+    (icon,) = split_diff(
+        "diff --git a/res/icon.png b/res/icon.png\nindex 1..2 100644\n"
+        "Binary files a/res/icon.png and b/res/icon.png differ\n"
+    )
+    assert icon.binary and not icon.added
+
+    class Trees:  # the text change is upstream already; the icon cannot be compared
+        def source_base_file(self, project, path):
+            return "old line here\n"
+
+        def target_file(self, project, path):
+            return "new line here\n"
+
+    from patchmig.analysis.upstream import textual
+
+    (text,) = split_diff(
+        "diff --git a/res/v.xml b/res/v.xml\n--- a/res/v.xml\n+++ b/res/v.xml\n"
+        "@@ -1 +1 @@\n-old line here\n+new line here\n"
+    )
+    assert textual("p", [text], {}, Trees(), 5).conclusive
+    check = textual("p", [text, icon], {}, Trees(), 5)
+    assert not check.conclusive and check.evidence["binary"] == ["res/icon.png"]

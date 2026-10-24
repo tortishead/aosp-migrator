@@ -31,7 +31,7 @@ from patchmig.publish.hosts import (
     push,
     push_env,
 )
-from patchmig.review import queue_of
+from patchmig.review import is_approved, queue_of
 
 MARKER = "<!-- patchmig:cluster -->"
 
@@ -183,7 +183,7 @@ class Publisher:
             c
             for c in rows
             if c.state in allowed
-            and (c.result.get("review") or {}).get("decision") != "approved"
+            and not is_approved(c)
             and (cluster_ids is None or c.id in cluster_ids)
         ]
 

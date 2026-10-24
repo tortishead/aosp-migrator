@@ -39,6 +39,7 @@ class IngestReport:
 
 
 _EPOCH = datetime.min.replace(tzinfo=UTC)
+MAX_TICKET_FAILURES = 5
 
 
 def collect(
@@ -58,15 +59,40 @@ def collect(
     found: Counter[str] = Counter()
     normalized: list[NormalizedPatch] = []
     for src in config.patch_sources:
-        raws = ADAPTERS[src.type](src, ctx)
+        try:
+            raws = ADAPTERS[src.type](src, ctx)
+        except JiraError as e:  # e.g. the JQL query itself is rejected
+            raise IngestError(f"{src.type}: {e}") from e
         found[src.type] += len(raws)
         normalized += [normalize(r, jira_projects) for r in raws]
 
     patches = merge_duplicates(normalized)
     # Oldest first; patches without a date (plain diffs) keep their order at the end.
     patches.sort(key=lambda p: p.authored_at or _EPOCH.replace(year=9999))
+    _history_order(patches, ctx)
     link_patches(patches)
     return patches, dict(found), ctx
+
+
+def _history_order(patches: list[NormalizedPatch], ctx: SourceContext) -> None:
+    """Put each project's commits in history order, within the places the date sort gave them.
+
+    Author dates survive rebases and cherry-picks, so on a rebased OEM branch a fix can carry
+    an older date than the change it fixes, or a revert than the commit it reverts. The order
+    on the branch is the truth: chains and reverts are linked along it.
+    """
+    slots: dict[str, list[int]] = {}
+    for i, p in enumerate(patches):
+        if p.commit_sha:
+            slots.setdefault(p.project, []).append(i)
+    for project, indexes in slots.items():
+        if len(indexes) < 2:
+            continue
+        rank = {sha: n for n, (sha, _) in enumerate(ctx.range_log(project))}
+        ranked = [i for i in indexes if patches[i].commit_sha in rank]
+        in_order = sorted((patches[i] for i in ranked), key=lambda p: rank[p.commit_sha])
+        for i, p in zip(ranked, in_order, strict=True):
+            patches[i] = p
 
 
 def _fetch_tickets(store: LedgerStore, jira: JiraClient, keys: set[str], report: IngestReport):
@@ -80,13 +106,23 @@ def _cache_tickets(
     linked_only: bool = False,
 ) -> set[str]:  # fmt: skip
     links: set[str] = set()
+    failures = 0
     with store.session() as s, s.begin():
         for key in sorted(keys):
             try:
                 ticket = jira.get(key)
             except JiraError as e:
-                report.warnings.append(f"jira: {e}")
-                return links
+                # One unreadable ticket (say, a 403) must not cost the others; a run of
+                # failures means Jira itself is down or the token is wrong.
+                report.warnings.append(f"jira: {key}: {e}")
+                failures += 1
+                if failures >= MAX_TICKET_FAILURES:
+                    report.warnings.append(
+                        f"jira: stopped after {failures} failed tickets in a row"
+                    )
+                    return links
+                continue
+            failures = 0
             if ticket is None:
                 if not linked_only:
                     report.tickets_missing.append(key)

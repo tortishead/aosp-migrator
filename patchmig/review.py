@@ -46,9 +46,19 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def queue_of(cluster: Cluster, thresholds: ThresholdsConfig) -> str:
+def is_approved(cluster: Cluster) -> bool:
+    """A human approved the cluster (and it was not reopened since): it is done."""
     review = cluster.result.get("review") or {}
-    if review.get("decision") == "approved" and cluster.state in APPROVABLE:
+    return review.get("decision") == "approved" and cluster.state in APPROVABLE
+
+
+def below_quick(thresholds: ThresholdsConfig) -> float:
+    """The highest confidence that still keeps a cluster out of the quick-approve queue."""
+    return round(max(thresholds.quick_approve - 0.01, 0.0), 2)
+
+
+def queue_of(cluster: Cluster, thresholds: ThresholdsConfig) -> str:
+    if is_approved(cluster):
         return "approved"
     if cluster.state == State.VERIFIED:
         conf = cluster.confidence or 0.0
@@ -184,8 +194,11 @@ def sync_reviews(store: LedgerStore, run: Run, api, source: str = "github") -> l
 
     A merged PR or an approving review approves the cluster; a review requesting changes
     (Bitbucket: needs work) rejects it with the review text as feedback; a PR closed without
-    merge rejects it. Each review is acted on once. `source` names the host in the record.
+    merge rejects it. Each review, and each close, is acted on once. A cluster whose PRs
+    cannot be read is reported and skipped. `source` names the host in the record.
     """
+    from patchmig.publish.hosts import ReviewHostError  # patchmig.publish imports this module
+
     reviewer = Reviewer(store, run)
     changes: list[str] = []
     with store.session() as s:
@@ -198,38 +211,49 @@ def sync_reviews(store: LedgerStore, run: Run, api, source: str = "github") -> l
         if not prs:
             continue
         seen = set((c.result.get("publish") or {}).get("seen_reviews", []))
-        events: list[tuple[str, str, str, str]] = []  # (kind, by, text, url)
-        states = []
-        for entry in prs.values():
-            pr = api.get_pr(entry["repo"], entry["number"])
-            states.append(pr)
-            if pr.get("merged"):
-                by = (pr.get("merged_by") or {}).get("login", source)
-                events.append(("approve", by, f"merged {entry['url']}", entry["url"]))
-            for rv in api.reviews(entry["repo"], entry["number"]):
-                key = f"{entry['repo']}#{rv['id']}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                by = (rv.get("user") or {}).get("login", source)
-                if rv["state"] == "APPROVED":
-                    events.append(("approve", by, rv.get("body") or "approved", entry["url"]))
-                elif rv["state"] == "CHANGES_REQUESTED":
-                    text = rv.get("body") or "changes requested (see the PR)"
-                    events.append(("reject", by, f"{text} ({entry['url']})", entry["url"]))
-        if states and all(p.get("state") == "closed" and not p.get("merged") for p in states):
-            events.append(("reject", source, "PR closed without merge", states[0]["html_url"]))
-        for kind, by, text, _url in events:
+        events: list[tuple[str, str, str, str | None]] = []  # (kind, by, text, seen key)
+        try:
+            states = []
+            for entry in prs.values():
+                pr = api.get_pr(entry["repo"], entry["number"])
+                states.append(pr)
+                if pr.get("merged"):
+                    by = (pr.get("merged_by") or {}).get("login", source)
+                    events.append(("approve", by, f"merged {entry['url']}", None))
+                for rv in api.reviews(entry["repo"], entry["number"]):
+                    key = f"{entry['repo']}#{rv['id']}"
+                    if key in seen:
+                        continue
+                    by = (rv.get("user") or {}).get("login", source)
+                    if rv["state"] == "APPROVED":
+                        events.append(("approve", by, rv.get("body") or "approved", key))
+                    elif rv["state"] == "CHANGES_REQUESTED":
+                        text = rv.get("body") or "changes requested (see the PR)"
+                        events.append(("reject", by, f"{text} ({entry['url']})", key))
+                    else:
+                        seen.add(key)  # a plain comment: nothing to act on
+        except ReviewHostError as e:
+            changes.append(f"cluster {cid}: PRs not readable, skipped: {e}")
+            continue
+        closed = [p for p in states if p.get("state") == "closed" and not p.get("merged")]
+        if states and len(closed) == len(states):
+            # Once per set of PRs: after the rework, publishing opens new ones.
+            key = "closed:" + ",".join(sorted(p["html_url"] for p in closed))
+            if key not in seen:
+                events.append(("reject", source, "PR closed without merge", key))
+        for kind, by, text, key in events:
             c = reviewer._cluster(cid)
+            if key:
+                seen.add(key)
             try:
-                if kind == "approve" and queue_of(c, ThresholdsConfig()) != "approved":
+                if kind == "approve" and not is_approved(c):
                     reviewer.approve(cid, by, text, source=source)
                     changes.append(f"cluster {cid}: approved by {by}")
                 elif kind == "reject" and c.state in MIGRATED | APPROVABLE:
                     reviewer.reject(cid, by, text, source=source)
                     changes.append(f"cluster {cid}: rejected by {by}: {text}")
-            except ReviewError:
-                continue  # e.g. not verified yet: nothing to approve
+            except ReviewError as e:  # e.g. approved on the PR before it was verified
+                changes.append(f"cluster {cid}: {kind} by {by} not applied: {e}")
         c = reviewer._cluster(cid)
         publish = {**(c.result.get("publish") or {}), "seen_reviews": sorted(seen),
                    "synced_at": _now()}  # fmt: skip

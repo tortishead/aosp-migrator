@@ -192,9 +192,12 @@ def _order(plans: list[ClusterPlan]) -> list[ClusterPlan]:
             if not waiting[j]:
                 del waiting[j]
                 heapq.heappush(ready, (first_seq[j], j))
-    order += sorted(waiting, key=lambda i: first_seq[i])  # cycles can't happen; be safe
+    # A split can interleave two clusters (1 and 4 in one, 2 and 3 in the other) so that each
+    # depends on the other. Such a cycle goes by first patch, and a cluster depends only on
+    # clusters before it: migrate waits for dependencies, so a cycle would block both forever.
+    order += sorted(waiting, key=lambda i: first_seq[i])
     position = {old: new for new, old in enumerate(order)}
     result = [plans[i] for i in order]
     for new, old in enumerate(order):
-        result[new].depends_on = {position[d] for d in deps[old]}
+        result[new].depends_on = {position[d] for d in deps[old] if position[d] < new}
     return result
