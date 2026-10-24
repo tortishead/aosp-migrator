@@ -161,6 +161,9 @@ class Migrator:
             try:
                 outcome = self._migrate_cluster(cluster, self._refresh(deps))
             except BudgetExceeded as e:
+                if e.scope == "cluster":  # only this cluster stops; the others go on
+                    report.outcomes.append(self._over_budget(cluster, str(e)))
+                    continue
                 report.stopped_by_budget = str(e)
                 report.outcomes.append(
                     ClusterOutcome(cluster.id, cluster.name, "skipped", reason=str(e))
@@ -170,6 +173,15 @@ class Migrator:
         if self.runner is not None:
             report.credits = self.runner.spent()
         return report
+
+    def _over_budget(self, cluster: Cluster, why: str) -> ClusterOutcome:
+        """Park a cluster that reached budget.cluster_credits for a human decision."""
+        reason = f"{why}; raise budget.cluster_credits, then decide 'migrate' to retry"
+        with self.store.session() as s:
+            row = s.get(Cluster, cluster.id)
+        record = {**(row.result.get("migration") or {}), "state": State.NEEDS_DECISION.value,
+                  "reason": reason, "question": reason, "finished_at": _now()}  # fmt: skip
+        return self._finish(row, self._members(row), State.NEEDS_DECISION, record, reason=reason)
 
     def _refresh(self, clusters: list[Cluster]) -> list[Cluster]:
         with self.store.session() as s:

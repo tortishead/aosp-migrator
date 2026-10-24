@@ -229,7 +229,7 @@ def ask_build_fixer(
     attempt: int,
 ) -> AgentOutcome:
     task = AgentTask(
-        agent="cluster_agent",
+        agent="build_fixer",
         key=f"cluster:{ctx.cluster_id}:fix:{attempt}",
         brief=fix_brief(config, ctx, migrated_diff, command, errors, previous),
         schema=FixAnswer,

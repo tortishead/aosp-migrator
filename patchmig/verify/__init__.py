@@ -83,7 +83,9 @@ def error_excerpt(output: str, limit: int = MAX_ERROR_CHARS) -> str:
 
 
 class _BudgetStop(Exception):
-    pass
+    def __init__(self, message: str, scope: str = "run"):
+        super().__init__(message)
+        self.scope = scope
 
 
 class Verifier:
@@ -215,6 +217,13 @@ class Verifier:
             return self._finish(cluster, State.FAILED, record, "no migrated commits to verify")
         try:
             return self._verify_on(cluster, slot, projects, record)
+        except _BudgetStop as e:
+            if e.scope != "cluster":
+                raise
+            return self._finish(  # only this cluster stops; the others go on
+                cluster, State.NEEDS_DECISION, record,
+                f"{e}; raise budget.cluster_credits, then decide 'migrate' to retry",
+            )  # fmt: skip
         finally:
             for project in projects:
                 self._put_on(slot, project, self.trees.target_base(project))
@@ -357,7 +366,7 @@ class Verifier:
                 error_excerpt(res.output), previous, self.mcp, attempt,
             )  # fmt: skip
         except BudgetExceeded as e:
-            raise _BudgetStop(str(e)) from e
+            raise _BudgetStop(str(e), e.scope) from e
         except AgentFailed as e:
             entry["error"] = f"build fixer failed: {e}"
             return None

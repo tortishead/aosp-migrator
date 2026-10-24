@@ -102,6 +102,11 @@ the task's schema, retries once with a correction, and logs every call (credits,
 output tail) in the ledger. Credits are estimates from `llm.credits_per_call`, calibrated by the
 spike.
 
+Models are set per agent in `llm.models` (`intent_writer`, `cluster_agent`, `reviewer`,
+`build_fixer`, `memory_curator`); unset agents use the CLI default. `budget.run_credits` stops a
+step for every cluster; `budget.cluster_credits` caps one cluster's agent, reviewer and build-fix
+calls in a run: a cluster that reaches it goes to `needs_decision` and the other clusters go on.
+
 The intent writer gives each patch a short, sourced intent and reuses intents by patch
 fingerprint, so a patch never costs twice, also across runs.
 

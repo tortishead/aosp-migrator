@@ -20,7 +20,7 @@ from pydantic import (
     model_validator,
 )
 
-AGENT_NAMES = ("intent_writer", "cluster_agent", "reviewer", "memory_curator")
+AGENT_NAMES = ("intent_writer", "cluster_agent", "reviewer", "build_fixer", "memory_curator")
 
 
 def _check_secret_ref(value: str) -> str:
@@ -295,8 +295,15 @@ class LlmConfig(Model):
 
 class BudgetConfig(Model):
     run_credits: float | None = Field(default=None, gt=0, description="Cap per run; None = no cap")
-    cluster_credits: float | None = Field(default=None, gt=0)
-    max_fix_attempts: int = Field(default=3, ge=0)
+    cluster_credits: float | None = Field(
+        default=None,
+        gt=0,
+        description="Cap per cluster and run (cluster agent, reviewer and build fixes); a "
+        "cluster that reaches it goes to needs_decision and the others go on",
+    )
+    max_fix_attempts: int = Field(
+        default=3, ge=0, description="Build-fix rounds per cluster in verify"
+    )
 
 
 class ThresholdsConfig(Model):
