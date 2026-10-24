@@ -18,6 +18,7 @@ from patchmig import notes as engineer_notes
 from patchmig.agents.adapter import AgentTask, answer_instructions, truncate
 from patchmig.agents.runner import AgentFailed, AgentRunner, BudgetExceeded
 from patchmig.analysis.patches import load_diff
+from patchmig.confidence import describe, rubric
 from patchmig.config import ProjectConfig
 from patchmig.ledger import LedgerStore, Patch, Run, Ticket
 from patchmig.ledger.states import DROPPED
@@ -39,7 +40,7 @@ def render_intent(r: IntentResult) -> str:
         f"Change: {r.change}",
         f"Verify: {r.verification}",
         f"Components: {', '.join(r.components) or '-'}",
-        f"Sources: {', '.join(r.sources)} (confidence {r.confidence:.2f})",
+        f"Sources: {', '.join(r.sources)} (confidence {describe(r.confidence)})",
     ]
     lines += [f"Open question: {q}" for q in r.open_questions]
     return "\n".join(lines)
@@ -85,17 +86,22 @@ def build_brief(
         ticket_text = "\n\n".join(_ticket_section(t, linked) for t in tickets)
     else:
         ticket_text = "(no ticket available: derive the intent from the commit and diff only)"
-    return template.format(
-        source_version=config.migration.source_version,
-        project=patch.project,
-        subject=patch.subject,
-        message=patch.message,
-        tickets=ticket_text,
-        notes=notes_section(notes),
-        diff=truncate(
-            load_diff(config, patch) or "(diff not available)", config.llm.intent_max_diff_chars
-        ),
-    ) + answer_instructions(IntentResult)
+    return (
+        template.format(
+            source_version=config.migration.source_version,
+            project=patch.project,
+            subject=patch.subject,
+            message=patch.message,
+            tickets=ticket_text,
+            notes=notes_section(notes),
+            diff=truncate(
+                load_diff(config, patch) or "(diff not available)", config.llm.intent_max_diff_chars
+            ),
+        )
+        + "\n"
+        + rubric("the intent")
+        + answer_instructions(IntentResult)
+    )
 
 
 @dataclass

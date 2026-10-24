@@ -187,6 +187,7 @@ def test_report_and_memory_record_cli(remembered):
     assert "## Patches" in text and "| verified |" in text
     assert "## Build and test" in text and "module builds" in text
     assert "| cluster_agent |" in text and "| reviewer |" in text
+    assert "| Confidence | Clusters |" in text  # levels of the shared scale
 
     cli = CliRunner()
     out = r.config.workdir / "report.md"
