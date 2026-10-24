@@ -588,6 +588,24 @@ def jira_export_cmd(
         raise typer.Exit(1)
 
 
+@app.command("jira-check")
+def jira_check(config: ConfigOption = DEFAULT_CONFIG) -> None:
+    """Check the Jira connection: sign-in, the project, and JQL search (read-only)."""
+    from patchmig.jira_client import JiraError
+
+    cfg = _load(config)
+    if cfg.jira is None:
+        typer.echo("The config has no 'jira' section.")
+        raise typer.Exit(1)
+    client = _jira(cfg, True)
+    try:
+        for line in client.check(cfg.jira.project):
+            typer.secho(f"  ok   {line}", fg="green")
+    except JiraError as e:
+        typer.secho(f"  FAIL {e}", fg="red")
+        raise typer.Exit(1) from e
+
+
 @app.command("report")
 def report_cmd(
     config: ConfigOption = DEFAULT_CONFIG,

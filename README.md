@@ -18,6 +18,7 @@ pip install -e '.[dev]'
 
 migrate init myproject                       # writes myproject/project.yaml
 migrate config validate -c myproject/project.yaml
+migrate jira-check -c myproject/project.yaml     # Jira sign-in, project, JQL (Server/DC or Cloud)
 migrate ingest -c myproject/project.yaml     # new run: read all patch sources (+ Jira tickets)
 migrate patches -c myproject/project.yaml    # list the run's patches in order
 migrate doctor -c myproject/project.yaml --mcp   # check Copilot CLI headless + MCP tools
@@ -44,7 +45,7 @@ migrate status -c myproject/project.yaml
 | `patchmig/ledger/` | Ledger database: runs, patches, clusters, state machine and audit history |
 | `patchmig/ingest/` | Patch-source adapters, manifest parsing, diff footprints, normalisation and linking |
 | `patchmig/gitutil.py` | Thin helpers over the git CLI |
-| `patchmig/jira_client.py` | Minimal Jira REST client (read) |
+| `patchmig/jira_client.py` | Jira REST client for Server/Data Center and Cloud (reads and export writes) |
 | `patchmig/agents/` | LLM adapter (Copilot CLI, fake), runner with budgets and retries, intent writer, briefs |
 | `patchmig/knowledge/` | Knowledge pack: tree access, OEM footprint map, upstream change map |
 | `patchmig/analysis/` | Upstream rungs, obsolete rule, revert folding, clustering, net diffs, forecasts |

@@ -121,8 +121,14 @@ PatchSource = Annotated[
 class JiraConfig(Model):
     url: str
     project: str
-    user: str | None = None
-    token: SecretRef
+    deployment: Literal["auto", "server", "cloud"] = Field(
+        default="auto",
+        description="Jira Server/Data Center or Jira Cloud; auto: cloud for *.atlassian.net",
+    )
+    user: str | None = Field(
+        default=None, description="Basic auth user (Cloud: your account email); none: Bearer token"
+    )
+    token: SecretRef = Field(description="Server/DC: personal access token; Cloud: API token")
     label_prefix: str = "mig"
     comment_marker: str = "[migration-agent]"
     issue_type: str = Field(
