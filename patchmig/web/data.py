@@ -7,10 +7,11 @@ them to files, so both front ends show exactly the same data.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
+from patchmig import notes as engineer_notes
 from patchmig.analysis.patches import load_diff
 from patchmig.config import ProjectConfig
 from patchmig.config.schema import ThresholdsConfig
@@ -129,7 +130,7 @@ def patch(store: LedgerStore, config: ProjectConfig | None, run_id: int, patch_i
         "links": p.links, "footprint": p.footprint, "role": p.chain_role,
         "intent": p.intent, "intent_detail": p.intent_detail, "state": p.state.value,
         "verdict": p.verdict, "confidence": p.confidence, "cluster_id": p.cluster_id,
-        "history": _history(store, p), "diff": _cut(diff),
+        "history": _history(store, p), "diff": _cut(diff), "notes": _notes_for_patch(store, p),
     }  # fmt: skip
 
 
@@ -183,8 +184,31 @@ def cluster(store: LedgerStore, run_id: int, cluster_id: int) -> dict:
         "review": r.get("review"), "feedback": r.get("feedback", []),
         "decisions": r.get("decisions", []), "publish": _publish(r.get("publish")),
         "jira_export": r.get("jira_export"), "queue": _queue(store, c),
-        "history": _history(store, c),
+        "history": _history(store, c), "notes": _notes_for_cluster(store, c, list(members)),
     }  # fmt: skip
+
+
+def _note(n, stale: bool = False) -> dict:
+    return {"id": n.id, "where": engineer_notes.where(n), "stages": n.stages, "text": n.text,
+            "author": n.author, "updated_at": _iso(n.updated_at), "stale": stale}  # fmt: skip
+
+
+def _notes_for_patch(store: LedgerStore, p: Patch) -> list[dict]:
+    return [_note(n) for n in engineer_notes.active(store) if engineer_notes.applies_to_patch(n, p)]
+
+
+def _notes_for_cluster(store: LedgerStore, c: Cluster, members: list[Patch]) -> list[dict]:
+    """The notes the agents get for this cluster; marked when added or edited since migration."""
+    paths = engineer_notes.cluster_paths(c, members)
+    used = set(((c.result.get("migration") or {}).get("knowledge") or {}).get("notes", []))
+    started = (c.result.get("migration") or {}).get("started_at")
+    migrated_at = datetime.fromisoformat(started) if started else None
+    out = []
+    for n in engineer_notes.for_cluster(engineer_notes.active(store), c, members, paths, "migrate"):
+        updated = n.updated_at.replace(tzinfo=UTC, microsecond=0)  # as precise as started_at
+        changed = migrated_at is not None and (n.id not in used or updated > migrated_at)
+        out.append(_note(n, changed))
+    return out
 
 
 def _migration(record: dict | None) -> dict | None:

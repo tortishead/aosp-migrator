@@ -18,7 +18,7 @@ get_patch, get_ticket) to read anything else in the source or target tree.
 ## Intent
 
 {intent}
-{review_feedback}{memory}
+{review_feedback}{notes}{memory}
 ## Where each project stands
 
 {situation}

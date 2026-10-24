@@ -28,7 +28,7 @@ Subject: {subject}
 ## Ticket
 
 {tickets}
-
+{notes}
 ## Diff
 
 ```diff

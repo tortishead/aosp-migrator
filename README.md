@@ -105,6 +105,40 @@ spike.
 The intent writer gives each patch a short, sourced intent and reuses intents by patch
 fingerprint, so a patch never costs twice, also across runs.
 
+## Engineer notes
+
+When the patches and tickets leave out something the agents need, add a note:
+
+```
+migrate notes add "Target is BMW QSSI 15; the OEM power HAL lives in vendor/oem/power." --by xuan
+migrate notes add "Keep the old setMode(int) overload: the HMI app still calls it." \
+    --patch 12 --for migrate --by xuan
+migrate notes add "BT moved to packages/modules/Bluetooth." --path 'frameworks/base/services/*Bt*' --by xuan
+migrate notes list [--patch N | --cluster N] / edit N --text ... / remove N   (all with --by)
+```
+
+A note applies to every patch, a path glob over `<project>/<file>`, one patch (by Change-Id or
+patch-id, so it follows the patch into later runs), one cluster, or the patches of one Jira
+ticket (`--ticket`); and to `--for analyse` (intent writer), `--for migrate` (cluster agent,
+reviewer, build fixer) or both. Notes live in the ledger, outlive runs, and keep their edit
+history. The web front end shows them on patch and cluster pages.
+
+Every result records a fingerprint of the notes (and for clusters the member intents) it was
+made with, so after a change only the affected work is redone:
+
+```
+migrate notes stale            # what changed knowledge affects
+migrate intents --stale        # rewrite only those intents (or --patch N)
+migrate apply --stale --by xuan    # reopen and migrate only those clusters, plus clusters built on them
+migrate apply --redo --cluster N --by xuan   # rerun chosen clusters regardless
+```
+
+A cluster the agent worked on is stale when any of its notes or intents changed. A cluster
+applied by cherry-pick or net diff is stale only when a note about it specifically (its
+patches, the cluster or a ticket) changed; such a note also brings the agent in, since a
+cherry-pick cannot follow it. Approved clusters are never reopened by `--stale`. The
+deterministic `migrate analyse` does not read notes; its LLM counterpart is `migrate intents`.
+
 ## Analysis
 
 `migrate analyse` is deterministic and spends no credits. It first builds the knowledge pack:

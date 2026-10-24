@@ -59,6 +59,17 @@ migrate report   -c pilot/project.yaml --out pilot/report-1.md
 Each step can be limited (`--limit`, `--cluster`) to go slowly at first. `migrate serve`
 shows the same ledger in the browser.
 
+When an intent or a migration is wrong because the agent lacked context (an OEM convention,
+where something moved in the target, which variant a ticket is for), add a note instead of
+rejecting blindly, and rerun only what it affects:
+
+```bash
+migrate notes add "..." --patch N --by <you> -c pilot/project.yaml   # or --cluster/--ticket/--path
+migrate notes stale     -c pilot/project.yaml
+migrate intents --stale -c pilot/project.yaml
+migrate apply --stale --by <you> -c pilot/project.yaml && migrate verify -c pilot/project.yaml
+```
+
 What to check:
 
 | After | Check |
