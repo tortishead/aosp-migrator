@@ -245,6 +245,49 @@ def intents_cmd(
         typer.echo(f"Review sheet with {n} intents written to {export}")
 
 
+@app.command("history")
+def history_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Only report; fetch nothing")] = False,
+) -> None:
+    """Deepen shallow (repo sync --depth=1) checkouts as far as the upstream checks need.
+
+    Source: every project of a git_range source (else the run's patch projects) gets its OEM
+    range. Target: the run's patch projects get their history back to the source base, or
+    trees.history_commits commits. Run before ingest for git_range, and after ingest.
+    """
+    from patchmig.ingest.manifest import tree_projects
+    from patchmig.knowledge.history import deepen_trees
+
+    cfg = _load(config)
+    store = LedgerStore.open(cfg.ledger_path)
+    run = store.latest_run() if run_id is None else None
+    rid = run_id if run_id is not None else (run.id if run else None)
+    patch_projects: list[str] = []
+    if rid is not None:
+        with store.session() as s:
+            patch_projects = sorted(
+                set(s.scalars(select(Patch.project).where(Patch.run_id == rid)))
+            )
+    source = list(patch_projects)
+    if any(src.type == "git_range" for src in cfg.patch_sources):
+        source = tree_projects(cfg.trees.source.path, cfg.trees.source.manifest)
+    if not patch_projects:
+        typer.echo("No patches yet: only the source tree is checked. Run again after ingest.")
+    results = deepen_trees(cfg, source, patch_projects, dry_run=dry_run)
+    if not results:
+        typer.echo("No shallow project to deepen.")
+    failed = False
+    for r in results:
+        grown = f"{r.commits_before} -> {r.commits_after} commits, {r.fetches} fetch(es)"
+        typer.secho(f"  {'ok  ' if r.ok else 'FAIL'} {r.side:<6} {r.project}: {grown}; {r.detail}",
+                    fg="green" if r.ok else "red")  # fmt: skip
+        failed |= not r.ok
+    if failed:
+        raise typer.Exit(1)
+
+
 @app.command("analyse")
 def analyse_cmd(
     config: ConfigOption = DEFAULT_CONFIG,

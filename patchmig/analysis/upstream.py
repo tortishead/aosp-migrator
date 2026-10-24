@@ -23,7 +23,6 @@ from patchmig.gitutil import GitError, git, is_ancestor, resolve
 from patchmig.knowledge.trees import Trees
 from patchmig.knowledge.upstream import FileFate
 
-HISTORY_LIMIT = 20_000  # commits searched when the trees share no history
 _HAS_WORD = re.compile(r"\w")
 
 
@@ -53,7 +52,8 @@ class IdentityIndex:
         if rng:
             return [rng]
         base = self.trees.target_base(project)
-        return [f"--max-count={HISTORY_LIMIT}", base] if base else []
+        limit = self.trees.config.trees.history_commits
+        return [f"--max-count={limit}", base] if base else []
 
     def patch_ids(self, project: str) -> dict[str, str]:
         if project not in self._patch_ids:

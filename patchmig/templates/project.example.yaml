@@ -20,6 +20,8 @@ trees:
     path: /work/oem-a15
     manifest: .repo/manifests/default.xml
     base_ref: android-15.0.0_r1
+    # remote: aosp                  # for migrate history, when a project has several remotes
+  history_commits: 20000            # target history searched for Google fixes (migrate history)
 
 patch_sources:
   - type: git_range

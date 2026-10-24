@@ -52,8 +52,10 @@ memory:
 ## 2. Run
 
 ```bash
+migrate history  -c pilot/project.yaml        # depth-1 repo sync: OEM range in the source
 migrate ingest   -c pilot/project.yaml
-migrate analyse  -c pilot/project.yaml
+migrate history  -c pilot/project.yaml        # target history for the upstream checks
+migrate analyse  -c pilot/project.yaml        # warns about any project still too shallow
 migrate clusters -c pilot/project.yaml        # check the clusters and forecasts
 migrate intents  -c pilot/project.yaml        # needed patches only; memory reuse first
 migrate apply    -c pilot/project.yaml        # cherry-pick, net diff, then the agent
