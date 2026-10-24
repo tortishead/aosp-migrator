@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from patchmig import notes as engineer_notes
 from patchmig.agents.cluster import (
     ClusterAnswer,
     ClusterContext,
@@ -187,7 +188,7 @@ class Migrator:
                 changes[m.project] = changes.get(m.project, "") + load_diff(self.config, m)
         files = {p: split_diff(d) for p, d in changes.items()}
         keys = {f"{p}:{fd.path}" for p, fds in files.items() for fd in fds}
-        keys |= {f"{m.project}:{f}" for m in members for f in m.footprint.get("files", [])}
+        keys |= {f"{m.project}:{f['path']}" for m in members for f in m.footprint.get("files", [])}
         fates = self._fates(keys)
 
         # Target-side paths each project's worktree needs, following upstream renames/moves.
@@ -216,7 +217,12 @@ class Migrator:
                 if info.get("head"):
                     base_of[project] = info["head"]
 
-        record: dict = {"started_at": _now(), "projects": {}, "agent": None, "review": None}
+        notes = engineer_notes.active(self.store)
+        knowledge = engineer_notes.cluster_knowledge(
+            notes, cluster, members, engineer_notes.cluster_paths(cluster, members)
+        )
+        record: dict = {"started_at": _now(), "projects": {}, "agent": None, "review": None,
+                        "members": [m.id for m in members], "knowledge": knowledge}  # fmt: skip
         worktrees: dict[str, ProjectWorktree] = {}
         try:
             self.workspaces.remove(self.run.id, cluster.id, projects)
@@ -254,8 +260,9 @@ class Migrator:
             else:
                 pending[project] = result
 
-        # Human feedback on an earlier attempt: the mechanical result is only a starting point.
-        feedback = bool(cluster.result.get("feedback"))
+        # Human feedback on an earlier attempt, or an engineer's note about this cluster: the
+        # mechanical result is only a starting point.
+        feedback = bool(cluster.result.get("feedback")) or knowledge["specific"] is not None
         if not pending and not feedback:
             strategies = {i["strategy"] for i in record["projects"].values() if i.get("strategy")}
             strategy = "net_diff" if "net_diff" in strategies else "cherry_pick"
@@ -284,7 +291,7 @@ class Migrator:
                 reason=(
                     "cherry-pick and net-diff failed in " + ", ".join(sorted(pending))
                     if pending
-                    else "reviewer feedback needs the agent"
+                    else "reviewer feedback or an engineer note needs the agent"
                 ),
             )
         ctx = self._context(cluster, members, changes, fates)
@@ -325,10 +332,18 @@ class Migrator:
             net_diff="".join(tree_relative(d, p) for p, d in net.items()),
             fates="\n".join(fate_lines) or "(no upstream information)",
             memory=self._memory_text(members, net),
+            notes=self._notes_text(cluster, members),
             review_feedback="\n".join(
                 f"- {f['by']} ({f.get('source', 'review')}): {f['text']}"
                 for f in cluster.result.get("feedback", [])
             ),
+        )
+
+    def _notes_text(self, cluster: Cluster, members: list[Patch]) -> str:
+        paths = engineer_notes.cluster_paths(cluster, members)
+        notes = engineer_notes.active(self.store)
+        return engineer_notes.render(
+            engineer_notes.for_cluster(notes, cluster, members, paths, "migrate")
         )
 
     def _memory_text(self, members: list[Patch], changes: dict[str, str]) -> str:

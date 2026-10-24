@@ -168,3 +168,28 @@ class AgentCall(Base):
     prompt_chars: Mapped[int] = mapped_column(default=0)
     output_chars: Mapped[int] = mapped_column(default=0)
     output: Mapped[str] = mapped_column(Text, default="")  # tail of the raw answer
+
+
+class Note(Base):
+    """What an engineer tells the agents, beyond the patches and tickets.
+
+    Notes belong to the project, not to one run, so they carry over to later runs. A note
+    applies to every patch, to patches touching a path glob, to one patch (by Change-Id or
+    patch-id, so the same patch in a later run), to one cluster, or to the patches of one
+    Jira ticket; and to the analyse step (intent writer), the migrate step (cluster agent,
+    reviewer, build fixer) or both. Edits keep the earlier texts; removal is a timestamp.
+    """
+
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(16))  # all, path, patch, cluster, ticket
+    target: Mapped[str] = mapped_column(String(500), default="")
+    label: Mapped[str] = mapped_column(Text, default="")  # what the target is, for people
+    stages: Mapped[list[Any]] = mapped_column(default=list)  # analyse, migrate
+    text: Mapped[str] = mapped_column(Text)
+    author: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow)
+    removed_at: Mapped[datetime | None]
+    revisions: Mapped[list[Any]] = mapped_column(default=list)  # earlier {text, by, at}

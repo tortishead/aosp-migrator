@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from patchmig.agents.adapter import AgentTask, ToolPolicy, answer_instructions
+from patchmig.agents.intent import notes_section
 from patchmig.agents.runner import AgentOutcome, AgentRunner
 from patchmig.config import ProjectConfig
 
@@ -62,6 +63,7 @@ class ClusterContext:
     fates: str
     review_feedback: str = ""  # what humans said about earlier attempts
     memory: str = ""  # what earlier migrations learned (migration memory)
+    notes: str = ""  # what the engineers noted for this cluster (patchmig.notes)
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -103,6 +105,7 @@ def cluster_brief(
         intent=ctx.intent,
         situation=situation,
         review_feedback=_feedback_section(ctx),
+        notes=notes_section(ctx.notes),
         memory=(
             f"\n## From earlier migrations (migration memory)\n\n{ctx.memory}\n"
             if ctx.memory
@@ -150,6 +153,7 @@ def review_brief(
         name=ctx.name,
         members=ctx.members,
         intent=ctx.intent,
+        engineer_notes=notes_section(ctx.notes),
         net_diff=_truncate(ctx.net_diff, limit),
         migrated_diff=_truncate(migrated_diff, limit),
         agent_summary=agent_summary,
@@ -209,6 +213,7 @@ def fix_brief(
         name=ctx.name,
         members=ctx.members,
         intent=ctx.intent,
+        engineer_notes=notes_section(ctx.notes),
         migrated_diff=_truncate(migrated_diff, config.migrate.brief_max_diff_chars),
         command=command,
         errors=errors,

@@ -26,10 +26,12 @@ config_app = typer.Typer(help="Inspect and validate the project configuration.")
 run_app = typer.Typer(help="Manage migration runs.")
 review_app = typer.Typer(help="Review queues and human decisions on clusters.")
 memory_app = typer.Typer(help="The migration memory: facts and lessons from earlier migrations.")
+notes_app = typer.Typer(help="Engineer notes: extra knowledge for the agents, per scope and step.")
 app.add_typer(config_app, name="config")
 app.add_typer(run_app, name="run")
 app.add_typer(review_app, name="review")
 app.add_typer(memory_app, name="memory")
+app.add_typer(notes_app, name="notes")
 
 ConfigOption = Annotated[
     Path, typer.Option("--config", "-c", help="Project config file", envvar="PATCHMIG_CONFIG")
@@ -208,15 +210,27 @@ def intents_cmd(
     export: Annotated[
         Path | None, typer.Option(help="Also write a Markdown review sheet to this file")
     ] = None,
+    patch: Annotated[
+        list[int] | None,
+        typer.Option("--patch", help="Write this patch's intent again (repeatable)"),
+    ] = None,
+    stale: Annotated[
+        bool, typer.Option("--stale", help="Write again the intents whose notes changed")
+    ] = False,
 ) -> None:
-    """Write an intent for each needed patch (run after analyse; earlier intents are reused)."""
+    """Write an intent for each needed patch (run after analyse; earlier intents are reused).
+
+    After adding, editing or removing notes, `--stale` rewrites only the affected intents.
+    """
     cfg = _load(config)
     store = LedgerStore.open(cfg.ledger_path)
     rid = _latest_run_id(store, run_id)
     with store.session() as s:
         run = s.get(Run, rid)
     runner = None if dry_run else AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
-    report = write_intents(cfg, store, run, runner, limit=limit, memory=_memory(cfg))
+    report = write_intents(
+        cfg, store, run, runner, limit=limit, memory=_memory(cfg), redo=patch, stale=stale
+    )
     typer.echo(
         f"Run {rid}: {report.written} written, {report.reused} reused, "
         f"{report.skipped} already had one, {report.not_needed} not needed; "
@@ -322,11 +336,23 @@ def apply_cmd(
     no_agent: Annotated[
         bool, typer.Option("--no-agent", help="Only cherry-pick and net-diff; no agent calls")
     ] = False,
+    stale: Annotated[
+        bool, typer.Option("--stale", help="Migrate again the clusters whose notes changed")
+    ] = False,
+    redo: Annotated[
+        bool, typer.Option("--redo", help="Migrate the --cluster clusters again, whatever state")
+    ] = False,
+    by: Annotated[
+        str | None, typer.Option("--by", help="Who reruns (recorded as human:<name>)")
+    ] = None,
 ) -> None:
     """Migrate the needed clusters onto the target tree, one branch per cluster.
 
     Cherry-pick and net-diff cost nothing; the cluster agent is called only when both fail.
+    After a notes or intent change, `--stale` reruns only the clusters made with different
+    knowledge (and the clusters built on them); `--redo --cluster N` reruns chosen ones.
     """
+    from patchmig import notes as engineer_notes
     from patchmig.mcp_server.server import server_config
 
     cfg = _load(config)
@@ -334,6 +360,30 @@ def apply_cmd(
     rid = _latest_run_id(store, run_id)
     with store.session() as s:
         run = s.get(Run, rid)
+    if redo and not cluster:
+        typer.secho("--redo needs --cluster", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    if stale or redo:
+        actor = f"human:{by}" if by else "orchestrator"
+        if redo:
+            ids, why = list(cluster), "rerun requested"
+        else:
+            found = engineer_notes.stale_clusters(store, run)
+            found = [x for x in found if not cluster or x.id in cluster]
+            ids, why = [x.id for x in found], "knowledge changed"
+            for x in found:
+                typer.echo(f"  stale [{x.id}] {x.state:<14} {x.name}: {x.why}")
+            if not ids:
+                typer.echo(f"Run {rid}: no cluster is stale.")
+                return
+        try:
+            reopened, messages = engineer_notes.rerun(store, run, ids, actor, why)
+        except engineer_notes.NoteError as e:
+            typer.secho(str(e), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from e
+        for m in messages:
+            typer.secho(f"  note: {m}", fg=typer.colors.YELLOW)
+        cluster = reopened
     runner = None
     if not no_agent and cfg.migrate.agent:
         runner = AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
@@ -715,6 +765,174 @@ def memory_reject(name: str, by: ByOption, config: ConfigOption = DEFAULT_CONFIG
         typer.secho(str(e), fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from e
     typer.echo(f"Lesson {name} dropped.")
+
+
+StageOption = Annotated[
+    list[str] | None,
+    typer.Option("--for", help="analyse (intent writer) or migrate (cluster agent, reviewer, "
+                 "build fixer); repeatable; default both"),
+]  # fmt: skip
+
+
+def _note_error(e: Exception):
+    typer.secho(str(e), fg=typer.colors.RED, err=True)
+    return typer.Exit(1)
+
+
+def _note_line(n) -> str:
+    from patchmig import notes as engineer_notes
+
+    edited = f", edited {len([r for r in n.revisions if 'text' in r])}x" if n.revisions else ""
+    return (f"[{n.id}] for {engineer_notes.where(n)} · {'+'.join(n.stages)} · {n.author}"
+            f"{edited}\n    " + n.text.replace("\n", "\n    "))  # fmt: skip
+
+
+@notes_app.command("add")
+def notes_add(
+    text: Annotated[str, typer.Argument(help="What the agents should know")],
+    by: ByOption,
+    path: Annotated[str | None, typer.Option(help="Glob over <project>/<file>, e.g. "
+                                             "'frameworks/base/services/*/power/*'")] = None,
+    patch: Annotated[int | None, typer.Option(help="Patch id; follows the patch to later runs")]
+    = None,
+    cluster: Annotated[int | None, typer.Option(help="Cluster id of this run")] = None,
+    ticket: Annotated[str | None, typer.Option(help="Jira key: every patch carrying it")] = None,
+    stage: StageOption = None,
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+) -> None:  # fmt: skip
+    """Add a note; with no scope option it is for every patch."""
+    from patchmig import notes as engineer_notes
+    from patchmig.ledger import Ticket
+    from patchmig.memory import patch_key
+
+    given = [(k, v) for k, v in (("path", path), ("patch", patch), ("cluster", cluster),
+                                 ("ticket", ticket)) if v is not None]  # fmt: skip
+    if len(given) > 1:
+        raise _note_error(ValueError("give at most one of --path, --patch, --cluster, --ticket"))
+    scope, value = given[0] if given else ("all", None)
+    cfg, store, run = _open_run(config, run_id)
+    target, label = "", ""
+    with store.session() as s:
+        if scope == "path":
+            target = value
+        elif scope == "patch":
+            p = s.get(Patch, value)
+            if p is None or p.run_id != run.id or not (target := patch_key(p) or ""):
+                raise _note_error(LookupError(f"patch {value} not in run {run.id}"))
+            label = f"#{p.id} {p.subject}"[:200]
+        elif scope == "cluster":
+            c = s.get(Cluster, value)
+            if c is None or c.run_id != run.id:
+                raise _note_error(LookupError(f"cluster {value} not in run {run.id}"))
+            target, label = str(c.id), c.name
+        elif scope == "ticket":
+            t = s.get(Ticket, value)
+            target, label = value, t.summary if t else ""
+    try:
+        n = engineer_notes.add(store, text, by, scope, target, label, stage)
+    except engineer_notes.NoteError as e:
+        raise _note_error(e) from e
+    typer.echo(_note_line(n))
+    typer.echo("Rerun what it affects with: migrate intents --stale / migrate apply --stale")
+
+
+@notes_app.command("list")
+def notes_list(
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+    patch: Annotated[int | None, typer.Option(help="Only notes that reach this patch")] = None,
+    cluster: Annotated[int | None, typer.Option(help="Only notes that reach this cluster")]
+    = None,
+    removed: Annotated[bool, typer.Option("--removed", help="Also removed notes")] = False,
+) -> None:  # fmt: skip
+    """The notes, or the notes an agent would get for one patch or cluster."""
+    from patchmig import notes as engineer_notes
+    from patchmig.ledger import Note
+
+    cfg, store, run = _open_run(config, run_id)
+    with store.session() as s:
+        notes = list(s.scalars(select(Note).order_by(Note.id)))
+        p = s.get(Patch, patch) if patch is not None else None
+        c = s.get(Cluster, cluster) if cluster is not None else None
+    if not removed or p or c:
+        notes = [n for n in notes if n.removed_at is None]
+    if p is not None:
+        notes = [n for n in notes if engineer_notes.applies_to_patch(n, p)]
+    if c is not None:
+        members = [m for m in run_patches(store, run) if m.cluster_id == c.id]
+        paths = engineer_notes.cluster_paths(c, members)
+        notes = [
+            n
+            for n in notes
+            if any(engineer_notes.for_cluster([n], c, members, paths, st) for st in n.stages)
+        ]
+    if not notes:
+        typer.echo("No notes.")
+    for n in notes:
+        typer.echo(_note_line(n) + (" (removed)" if n.removed_at else ""))
+
+
+def run_patches(store: LedgerStore, run: Run) -> list[Patch]:
+    with store.session() as s:
+        return list(s.scalars(select(Patch).where(Patch.run_id == run.id)))
+
+
+@notes_app.command("edit")
+def notes_edit(
+    note: int,
+    by: ByOption,
+    text: Annotated[str | None, typer.Option(help="The new text")] = None,
+    stage: StageOption = None,
+    config: ConfigOption = DEFAULT_CONFIG,
+) -> None:
+    """Change a note's text or steps (the earlier text is kept in its history)."""
+    from patchmig import notes as engineer_notes
+
+    store = LedgerStore.open(_load(config).ledger_path)
+    try:
+        n = engineer_notes.edit(store, note, by, text, stage)
+    except engineer_notes.NoteError as e:
+        raise _note_error(e) from e
+    typer.echo(_note_line(n))
+    typer.echo("Rerun what it affects with: migrate intents --stale / migrate apply --stale")
+
+
+@notes_app.command("remove")
+def notes_remove(note: int, by: ByOption, config: ConfigOption = DEFAULT_CONFIG) -> None:
+    """Remove a note; agents stop getting it."""
+    from patchmig import notes as engineer_notes
+
+    store = LedgerStore.open(_load(config).ledger_path)
+    try:
+        engineer_notes.remove(store, note, by)
+    except engineer_notes.NoteError as e:
+        raise _note_error(e) from e
+    typer.echo(f"Note {note} removed.")
+    typer.echo("Rerun what it affects with: migrate intents --stale / migrate apply --stale")
+
+
+@notes_app.command("stale")
+def notes_stale(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
+    """Intents and migrations made with notes (or intents) that have changed since."""
+    from patchmig import notes as engineer_notes
+
+    _, store, run = _open_run(config, run_id)
+    intents = engineer_notes.stale_intents(store, run)
+    clusters = engineer_notes.stale_clusters(store, run)
+    if not intents and not clusters:
+        typer.echo(f"Run {run.id}: nothing is stale.")
+        return
+    if intents:
+        typer.echo(f"{len(intents)} intent(s); rerun with: migrate intents --stale")
+        for x in intents:
+            typer.echo(f"  #{x.id} {x.state:<14} {x.name}")
+    if clusters:
+        typer.echo(f"{len(clusters)} cluster(s); rerun with: migrate apply --stale")
+        for x in clusters:
+            typer.echo(f"  [{x.id}] {x.state:<14} {x.name}: {x.why}")
+    if intents and clusters:
+        typer.echo("Rewrite the intents first: the clusters' briefs include them.")
 
 
 @app.command("serve")

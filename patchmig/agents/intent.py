@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from patchmig import notes as engineer_notes
 from patchmig.agents.adapter import AgentTask, answer_instructions
 from patchmig.agents.runner import AgentFailed, AgentRunner, BudgetExceeded
 from patchmig.config import ProjectConfig
@@ -78,8 +79,23 @@ def _ticket_section(t: Ticket, linked: dict[str, Ticket]) -> str:
     return "\n\n".join(parts)
 
 
+def notes_section(text: str) -> str:
+    """Engineers' notes as a brief section; they outrank guesses, not the code."""
+    if not text:
+        return ""
+    return (
+        "\n## Notes from the migration engineers\n\n"
+        f"{text}\n\nThese come from people who know this code and product. Follow them; if "
+        "the code clearly contradicts a note, say so in your answer.\n"
+    )
+
+
 def build_brief(
-    config: ProjectConfig, patch: Patch, tickets: list[Ticket], linked: dict | None = None
+    config: ProjectConfig,
+    patch: Patch,
+    tickets: list[Ticket],
+    linked: dict | None = None,
+    notes: str = "",
 ) -> str:
     linked = linked or {}
     template = files("patchmig.agents.briefs").joinpath("intent_writer.md").read_text()
@@ -93,6 +109,7 @@ def build_brief(
         subject=patch.subject,
         message=patch.message,
         tickets=ticket_text,
+        notes=notes_section(notes),
         diff=_truncate(_diff_for(config, patch), config.llm.intent_max_diff_chars),
     ) + answer_instructions(IntentResult)
 
@@ -108,11 +125,12 @@ class IntentReport:
     credits: float = 0.0
 
 
-def _reusable(store: LedgerStore, patch: Patch) -> Patch | None:
+def _reusable(store: LedgerStore, patch: Patch, notes: str | None) -> Patch | None:
+    """The latest intent of the same patch (patch-id) written with the same notes."""
     if not patch.fingerprint:
         return None
     with store.session() as s:
-        return s.scalars(
+        earlier = s.scalars(
             select(Patch)
             .where(
                 Patch.fingerprint == patch.fingerprint,
@@ -120,8 +138,8 @@ def _reusable(store: LedgerStore, patch: Patch) -> Patch | None:
                 Patch.intent_detail.is_not(None),
             )
             .order_by(Patch.id.desc())
-            .limit(1)
-        ).first()
+        ).all()
+    return next((p for p in earlier if p.intent_detail.get("notes") == notes), None)
 
 
 def write_intents(
@@ -131,26 +149,41 @@ def write_intents(
     runner: AgentRunner | None,
     limit: int | None = None,
     memory=None,
+    redo: list[int] | None = None,
+    stale: bool = False,
 ) -> IntentReport:
     """Give every patch of the run an intent: reuse an earlier one, else ask the agent.
 
     Earlier intents come from this ledger (same patch-id) or from the migration memory
-    (same Change-Id in an earlier migration). With runner=None only reuse happens.
+    (same Change-Id in an earlier migration), but only when they were written with the same
+    engineer notes as apply now. With runner=None only reuse happens.
+
+    `redo` writes the intents of these patch ids again; `stale` those whose notes changed
+    since their intent was written. Either way the old intent stays until the new one is in.
     """
     report = IntentReport()
     with store.session() as s:
         patches = s.scalars(select(Patch).where(Patch.run_id == run.id).order_by(Patch.seq)).all()
+    notes = engineer_notes.active(store)
     asked = 0
     for patch in patches:
-        if patch.intent_detail is not None:
+        mine = engineer_notes.for_patch(notes, patch, "analyse")
+        fp = engineer_notes.fingerprint(mine)
+        again = patch.id in (redo or []) or (stale and engineer_notes.intent_stale(patch, notes))
+        if patch.intent_detail is not None and not again:
             report.skipped += 1
             continue
-        if earlier := _reusable(store, patch):
+        if not again and (earlier := _reusable(store, patch, fp)):
             detail = {**earlier.intent_detail, "reused_from_patch": earlier.id}
             _save(store, patch.id, earlier.intent, detail)
             report.reused += 1
             continue
-        if memory is not None and (remembered := _from_memory(memory, patch)):
+        if (
+            not again
+            and fp is None
+            and memory is not None
+            and (remembered := _from_memory(memory, patch))
+        ):
             _save(store, patch.id, *remembered)
             report.reused += 1
             continue
@@ -165,7 +198,7 @@ def write_intents(
         task = AgentTask(
             agent="intent_writer",
             key=f"patch:{patch.id}",
-            brief=build_brief(config, patch, tickets, linked),
+            brief=build_brief(config, patch, tickets, linked, engineer_notes.render(mine)),
             schema=IntentResult,
             workdir=config.workdir,
             subject_type="patch",
@@ -182,7 +215,10 @@ def write_intents(
             continue
         report.credits += outcome.credits
         result: IntentResult = outcome.data
-        _save(store, patch.id, render_intent(result), result.model_dump())
+        detail = result.model_dump()
+        if fp:
+            detail["notes"] = fp
+        _save(store, patch.id, render_intent(result), detail)
         report.written += 1
     return report
 

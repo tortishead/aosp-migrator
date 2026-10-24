@@ -308,6 +308,7 @@ function PatchPage({ run, id }) {
       <div class="panel"><h2>History</h2><${Timeline} items=${p.history} /></div>
     </div>
     <div class="stack"></div>
+    <${Notes} notes=${p.notes} />
     <div class="panel"><h2>Commit message</h2><pre class="block">${p.message}</pre></div>
     <div class="panel"><h2>Diff</h2><${Diff} text=${p.diff} /></div>`}<//>`;
 }
@@ -410,6 +411,7 @@ function ClusterPage({ run, id }) {
     </div>
     <div class="stack"></div>
     <${ReviewStatus} c=${c} />
+    <${Notes} notes=${c.notes} />
     ${c.migration ? html`<${Migration} m=${c.migration} />` : null}
     ${c.verification ? html`<${Verification} v=${c.verification} />` : null}
     <div class="panel"><h2>Net diff <span class="muted">(the patches still needed, folded on the source base)</span></h2><${Diff} text=${c.net_diff} /></div>`}<//>`;
@@ -521,6 +523,12 @@ function ReviewStatus({ c }) {
     ${c.decisions.length ? html`<p class="muted">Decisions:</p><ul class="plain">${c.decisions.map((d) => html`<li>${d.by}: ${d.choice} · ${d.reason}</li>`)}</ul>` : null}
     ${c.jira_export ? html`<p class="muted">Exported to Jira: ${Object.keys(c.jira_export).join(", ")}</p>` : null}
   </div>`;
+}
+
+function Notes({ notes }) {
+  if (!notes || !notes.length) return null;
+  return html`<div class="panel"><h2>Engineer notes <span class="muted">(given to the agents; edit with <code>migrate notes</code>)</span></h2>
+    <ul class="plain">${notes.map((n) => html`<li><span class="muted">[${n.id}] ${n.where} · ${n.stages.join("+")} · ${n.author}${n.stale ? " · changed since this result" : ""}</span><br />${n.text}</li>`)}</ul></div>`;
 }
 
 function RunsPage({ runs }) {
