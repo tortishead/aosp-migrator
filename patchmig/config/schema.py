@@ -33,7 +33,11 @@ def _check_secret_ref(value: str) -> str:
     return value
 
 
-SecretRef = Annotated[str, AfterValidator(_check_secret_ref)]
+SecretRef = Annotated[
+    str,
+    AfterValidator(_check_secret_ref),
+    Field(json_schema_extra={"x-secret": True}),  # the web forms offer a token store for it
+]
 
 
 def resolve_secret(ref: str) -> str:
@@ -60,6 +64,23 @@ class MigrationSpec(Model):
         return self
 
 
+HostKind = Literal["github", "gitlab", "bitbucket_cloud", "bitbucket_server"]
+
+
+class RepoHost(Model):
+    kind: HostKind = Field(description="GitHub (incl. Enterprise), GitLab, Bitbucket Cloud or "
+                           "Bitbucket Server/Data Center")  # fmt: skip
+    url: str = Field(description="Web base URL, e.g. https://github.com or https://git.oem.com")
+    api_url: str | None = Field(default=None, description="Only if not the usual one for the kind")
+    user: str | None = Field(
+        default=None,
+        description="User for basic auth (Bitbucket Cloud: your username); none: token only",
+    )
+    token: SecretRef | None = Field(
+        default=None, description="Personal or project access token (read; write for pushing)"
+    )
+
+
 class TreeConfig(Model):
     path: Path = Field(description="Root of the checked-out tree")
     manifest: str | None = Field(
@@ -76,6 +97,11 @@ class TreeConfig(Model):
         default=None,
         description="Remote that `migrate history` deepens shallow projects from; default: the "
         "project's only remote",
+    )
+    host: RepoHost | None = Field(
+        default=None,
+        description="Git host of this tree's repositories. Its token is used for HTTPS fetches "
+        "(migrate history) and for links to it in tickets; optional where the remotes need none",
     )
 
 
@@ -131,12 +157,7 @@ class JiraQuerySource(Model):
     max_attachment_kb: int = Field(default=2048, ge=1)
 
 
-class CodeHost(Model):
-    url: str = Field(description="Web base URL, e.g. https://github.com or https://git.oem.com")
-    kind: Literal["github", "gitlab", "bitbucket_cloud", "bitbucket_server"]
-    api_url: str | None = Field(default=None, description="Only if not the usual one for the kind")
-    user: str | None = Field(default=None, description="For basic auth (e.g. Bitbucket)")
-    token: SecretRef | None = None
+class CodeHost(RepoHost):
     repo_map: dict[str, str] = Field(
         default_factory=dict, description="Host repo (owner/name) -> source tree project path"
     )
@@ -268,6 +289,16 @@ class TestsConfig(Model):
 class LlmConfig(Model):
     runtime: Literal["copilot-cli"] = "copilot-cli"
     executable: str = "copilot"
+    github_host: str | None = Field(
+        default=None,
+        description="Host the Copilot licence is on: none for github.com, e.g. 'oem.ghe.com' "
+        "for GHE.com, or a GitHub Enterprise Server host name",
+    )
+    github_token: SecretRef | None = Field(
+        default=None,
+        description="Fine-grained PAT with the 'Copilot Requests' permission (classic ghp_ "
+        "tokens do not work); none: the CLI's own login",
+    )
     models: dict[str, str] = Field(
         default_factory=dict, description="Model per agent; unset agents use the CLI default"
     )
@@ -449,6 +480,14 @@ class ProjectConfig(Model):
         if self.jira is None and any(s.type == "jira_query" for s in self.patch_sources):
             raise ValueError("a jira_query patch source needs the 'jira' section")
         return self
+
+    def hosts(self) -> list[RepoHost]:
+        """Every configured Git host: code_hosts first, then the trees' hosts."""
+        found = list(self.code_hosts)
+        for tree in (self.trees.source, self.trees.target):
+            if tree.host and all(h.url.rstrip("/") != tree.host.url.rstrip("/") for h in found):
+                found.append(tree.host)
+        return found
 
     @property
     def ledger_path(self) -> Path:

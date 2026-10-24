@@ -5,13 +5,12 @@ URL, or a PR / merge request URL. A commit link needs no API: its SHA is looked 
 source tree. A PR link needs the host's REST API to list its commits (looked up in the source
 tree too) and, when they are not there (squashed or rebased on merge), to fetch the PR diff.
 
-Hosts are configured under `code_hosts` (URL, kind, token, repo_map); github.com, gitlab.com
-and bitbucket.org work without configuration for public repositories.
+Hosts are configured under `code_hosts` (URL, kind, token, repo_map) and as the trees' hosts;
+github.com, gitlab.com and bitbucket.org work without configuration for public repositories.
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import urllib.error
@@ -19,7 +18,8 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
-from patchmig.config.schema import CodeHost, resolve_secret
+from patchmig.config.schema import RepoHost
+from patchmig.githosts import api_base, api_headers, token_of
 
 _URL = re.compile(r"https?://[^\s<>\"'\]\[|)]+")
 _SHA = r"(?P<sha>[0-9a-f]{7,40})"
@@ -60,7 +60,7 @@ class PullRequest:
     commits: list[tuple[str, str]]  # (sha, message), oldest first
 
 
-def find_refs(text: str, hosts: list[CodeHost]) -> list[CodeRef]:
+def find_refs(text: str, hosts: list[RepoHost]) -> list[CodeRef]:
     """Commit and PR links in free text (ticket descriptions, comments, remote links)."""
     refs: dict[str, CodeRef] = {}
     for raw in _URL.findall(text or ""):
@@ -70,7 +70,7 @@ def find_refs(text: str, hosts: list[CodeHost]) -> list[CodeRef]:
     return list(refs.values())
 
 
-def parse_ref(url: str, hosts: list[CodeHost]) -> CodeRef | None:
+def parse_ref(url: str, hosts: list[RepoHost]) -> CodeRef | None:
     u = urllib.parse.urlparse(url)
     host = next((h for h in hosts if url.startswith(h.url.rstrip("/") + "/")), None)
     base = host.url.rstrip("/") if host else f"{u.scheme}://{u.netloc}"
@@ -87,11 +87,11 @@ def parse_ref(url: str, hosts: list[CodeHost]) -> CodeRef | None:
     return None
 
 
-def host_for(ref: CodeRef, hosts: list[CodeHost]) -> CodeHost:
+def host_for(ref: CodeRef, hosts: list[RepoHost]) -> RepoHost:
     for h in hosts:
         if h.url.rstrip("/") == ref.base:
             return h
-    return CodeHost(url=ref.base, kind=ref.kind)  # public host, no credentials
+    return RepoHost(url=ref.base, kind=ref.kind)  # public host, no credentials
 
 
 def gitlab_unified(changes: list[dict]) -> str:
@@ -115,26 +115,12 @@ def gitlab_unified(changes: list[dict]) -> str:
 
 
 class HostClient:
-    def __init__(self, host: CodeHost, timeout: float = 30):
+    def __init__(self, host: RepoHost, timeout: float = 30):
         self.host = host
         self.timeout = timeout
         self.base = host.url.rstrip("/")
-        token = resolve_secret(host.token) if host.token else None
-        self.headers: dict[str, str] = {}
-        if token and host.kind == "gitlab":
-            self.headers["PRIVATE-TOKEN"] = token
-        elif token and host.user:
-            creds = base64.b64encode(f"{host.user}:{token}".encode()).decode()
-            self.headers["Authorization"] = f"Basic {creds}"
-        elif token:
-            self.headers["Authorization"] = f"Bearer {token}"
-        self.api = host.api_url.rstrip("/") if host.api_url else {
-            "github": "https://api.github.com" if self.base == "https://github.com"
-            else f"{self.base}/api/v3",
-            "gitlab": f"{self.base}/api/v4",
-            "bitbucket_cloud": "https://api.bitbucket.org/2.0",
-            "bitbucket_server": f"{self.base}/rest/api/1.0",
-        }[host.kind]  # fmt: skip
+        self.headers = api_headers(host, token_of(host))
+        self.api = api_base(host)
 
     def _call(self, path: str, accept: str = "application/json", raw: bool = False):
         url = path if path.startswith("http") else f"{self.api}{path}"

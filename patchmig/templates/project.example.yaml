@@ -16,11 +16,19 @@ trees:
     manifest: .repo/manifests/default.xml
     base_ref: android-14.0.0_r1     # unmodified Android base in every project
     head_ref: oem-a14-release       # end of the OEM patches
+    # host:                         # optional: Git host of the source repos, for HTTPS fetches
+    #   kind: bitbucket_server      # github, gitlab, bitbucket_cloud, bitbucket_server
+    #   url: https://bitbucket.oem.example
+    #   token: env:SOURCE_GIT_TOKEN
   target:
     path: /work/oem-a15
     manifest: .repo/manifests/default.xml
     base_ref: android-15.0.0_r1
     # remote: aosp                  # for migrate history, when a project has several remotes
+    # host:                         # Git host of the target repos (fetch; later also push and PRs)
+    #   kind: gitlab
+    #   url: https://gitlab.oem.example
+    #   token: env:TARGET_GIT_TOKEN
   history_commits: 20000            # target history searched for Google fixes (migrate history)
 
 patch_sources:
@@ -82,6 +90,8 @@ tests:
 llm:
   runtime: copilot-cli
   executable: copilot
+  # github_host: oem.ghe.com        # Copilot licence host; empty: github.com
+  # github_token: env:COPILOT_PAT   # fine-grained PAT, "Copilot Requests" permission (not ghp_)
   models: {}                        # per agent: intent_writer, cluster_agent, reviewer, build_fixer,
                                     # memory_curator; e.g. {cluster_agent: <model>, intent_writer: <cheaper>}
   credits_per_call: {default: 1.0}  # estimated credits per call by model name; calibrate in the spike

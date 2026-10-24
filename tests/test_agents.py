@@ -37,7 +37,9 @@ log = os.environ.get("FAKE_COPILOT_LOG")
 if log:
     with open(log, "a") as f:
         f.write(json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd(),
-                            "auto_update": os.environ.get("COPILOT_AUTO_UPDATE")}}) + "\\n")
+                            "auto_update": os.environ.get("COPILOT_AUTO_UPDATE"),
+                            "token": os.environ.get("COPILOT_GITHUB_TOKEN"),
+                            "gh_host": os.environ.get("GH_HOST")}}) + "\\n")
 mode = os.environ.get("FAKE_COPILOT_MODE", "answer")
 if "--version" in sys.argv:
     print("fake-copilot 1.0"); sys.exit(0)

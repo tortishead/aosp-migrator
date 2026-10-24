@@ -14,7 +14,7 @@ already made looks like a patch that is still needed.
 
 `deepen` fetches in growing steps (`git fetch --deepen`) until that history is there, so a
 project costs only the commits it needs. The remote is the project's only remote, or the one
-named in the tree config.
+named in the tree config. With a `host` and token on the tree, HTTPS fetches sign in with it.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from patchmig.config import ProjectConfig
+from patchmig.githosts import git_env
 from patchmig.gitutil import GitError, git, is_ancestor, is_repo, resolve
 
 FIRST_STEP = 500
@@ -74,11 +75,15 @@ def _merge_base(repo: Path, a: str, b: str) -> str | None:
 
 
 class Deepener:
-    def __init__(self, repo: Path, remote: str, max_commits: int, dry_run: bool = False):
+    def __init__(
+        self, repo: Path, remote: str, max_commits: int, dry_run: bool = False,
+        env: dict[str, str] | None = None,
+    ):  # fmt: skip
         self.repo = repo
         self.remote = remote
         self.max_commits = max_commits
         self.dry_run = dry_run
+        self.env = env
         self.fetches = 0
 
     def fetch_ref(self, ref: str) -> str | None:
@@ -90,7 +95,7 @@ class Deepener:
         for spec in (f"refs/tags/{ref}:refs/tags/{ref}",
                      f"refs/heads/{ref}:refs/remotes/{self.remote}/{ref}"):  # fmt: skip
             try:
-                git(self.repo, "fetch", "--quiet", "--depth=1", self.remote, spec)
+                git(self.repo, "fetch", "--quiet", "--depth=1", self.remote, spec, env=self.env)
                 self.fetches += 1
                 return resolve(self.repo, ref) or resolve(self.repo, f"{self.remote}/{ref}")
             except GitError:
@@ -106,7 +111,7 @@ class Deepener:
                 return done()
             step = min(step, self.max_commits - have)
             # The tip's SHA as refspec: deepen only this line, not every branch of the remote.
-            git(self.repo, "fetch", "--quiet", f"--deepen={step}", self.remote, tip)
+            git(self.repo, "fetch", "--quiet", f"--deepen={step}", self.remote, tip, env=self.env)
             self.fetches += 1
             if commit_count(self.repo, tip) == have:  # the remote has nothing older
                 return done()
@@ -116,12 +121,12 @@ class Deepener:
 
 def deepen_source(
     repo: Path, project: str, base_ref: str, head_ref: str, remote: str | None,
-    max_commits: int, dry_run: bool = False,
+    max_commits: int, dry_run: bool = False, env: dict[str, str] | None = None,
 ) -> DeepenResult:  # fmt: skip
     """Source: base_ref and head_ref present, with their merge base (the OEM range)."""
     r = DeepenResult(project, "source", is_shallow(repo))
     try:
-        d = Deepener(repo, remote_of(repo, remote), max_commits, dry_run)
+        d = Deepener(repo, remote_of(repo, remote), max_commits, dry_run, env)
         head, base = d.fetch_ref(head_ref), d.fetch_ref(base_ref)
         if head is None or base is None:
             r.ok = False
@@ -138,12 +143,12 @@ def deepen_source(
 
 def deepen_target(
     repo: Path, project: str, base_ref: str, source_base: str | None, remote: str | None,
-    max_commits: int, dry_run: bool = False,
+    max_commits: int, dry_run: bool = False, env: dict[str, str] | None = None,
 ) -> DeepenResult:  # fmt: skip
     """Target: history back to the source base if shared, else max_commits commits."""
     r = DeepenResult(project, "target", is_shallow(repo))
     try:
-        d = Deepener(repo, remote_of(repo, remote), max_commits, dry_run)
+        d = Deepener(repo, remote_of(repo, remote), max_commits, dry_run, env)
         tip = d.fetch_ref(base_ref)
         if tip is None:
             r.ok, r.detail = False, f"{base_ref} not found"
@@ -175,13 +180,21 @@ def deepen_trees(
     dry_run: bool = False,
 ) -> list[DeepenResult]:
     """Deepen the shallow projects among these; complete projects are left as they are."""
-    trees, results = config.trees, []
+    trees, results, env = config.trees, [], {}
+    for side, tree in (("source", trees.source), ("target", trees.target)):
+        try:
+            env[side] = git_env(tree.host)
+        except (KeyError, OSError) as e:  # never show the secret, only that it is missing
+            detail = f"trees.{side}.host.token not available: {e}"
+            results.append(DeepenResult("(all)", side, True, ok=False, detail=detail))
+            return results
     for project in source_projects:
         repo = trees.source.path / project
         if is_repo(repo) and is_shallow(repo):
             results.append(deepen_source(repo, project, trees.source.base_ref,
                                          trees.source.head_ref, trees.source.remote,
-                                         trees.history_commits, dry_run))  # fmt: skip
+                                         trees.history_commits, dry_run,
+                                         env["source"]))  # fmt: skip
     for project in target_projects:
         repo = trees.target.path / project
         if not (is_repo(repo) and is_shallow(repo)):
@@ -190,7 +203,7 @@ def deepen_trees(
         source_base = resolve(source_repo, trees.source.base_ref) if is_repo(source_repo) else None
         results.append(
             deepen_target(repo, project, trees.target.base_ref, source_base,
-                          trees.target.remote, trees.history_commits, dry_run)
+                          trees.target.remote, trees.history_commits, dry_run, env["target"])
         )  # fmt: skip
     return results
 
