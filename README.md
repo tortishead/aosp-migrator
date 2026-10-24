@@ -34,7 +34,8 @@ migrate verify -c myproject/project.yaml     # build affected modules, run TEST_
 migrate publish -c myproject/project.yaml    # one draft PR per verified cluster and repo
 migrate review list -c myproject/project.yaml        # review queues; approve/reject/decide/sync
 migrate jira-export -c myproject/project.yaml --dry-run   # approved results back to Jira
-migrate serve -c myproject/project.yaml      # web front end on http://127.0.0.1:8765/
+migrate check -c myproject/project.yaml      # trees, Git host tokens, Copilot sign-in, Jira, build host
+migrate serve -c myproject/project.yaml      # web front end and settings on http://127.0.0.1:8765/
 migrate export-site site -c myproject/project.yaml   # static read-only copy of the front end
 migrate status -c myproject/project.yaml
 ```
@@ -252,9 +253,41 @@ list with filters and each patch's evidence, intent, history and diff, the clust
 order with a graph of how their patches are linked and the folded net diff, the knowledge pack
 (hot spots and the upstream fate of every touched file), agent calls with credits, and the
 config snapshot of the run, plus the review queues and each cluster's PRs, decisions and Jira
-export. It listens on 127.0.0.1 by default and is read-only: decisions are made on the PRs or
-with `migrate review`. Editing in the browser (review buttons, config forms) needs sign-in
-and is not built yet.
+export. It listens on 127.0.0.1 by default. The ledger views are read-only: decisions are made
+on the PRs or with `migrate review`.
+
+### Settings in the browser
+
+The Settings page edits the whole project config: one form per section (trees and their Git
+hosts, patch sources, Copilot, budget, Jira, build and tests, publishing, analysis), generated
+from the config schema and validated by it, plus the YAML text itself. A save is written only
+if the whole config is valid; the file it replaces is kept in `.patchmig/config-history/`
+(named with the time and who saved). Saving a form rewrites the YAML without its comments;
+saving on the YAML tab keeps them. Without a valid config, `migrate serve` starts with only
+the settings, so a new project can be set up in the browser.
+
+- **Admin token.** Saving and the connection tests need it: set `PATCHMIG_ADMIN_TOKEN` before
+  `migrate serve`, or use the one-time token it prints. `--read-only` turns editing off.
+- **Tokens.** A secret field takes either an `env:`/`file:` reference or a token pasted into
+  the page. A pasted token is written to its own file (mode 0600) in `.patchmig/secrets/` next
+  to the config (`--secrets-dir` to change), which has its own `.gitignore`, and the config
+  gets a `file:` reference to it. The page shows only whether a token is stored or a reference
+  resolves, never the token. A replaced or removed token's file is deleted.
+- **Copilot.** `llm.github_host` is the host the Copilot licence is on (empty for github.com,
+  `<name>.ghe.com` for GHE.com data residency, or a GitHub Enterprise Server host name, which
+  Copilot CLI supports as a technical preview) and `llm.github_token` a fine-grained PAT with
+  the **Copilot Requests** permission. Classic `ghp_` PATs do not work with Copilot CLI. The
+  token reaches the CLI in its environment (`COPILOT_GITHUB_TOKEN`; for GHES
+  `COPILOT_PROVIDER_GHES_TOKEN` with `COPILOT_PROVIDER_GHES_HOST`), never on its command line.
+  Without a token the CLI uses its own `copilot login`.
+- **Source and target repositories.** `trees.source.host` (optional) and `trees.target.host`
+  name the Git host (GitHub, GitLab, Bitbucket Cloud or Bitbucket Server/Data Center), its URL,
+  an optional user and a token. `migrate history` signs in with it for HTTPS fetches (passed to
+  git as an `http.<url>.extraHeader` in its environment, only for URLs under that host), and
+  ticket links to these hosts are read with it like `code_hosts`.
+- **Connection tests** (`migrate check` on the command line): the trees and their base refs,
+  each Git host token, Copilot CLI and its token (a sign-in check against the GitHub API, no
+  credits), Jira, and the build host. They use the saved settings.
 
 The UI is plain JavaScript with Preact and htm vendored as one file (`static/htm-preact.js`), so
 it needs no Node.js, no build step and no CDN. `migrate export-site <folder>` writes the same UI

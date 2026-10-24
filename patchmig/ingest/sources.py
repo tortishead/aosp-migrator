@@ -361,7 +361,7 @@ def _linked_patches(ctx: SourceContext, ticket: Ticket) -> list[RawPatch]:
         if linked:
             sources.append((linked, [ticket.key, key]))
     for t, keys in sources:
-        for ref in find_refs(_ticket_text(ctx, t), ctx.config.code_hosts):
+        for ref in find_refs(_ticket_text(ctx, t), ctx.config.hosts()):
             found += _ref_patches(ctx, ref, keys)
     return found
 
@@ -374,8 +374,8 @@ def _local_commit(ctx: SourceContext, sha: str, project: str | None) -> RawPatch
 
 
 def _ref_patches(ctx: SourceContext, ref: CodeRef, keys: list[str]) -> list[RawPatch]:
-    host = host_for(ref, ctx.config.code_hosts)
-    hint = host.repo_map.get(ref.repo)
+    host = host_for(ref, ctx.config.hosts())
+    hint = getattr(host, "repo_map", {}).get(ref.repo)
     found: list[RawPatch] = []
     try:
         if ref.sha:

@@ -179,3 +179,64 @@ svg.graph .edge-label { fill: var(--muted); font-size: 11px; }
 details { margin: 8px 0; }
 details summary { cursor: pointer; }
 details pre.block { margin-top: 6px; max-height: 320px; overflow: auto; }
+
+/* settings */
+textarea {
+  font: inherit;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+textarea.yaml { min-height: 60vh; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+button {
+  font: inherit;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--badge-text); font-weight: 600; }
+button.link { border: 0; background: none; padding: 0 4px; color: var(--accent); }
+fieldset.form { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset.group { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 12px; padding: 8px 12px 4px; min-width: 0; }
+fieldset.group.off { padding-bottom: 0; }
+fieldset.group legend { font-weight: 600; padding: 0 4px; }
+.panel > fieldset.group { border: 0; padding: 0; margin: 0; }
+.panel > fieldset.group > legend { font-size: 15px; padding: 0; margin-bottom: 6px; }
+.field { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: 4px 14px; padding: 6px 0; border-top: 1px solid var(--line); }
+.field:first-of-type { border-top: 0; }
+.field > label { font-weight: 500; padding-top: 5px; overflow-wrap: anywhere; }
+.field .control { display: grid; gap: 4px; min-width: 0; }
+.field .control > input, .field .control > select { width: 100%; max-width: 560px; }
+.field small, .small { font-size: 12.5px; }
+.req { color: var(--s-failed); }
+label.check { display: inline-flex; align-items: center; gap: 6px; font-weight: inherit; }
+.field-error { color: var(--s-failed); font-size: 12.5px; }
+.field-error.inline { display: inline; }
+.ok { color: var(--s-verified); }
+.banner { padding: 8px 0; margin: 0 0 8px; font-size: 14px; }
+.map, .secret { display: grid; gap: 6px; }
+.map > button, .control > button { justify-self: start; }
+.map-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; gap: 6px; align-items: center; }
+.secret input { max-width: 560px; }
+.secret-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.list-item { border: 1px dashed var(--line); border-radius: 6px; padding: 4px 10px; margin-bottom: 8px; }
+.list-head { display: flex; justify-content: space-between; align-items: center; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+nav.subtabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+nav.subtabs a { padding: 4px 10px; border-radius: 6px; color: var(--text); border: 1px solid var(--line); background: var(--panel); }
+nav.subtabs a.active { border-color: var(--accent); font-weight: 600; }
+nav.subtabs .count { background: var(--s-failed); color: var(--badge-text); border-radius: 8px; padding: 0 6px; font-size: 11.5px; }
+.signin { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.signin label { display: inline-flex; gap: 6px; align-items: center; }
+.check-block { margin-bottom: 8px; }
+@media (max-width: 640px) {
+  .field { grid-template-columns: 1fr; }
+  .field > label { padding-top: 0; }
+}

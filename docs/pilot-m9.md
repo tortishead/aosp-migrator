@@ -17,7 +17,9 @@ pilot. If `migrate doctor --mcp` fails, stop there: everything below depends on 
 
 ## 1. Configure
 
-`migrate init pilot` and edit `pilot/project.yaml`. Give it its own `name`: cluster
+`migrate init pilot` and edit `pilot/project.yaml`, or run `migrate serve -c
+pilot/project.yaml` and use the Settings page (tokens can be pasted there; see the README).
+Then `migrate check -c pilot/project.yaml` until every line is ok. Give it its own `name`: cluster
 branches in the target tree and on GitHub are named after it, so the pilot and the full
 migration later can share the same trees and repos. Beyond trees and patch sources:
 

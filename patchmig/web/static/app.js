@@ -1,6 +1,8 @@
-// Read-only front end over the migration ledger. No build step: Preact + htm, vendored.
-// Live mode reads /api/...; a static export reads the same answers from data/*.json.
+// Front end over the migration ledger (read-only) and the project settings (editable).
+// No build step: Preact + htm, vendored. Live mode reads /api/...; a static export reads the
+// same answers from data/*.json and has no settings.
 import { html, render, useEffect, useState } from "./htm-preact.js";
+import { SettingsPage } from "./settings.js";
 
 const STATIC = document.body.dataset.mode === "static";
 
@@ -474,7 +476,7 @@ function ConfigPage({ run }) {
   const state = useData(`runs/${run}/config`);
   return html`<${Loading} state=${state}>${(c) => html`
     <h1>Configuration <span class="muted">used by run ${run}</span></h1>
-    <p class="muted">Read-only snapshot (hash ${c.hash.slice(0, 12)}). Secrets appear only as references. Edit the project's YAML file to change it.</p>
+    <p class="muted">Read-only snapshot (hash ${c.hash.slice(0, 12)}). Secrets appear only as references. ${STATIC ? "" : html`Change the project's settings under <a href="#/settings">Settings</a>; this run keeps the snapshot.`}</p>
     <div class="panel"><pre class="block">${JSON.stringify(c.config, null, 2)}</pre></div>`}<//>`;
 }
 
@@ -542,11 +544,21 @@ function RunsPage({ runs }) {
 
 const TABS = [["", "Overview"], ["review", "Review"], ["patches", "Patches"], ["clusters", "Clusters"], ["knowledge", "Knowledge"], ["agents", "Agent calls"], ["config", "Config"]];
 
+function SettingsShell({ section, run }) {
+  return html`
+    <header>
+      <span class="title">Patch migration</span>
+      <nav>${run ? html`<a href=${`#/r/${run}`}>Overview</a>` : null}<a class="active" href="#/settings">Settings</a></nav>
+    </header>
+    <main key=${`settings/${section || ""}`}><${SettingsPage} section=${section} /></main>`;
+}
+
 function App() {
   const runs = useData("runs");
   const parts = useRoute();
   return html`<${Loading} state=${runs}>${(list) => {
-    if (!list.length) return html`<main><h1>No runs yet</h1><p>Start with <code>migrate ingest</code>, then <code>migrate analyse</code>.</p></main>`;
+    if (parts[0] === "settings" && !STATIC) return html`<${SettingsShell} section=${parts[1]} run=${list[0]?.id} />`;
+    if (!list.length) return html`<main><h1>No runs yet</h1><p>Start with <code>migrate ingest</code>, then <code>migrate analyse</code>.${STATIC ? "" : html` Check the <a href="#/settings">settings</a> first.`}</p></main>`;
     const latest = list[0].id;
     const run = parts[0] === "r" ? Number(parts[1]) : latest;
     const page = parts[0] === "r" ? parts[2] || "" : parts[0] === "runs" ? "runs" : "";
@@ -566,7 +578,8 @@ function App() {
       <header>
         <span class="title">Patch migration${STATIC ? html` <span class="badge-static">static snapshot</span>` : null}</span>
         <nav>${TABS.map(([p, name]) => html`<a class=${page === p ? "active" : ""} href=${`#/r/${run}${p ? `/${p}` : ""}`}>${name}</a>`)}
-          <a class=${page === "runs" ? "active" : ""} href="#/runs">Runs</a></nav>
+          <a class=${page === "runs" ? "active" : ""} href="#/runs">Runs</a>
+          ${STATIC ? null : html`<a href="#/settings">Settings</a>`}</nav>
         <select aria-label="Run" value=${run} onChange=${(e) => { location.hash = `#/r/${e.target.value}${page && page !== "runs" ? `/${page}` : ""}`; }}>
           ${list.map((r) => html`<option value=${r.id}>Run ${r.id}${r.note ? ` · ${r.note}` : ""}</option>`)}
         </select>

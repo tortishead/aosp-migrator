@@ -983,16 +983,81 @@ def serve_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
     host: Annotated[str, typer.Option(help="Interface to listen on")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port")] = 8765,
+    read_only: Annotated[
+        bool, typer.Option("--read-only", help="No settings editing in the browser")
+    ] = False,
+    secrets_dir: Annotated[
+        Path | None,
+        typer.Option(
+            help="Where tokens typed in the browser are stored "
+            "(default: .patchmig/secrets next to the config)"
+        ),
+    ] = None,  # fmt: skip
 ) -> None:
-    """Serve the read-only web front end for this project's ledger."""
+    """Serve the web front end: the ledger (read-only) and the project settings (editable).
+
+    Editing needs the admin token: set PATCHMIG_ADMIN_TOKEN, or use the one printed at start.
+    Without a valid config the server starts with only the settings, to create one.
+    """
+    import os
+    import secrets
+
     import uvicorn
 
+    from patchmig.config.editor import SettingsEditor
     from patchmig.web.api import create_app
 
+    try:
+        cfg = load_config(config)
+        store = LedgerStore.open(cfg.ledger_path)
+        name = cfg.name
+    except ConfigError as e:
+        if read_only:
+            typer.secho(str(e), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from e
+        cfg, store, name = None, None, str(config)
+        typer.secho(f"{e}\nStarting with the settings only: fix the config in the browser.",
+                    fg=typer.colors.YELLOW)  # fmt: skip
+    editor = SettingsEditor(config, secrets_dir)
+    token = None
+    if not read_only:
+        token = os.environ.get("PATCHMIG_ADMIN_TOKEN") or secrets.token_urlsafe(18)
+    typer.echo(f"Serving {name} on http://{host}:{port}/ (Ctrl+C to stop)")
+    if read_only:
+        typer.echo("Settings are read-only.")
+    elif "PATCHMIG_ADMIN_TOKEN" in os.environ:
+        typer.echo("Settings editing: admin token from PATCHMIG_ADMIN_TOKEN.")
+    else:
+        typer.echo(f"Settings editing: admin token for this session: {token}")
+    uvicorn.run(create_app(cfg, store, editor, token), host=host, port=port,
+                log_level="warning")  # fmt: skip
+
+
+@app.command("check")
+def check_cmd(
+    what: Annotated[
+        list[str] | None, typer.Argument(help="trees, hosts, copilot, jira, build (default: all)")
+    ] = None,
+    config: ConfigOption = DEFAULT_CONFIG,
+) -> None:
+    """Connection tests: trees, git host tokens, Copilot sign-in, Jira, build host. No credits."""
+    from patchmig.checks import CHECKS, run_check
+
     cfg = _load(config)
-    store = LedgerStore.open(cfg.ledger_path)
-    typer.echo(f"Serving {cfg.name} on http://{host}:{port}/ (read-only; Ctrl+C to stop)")
-    uvicorn.run(create_app(cfg, store), host=host, port=port, log_level="warning")
+    unknown = sorted(set(what or []) - set(CHECKS))
+    if unknown:
+        typer.secho(f"unknown checks {unknown}; known: {', '.join(CHECKS)}", fg="red", err=True)
+        raise typer.Exit(2)
+    failed = False
+    for name in what or CHECKS:
+        typer.echo(name)
+        for title, ok, detail in run_check(name, cfg):
+            typer.secho(
+                f"  {'ok  ' if ok else 'FAIL'} {title}: {detail}", fg="green" if ok else "red"
+            )
+            failed |= not ok
+    if failed:
+        raise typer.Exit(1)
 
 
 @app.command("export-site")
