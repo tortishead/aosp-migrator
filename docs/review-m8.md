@@ -3,7 +3,7 @@
 After `migrate verify`, the clusters go to people. This step opens the PRs, takes the
 reviewers' decisions back into the ledger, and writes approved results to Jira.
 
-## 1. Configure GitHub and Jira
+## 1. Configure the PR host and Jira
 
 ```yaml
 output:
@@ -34,9 +34,36 @@ jira:
 Jira Server/Data Center and Jira Cloud are supported through the REST API (v2; on Cloud the
 JQL search uses v3 `search/jql`, because Cloud removed the old search endpoint).
 
-The GitHub repos must hold the target tree's history (the cluster branches are pushed on
-top of the target base). The token reaches `git push` through `GIT_ASKPASS`, never through a
-URL or a command line.
+GitLab and Bitbucket work the same way: set `target` to `gitlab`, `bitbucket_cloud` or
+`bitbucket_server` and fill that section instead of `github`:
+
+```yaml
+output:
+  target: bitbucket_server
+  bitbucket_server:
+    owner: AOSP                      # project key (GitLab: group path; Bitbucket Cloud: workspace)
+    base_branch: oem-a15
+    repo_map:
+      frameworks/base: platform_frameworks_base
+    reviewers: [migration.lead]      # user names (Bitbucket Cloud: account ids or {uuid})
+    # url, user, token: default to trees.target.host (the target repo's host in the settings)
+```
+
+| Host | PR | Draft | Approves | Sends back | Labels |
+| --- | --- | --- | --- | --- | --- |
+| GitHub | pull request | draft PR | approving review or merge | review requesting changes (its text is the feedback) | yes |
+| GitLab | merge request | "Draft:" title | approval or merge | reviewer state "requested changes" | yes |
+| Bitbucket Cloud | pull request | draft PR | approval or merge | participant state "changes requested" | no |
+| Bitbucket Server/DC | pull request | draft PR (8.18+) | approval or merge | reviewer status "needs work" | no |
+
+GitLab and Bitbucket keep no text with a reviewer's state, so the feedback the agent gets is
+that reviewer's latest three comments on the PR: write what should change as PR comments,
+then set "request changes" / "needs work". Closing a PR without merging rejects the
+cluster on every host.
+
+The repos must hold the target tree's history (the cluster branches are pushed on top of the
+target base). The token reaches `git push` in git's environment (an `http.<url>.extraHeader`
+for the host's URLs only), never through a URL or a command line.
 
 ## 2. Publish
 

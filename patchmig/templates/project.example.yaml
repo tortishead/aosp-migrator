@@ -107,7 +107,7 @@ thresholds:
   careful_review: 0.5
 
 output:
-  target: github
+  target: github                    # github, gitlab, bitbucket_cloud, bitbucket_server or gerrit
   branch_prefix: migration/
   draft: true
   github:
@@ -118,6 +118,10 @@ output:
     # api_url: https://github.example.com/api/v3          # GitHub Enterprise
     # git_url: https://github.example.com/{owner}/{repo}.git
     reviewers: []
+  # gitlab:                         # same fields for gitlab, bitbucket_cloud, bitbucket_server;
+  #   owner: android/oem            # url, user and token default to trees.target.host
+  #   repo_map: {}
+  #   base_branch: oem-a15
 
 path_rules: []
 #  - pattern: "vendor/qcom/**"

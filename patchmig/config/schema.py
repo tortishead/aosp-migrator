@@ -359,27 +359,47 @@ class ThresholdsConfig(Model):
         return self
 
 
-class GithubOutput(Model):
-    owner: str
-    token: SecretRef
+class RepoOutput(Model):
+    owner: str = Field(
+        description="GitHub owner or org, GitLab group path, Bitbucket Cloud workspace, or "
+        "Bitbucket Server project key"
+    )
+    url: str | None = Field(
+        default=None,
+        description="Web base URL of the host; default: trees.target.host.url, else github.com, "
+        "gitlab.com or bitbucket.org",
+    )
+    api_url: str | None = Field(default=None, description="Only if not the usual one for the host")
+    user: str | None = Field(
+        default=None, description="User for basic auth; default: trees.target.host.user"
+    )
+    token: SecretRef | None = Field(
+        default=None,
+        description="Token that may push branches and open PRs; default: trees.target.host.token",
+    )
     repo_map: dict[str, str] = Field(
-        default_factory=dict, description="Maps tree project paths to GitHub repo names"
+        default_factory=dict, description="Maps tree project paths to repository names (slugs)"
     )
     base_branch: str = Field(
-        description="Branch of the target tree in the GitHub repos; PRs are opened against it"
+        description="Branch of the target tree in these repos; PRs are opened against it"
     )
     base_branch_map: dict[str, str] = Field(
         default_factory=dict, description="Per-repo base branch, where it differs"
     )
-    api_url: str = Field(
-        default="https://api.github.com", description="GitHub Enterprise: https://<host>/api/v3"
+    git_url: str | None = Field(
+        default=None,
+        description="Push URL template with {owner} and {repo}; default: the host's HTTPS URL",
     )
-    git_url: str = Field(
-        default="https://github.com/{owner}/{repo}.git",
-        description="Push URL template with {owner} and {repo}",
+    reviewers: list[str] = Field(
+        default_factory=list,
+        description="Requested on every PR: user names (Bitbucket Cloud: account ids or {uuid})",
     )
-    reviewers: list[str] = Field(default_factory=list, description="Requested on every PR")
-    labels: list[str] = Field(default_factory=lambda: ["migration"])
+    labels: list[str] = Field(
+        default_factory=lambda: ["migration"], description="GitHub and GitLab only"
+    )
+
+
+GithubOutput = RepoOutput  # the GitHub section came first; same fields as the others
 
 
 class GerritOutput(Model):
@@ -389,10 +409,15 @@ class GerritOutput(Model):
 
 
 class OutputConfig(Model):
-    target: Literal["github", "gerrit"] = "github"
+    target: Literal["github", "gitlab", "bitbucket_cloud", "bitbucket_server", "gerrit"] = Field(
+        default="github", description="Where PRs (GitLab: merge requests) are opened"
+    )
     branch_prefix: str = "migration/"
     draft: bool = True
-    github: GithubOutput | None = None
+    github: RepoOutput | None = None
+    gitlab: RepoOutput | None = None
+    bitbucket_cloud: RepoOutput | None = None
+    bitbucket_server: RepoOutput | None = None
     gerrit: GerritOutput | None = None
 
     @model_validator(mode="after")

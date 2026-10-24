@@ -54,7 +54,7 @@ migrate status -c myproject/project.yaml
 | `patchmig/analysis/` | Upstream rungs, obsolete rule, revert folding, clustering, net diffs, forecasts |
 | `patchmig/migrate/` | Per-cluster sparse worktrees and branches, cherry-pick and net-diff rungs, guardrails, migration orchestration |
 | `patchmig/verify/` | Build host over SSH or local, module and test selection, build/test/fix loop |
-| `patchmig/publish/` | GitHub REST client, branch push, one PR per cluster and repo |
+| `patchmig/publish/` | GitHub, GitLab and Bitbucket REST clients, branch push, one PR per cluster and repo |
 | `patchmig/review.py` | Review queues, human decisions, PR review sync |
 | `patchmig/jira_export.py` | Export of approved results to Jira (labels, links, one comment) |
 | `patchmig/memory/` | Migration memory: a git repo of patch histories, file mappings, decisions and lessons |
@@ -220,8 +220,15 @@ on the cluster page. See `docs/verify-m7.md`.
 
 ## Publish, review and Jira export
 
-`migrate publish` pushes each verified cluster and opens one draft PR per GitHub repository
-it touches, with everything a reviewer needs in the body. Clusters sit in review queues
+`migrate publish` pushes each verified cluster and opens one draft PR per repository it
+touches, with everything a reviewer needs in the body. `output.target` is `github` (also
+Enterprise), `gitlab` (merge requests, marked "Draft:"), `bitbucket_cloud` or
+`bitbucket_server` (Data Center); its section (`output.github`, `output.gitlab`, ...) takes the
+owner (org, group path, workspace or project key), `repo_map`, base branch and reviewers.
+URL, user and token default to `trees.target.host`, so the target repo's token set in the
+settings serves for fetching, pushing and PRs. On GitLab and Bitbucket, a reviewer's state
+counts as the review: approved approves; GitLab "request changes" and Bitbucket "needs work"
+send the cluster back, with that reviewer's latest PR comments as the feedback. Labels exist only on GitHub and GitLab. Clusters sit in review queues
 (quick approve, careful review, needs decision, failed, dropped, approved). Reviewers decide
 on the PRs (approve or merge; request changes; close) or with `migrate review`, and
 `migrate review sync` brings PR outcomes into the ledger. A rejected cluster goes back to the

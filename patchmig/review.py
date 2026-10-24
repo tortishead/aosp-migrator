@@ -179,12 +179,12 @@ class Reviewer:
         return self._cluster(cluster_id)
 
 
-def sync_github(store: LedgerStore, run: Run, api) -> list[str]:
+def sync_reviews(store: LedgerStore, run: Run, api, source: str = "github") -> list[str]:
     """Bring PR outcomes into the ledger; returns one line per change.
 
     A merged PR or an approving review approves the cluster; a review requesting changes
-    rejects it with the review text as feedback; a PR closed without merge rejects it.
-    Each review is acted on once.
+    (Bitbucket: needs work) rejects it with the review text as feedback; a PR closed without
+    merge rejects it. Each review is acted on once. `source` names the host in the record.
     """
     reviewer = Reviewer(store, run)
     changes: list[str] = []
@@ -204,29 +204,29 @@ def sync_github(store: LedgerStore, run: Run, api) -> list[str]:
             pr = api.get_pr(entry["repo"], entry["number"])
             states.append(pr)
             if pr.get("merged"):
-                by = (pr.get("merged_by") or {}).get("login", "github")
+                by = (pr.get("merged_by") or {}).get("login", source)
                 events.append(("approve", by, f"merged {entry['url']}", entry["url"]))
             for rv in api.reviews(entry["repo"], entry["number"]):
                 key = f"{entry['repo']}#{rv['id']}"
                 if key in seen:
                     continue
                 seen.add(key)
-                by = (rv.get("user") or {}).get("login", "github")
+                by = (rv.get("user") or {}).get("login", source)
                 if rv["state"] == "APPROVED":
                     events.append(("approve", by, rv.get("body") or "approved", entry["url"]))
                 elif rv["state"] == "CHANGES_REQUESTED":
                     text = rv.get("body") or "changes requested (see the PR)"
                     events.append(("reject", by, f"{text} ({entry['url']})", entry["url"]))
         if states and all(p.get("state") == "closed" and not p.get("merged") for p in states):
-            events.append(("reject", "github", "PR closed without merge", states[0]["html_url"]))
+            events.append(("reject", source, "PR closed without merge", states[0]["html_url"]))
         for kind, by, text, _url in events:
             c = reviewer._cluster(cid)
             try:
                 if kind == "approve" and queue_of(c, ThresholdsConfig()) != "approved":
-                    reviewer.approve(cid, by, text, source="github")
+                    reviewer.approve(cid, by, text, source=source)
                     changes.append(f"cluster {cid}: approved by {by}")
                 elif kind == "reject" and c.state in MIGRATED | APPROVABLE:
-                    reviewer.reject(cid, by, text, source="github")
+                    reviewer.reject(cid, by, text, source=source)
                     changes.append(f"cluster {cid}: rejected by {by}: {text}")
             except ReviewError:
                 continue  # e.g. not verified yet: nothing to approve
@@ -235,3 +235,6 @@ def sync_github(store: LedgerStore, run: Run, api) -> list[str]:
                    "synced_at": _now()}  # fmt: skip
         reviewer._update(c, publish=publish)
     return changes
+
+
+sync_github = sync_reviews
