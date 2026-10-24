@@ -12,6 +12,11 @@ Status: **M9, migration memory and pilot prep** (on top of M1 to M8). See the mi
 
 ## Quick start
 
+Everything below can also be done in the browser: start `migrate serve` (or install it as a
+service with `migrate service-file`), set up the project under Settings, then run the steps on
+the Run page and review on the Review page (see "Front end"). The command line stays for
+scripts and automation; both run the same code.
+
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev]'
@@ -35,7 +40,8 @@ migrate publish -c myproject/project.yaml    # one draft PR per verified cluster
 migrate review list -c myproject/project.yaml        # review queues; approve/reject/decide/sync
 migrate jira-export -c myproject/project.yaml --dry-run   # approved results back to Jira
 migrate check -c myproject/project.yaml      # trees, Git host tokens, Copilot sign-in, Jira, build host
-migrate serve -c myproject/project.yaml      # web front end and settings on http://127.0.0.1:8765/
+migrate serve -c myproject/project.yaml      # web front end (every step, review, settings) on :8765
+migrate service-file -c myproject/project.yaml   # systemd unit: start the front end at boot
 migrate export-site site -c myproject/project.yaml   # static read-only copy of the front end
 migrate status -c myproject/project.yaml
 ```
@@ -59,7 +65,8 @@ migrate status -c myproject/project.yaml
 | `patchmig/jira_export.py` | Export of approved results to Jira (labels, links, one comment) |
 | `patchmig/memory/` | Migration memory: a git repo of patch histories, file mappings, decisions and lessons |
 | `patchmig/report.py` | Markdown summary of a run (`migrate report`) |
-| `patchmig/web/` | Read-only web front end: JSON API (FastAPI), UI (`static/`), static export |
+| `patchmig/steps.py` | The steps (ingest ... publish, Jira export, memory), shared by the CLI and the web jobs |
+| `patchmig/web/` | Web front end: JSON API (FastAPI), background jobs, UI (`static/`), static export |
 | `patchmig/mcp_server/` | Read-only MCP tools for agents: trees at the migration refs, ledger, knowledge, Jira cache |
 | `docs/spike-m3.md` | Steps to run the M3 spike on your machine |
 | `docs/analysis-m4.md` | How to run and check the analysis on your trees |
@@ -254,14 +261,46 @@ review queues, builds, tests, agent calls and credits, and what needs a person. 
 
 ## Front end
 
-`migrate serve` starts a read-only web app over the project's ledger: an overview of each run
+`migrate serve` starts a web app over the project: everything the command line does can be
+done there (below). It shows an overview of each run
 (patches by state, clusters by forecast, what decided each verdict, recent activity), the patch
 list with filters and each patch's evidence, intent, history and diff, the clusters in migration
 order with a graph of how their patches are linked and the folded net diff, the knowledge pack
 (hot spots and the upstream fate of every touched file), agent calls with credits, and the
 config snapshot of the run, plus the review queues and each cluster's PRs, decisions and Jira
-export. It listens on 127.0.0.1 by default. The ledger views are read-only: decisions are made
-on the PRs or with `migrate review`.
+export. It listens on 127.0.0.1 by default.
+
+### Doing the work in the browser
+
+Every action needs the admin token (the same one as for Settings) and your name, which is
+recorded with it (transitions show `human:<name>`, reviews `source: web`). Sign in once on the
+Run page; `--read-only` turns all actions off.
+
+- **Run page.** Each step has a card with the same options as its command: ingest, history,
+  analyse, intents, apply (migrate clusters), verify (build and test), publish, PR review sync,
+  Jira export, memory record and lesson proposals. "Whole migration" runs the chosen steps in
+  order (ingest, history, analyse, intents, apply, verify, publish; with a git range, history
+  also runs before ingest) and stops at the first failure or when the credit budget stops a
+  step. A step runs on the server as a background job, one job at a time: the page shows its
+  live log (the lines the command prints), its estimated Copilot credits and agent calls, and
+  can stop it before its next step (a running step is not cut off). You can close the page.
+  Jobs are kept in `.patchmig/jobs/` next to the config; a job running when the server stopped
+  is shown as interrupted. Steps are the functions in `patchmig/steps.py`, which the CLI calls
+  too, so the browser never costs more credits than the command.
+- **Review.** Approve, reject (with the reason the agent gets), retry, confirm a drop or answer a
+  needs-decision question, per cluster on the Review page or the cluster page. These wait while
+  a job that moves clusters is running. The Review page also syncs PR reviews and previews or
+  runs the Jira export; the Report page shows and downloads `migrate report`.
+- **Cluster and patch pages.** Migrate a cluster (again), build and test it, publish it; write
+  one patch's intent again.
+- **Notes.** The Notes page lists, adds, edits and removes engineer notes for all, a path glob,
+  a patch, a cluster or a ticket, shows which intents and clusters were made with notes that
+  changed since, and reruns only those. Patch and cluster pages add notes for themselves.
+- **Memory.** Record the run, ask the curator for lessons (one agent call), approve or drop
+  proposed lessons.
+- **Start at boot.** `migrate service-file` prints a systemd unit for this config: it starts
+  `migrate serve` at boot and restarts it on failure, with `PATCHMIG_ADMIN_TOKEN` (and any
+  `env:` tokens) in `.patchmig/serve.env`.
 
 ### Settings in the browser
 

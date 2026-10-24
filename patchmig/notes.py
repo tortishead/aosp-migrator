@@ -69,6 +69,47 @@ def add(
     return note
 
 
+def add_for_run(
+    store: LedgerStore,
+    run: Run,
+    text: str,
+    by: str,
+    scope: str = "all",
+    value: str | int | None = None,
+    stages: list[str] | None = None,
+) -> Note:
+    """Add a note whose target is given as this run sees it: a path glob, a patch or cluster
+    id of the run, or a Jira key. A patch is stored by its key, so the note follows it."""
+    from patchmig.ledger import Ticket
+    from patchmig.memory import patch_key
+
+    target, label = "", ""
+    if scope != "all" and (value is None or str(value).strip() == ""):
+        raise NoteError(f"a note for one {scope} needs the {scope}")
+    with store.session() as s:
+        if scope == "path":
+            target = str(value).strip()
+        elif scope in ("patch", "cluster"):
+            try:
+                ident = int(value)
+            except (TypeError, ValueError) as e:
+                raise NoteError(f"{scope} must be an id") from e
+            row = s.get(Patch if scope == "patch" else Cluster, ident)
+            if row is None or row.run_id != run.id:
+                raise NoteError(f"{scope} {ident} not in run {run.id}")
+            if scope == "patch":
+                if not (target := patch_key(row) or ""):
+                    raise NoteError(f"patch {ident} not in run {run.id}")
+                label = f"#{row.id} {row.subject}"[:200]
+            else:
+                target, label = str(row.id), row.name
+        elif scope == "ticket":
+            target = str(value).strip()
+            t = s.get(Ticket, target)
+            label = t.summary if t else ""
+    return add(store, text, by, scope, target, label, stages)
+
+
 def get(store: LedgerStore, note_id: int) -> Note:
     with store.session() as s:
         note = s.get(Note, note_id)

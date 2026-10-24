@@ -9,17 +9,13 @@ from typing import Annotated
 import typer
 from sqlalchemy import select
 
+from patchmig import steps
 from patchmig.agents.adapter import AgentRuntimeError, AgentTask, ToolPolicy, extract_json
 from patchmig.agents.copilot import CopilotCliAdapter
-from patchmig.agents.intent import export_review_sheet, write_intents
-from patchmig.agents.runner import AgentFailed, AgentRunner, BudgetExceeded
-from patchmig.analysis import AnalysisError, analyse
 from patchmig.config import ConfigError, ProjectConfig, dump_config, load_config
-from patchmig.ingest import IngestError, ingest
 from patchmig.jira_client import HttpJiraClient, JiraClient
 from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
-from patchmig.migrate import migrate
-from patchmig.verify import VerifyError, check_host, verify
+from patchmig.verify import VerifyError, check_host
 
 app = typer.Typer(help="Migrate OEM Android framework patches between Android versions.")
 config_app = typer.Typer(help="Inspect and validate the project configuration.")
@@ -46,6 +42,25 @@ def _load(path: Path) -> ProjectConfig:
         return load_config(path)
     except ConfigError as e:
         typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
+
+
+_COLORS = {"ok": "green", "warn": "yellow", "error": "red", "step": "cyan"}
+
+
+def _echo(text: str, level: str) -> None:
+    typer.secho(text, fg=_COLORS.get(level))
+
+
+def _step(config: Path, fn, **options):
+    """Run a step (patchmig.steps, shared with the web front end) and print what it says."""
+    cfg = _load(config)
+    ctx = steps.Context(config, cfg, LedgerStore.open(cfg.ledger_path), _echo)
+    try:
+        return fn(ctx, **options)
+    except steps.StepFailed as e:
+        if str(e):
+            typer.secho(str(e), fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from e
 
 
@@ -133,31 +148,7 @@ def ingest_cmd(
     note: Annotated[str | None, typer.Option(help="Free text shown with the run")] = None,
 ) -> None:
     """Read the patch list from all configured sources into a new run."""
-    cfg = _load(config)
-    store = LedgerStore.open(cfg.ledger_path)
-    jira = _jira(cfg, use_jira)
-    run = store.create_run(cfg, note=note or "ingest")
-    try:
-        report = ingest(cfg, store, run, jira)
-    except IngestError as e:
-        store.discard_run(run)  # else the empty run would become "the latest run"
-        typer.secho(f"Ingest failed: {e}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1) from e
-    typer.echo(f"Run {run.id}: {report.total} patches")
-    for source, n in report.found_per_source.items():
-        typer.echo(f"  from {source:<12} {n}")
-    if report.duplicates_merged:
-        typer.echo(f"  duplicates merged: {report.duplicates_merged}")
-    typer.echo("  roles: " + ", ".join(f"{k} {v}" for k, v in sorted(report.roles.items())))
-    if jira is not None:
-        typer.echo(
-            f"  Jira tickets fetched: {report.tickets_fetched} "
-            f"(+{report.linked_tickets_fetched} linked)"
-        )
-        if report.tickets_missing:
-            typer.echo(f"  Jira tickets not found: {', '.join(report.tickets_missing)}")
-    for w in report.warnings:
-        typer.secho(f"  warning: {w}", fg=typer.colors.YELLOW)
+    _step(config, steps.ingest, use_jira=use_jira, note=note)
 
 
 @app.command("patches")
@@ -178,16 +169,6 @@ def patches_cmd(
             f"{p.seq:>4} {p.state.value:<10} {p.chain_role or '':<7} {sha:<10} "
             f"{keys:<12} {p.project}: {p.subject}"
         )
-
-
-def _memory(cfg: ProjectConfig):
-    """The migration memory if configured and present; None otherwise."""
-    from patchmig.memory import Memory, MemoryRepoError
-
-    try:
-        return Memory.open(cfg) if cfg.memory.path else None
-    except MemoryRepoError:
-        return None
 
 
 def _latest_run_id(store: LedgerStore, run_id: int | None) -> int:
@@ -240,24 +221,8 @@ def intents_cmd(
 
     After adding, editing or removing notes, `--stale` rewrites only the affected intents.
     """
-    cfg, store, run = _open_run(config, run_id)
-    rid = run.id
-    runner = None if dry_run else AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
-    report = write_intents(
-        cfg, store, run, runner, limit=limit, memory=_memory(cfg), redo=patch, stale=stale
-    )
-    typer.echo(
-        f"Run {rid}: {report.written} written, {report.reused} reused, "
-        f"{report.skipped} already had one, {report.not_needed} not needed; "
-        f"estimated credits {report.credits:.1f}"
-    )
-    for failure in report.failed:
-        typer.secho(f"  failed: {failure}", fg=typer.colors.YELLOW)
-    if report.stopped_by_budget:
-        typer.secho(f"  stopped: {report.stopped_by_budget}", fg=typer.colors.YELLOW)
-    if export:
-        n = export_review_sheet(store, run, export)
-        typer.echo(f"Review sheet with {n} intents written to {export}")
+    _step(config, steps.intents, run_id=run_id, limit=limit, dry_run=dry_run, patches=patch,
+          stale=stale, export=export)  # fmt: skip
 
 
 @app.command("history")
@@ -272,35 +237,7 @@ def history_cmd(
     range. Target: the run's patch projects get their history back to the source base, or
     trees.history_commits commits. Run before ingest for git_range, and after ingest.
     """
-    from patchmig.ingest.manifest import tree_projects
-    from patchmig.knowledge.history import deepen_trees
-
-    cfg = _load(config)
-    store = LedgerStore.open(cfg.ledger_path)
-    run = store.latest_run() if run_id is None else None
-    rid = run_id if run_id is not None else (run.id if run else None)
-    patch_projects: list[str] = []
-    if rid is not None:
-        with store.session() as s:
-            patch_projects = sorted(
-                set(s.scalars(select(Patch.project).where(Patch.run_id == rid)))
-            )
-    source = list(patch_projects)
-    if any(src.type == "git_range" for src in cfg.patch_sources):
-        source = tree_projects(cfg.trees.source.path, cfg.trees.source.manifest)
-    if not patch_projects:
-        typer.echo("No patches yet: only the source tree is checked. Run again after ingest.")
-    results = deepen_trees(cfg, source, patch_projects, dry_run=dry_run)
-    if not results:
-        typer.echo("No shallow project to deepen.")
-    failed = False
-    for r in results:
-        grown = f"{r.commits_before} -> {r.commits_after} commits, {r.fetches} fetch(es)"
-        typer.secho(f"  {'ok  ' if r.ok else 'FAIL'} {r.side:<6} {r.project}: {grown}; {r.detail}",
-                    fg="green" if r.ok else "red")  # fmt: skip
-        failed |= not r.ok
-    if failed:
-        raise typer.Exit(1)
+    _step(config, steps.history, run_id=run_id, dry_run=dry_run)
 
 
 @app.command("analyse")
@@ -312,27 +249,7 @@ def analyse_cmd(
 
     Deterministic: no agent calls, no credits.
     """
-    cfg, store, run = _open_run(config, run_id)
-    rid = run.id
-    try:
-        report = analyse(cfg, store, run)
-    except AnalysisError as e:
-        typer.secho(f"Analysis failed: {e}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1) from e
-    typer.echo(f"Run {rid}: {sum(report.states.values())} patches, {report.clusters} clusters")
-    for state in State:
-        if report.states.get(state.value):
-            typer.echo(f"  {state.value:<15} {report.states[state.value]}")
-    decided = {k: v for k, v in report.rungs.items() if k != "none"}
-    if decided:
-        typer.echo("  decided by: " + ", ".join(f"{k} {v}" for k, v in sorted(decided.items())))
-    if report.forecasts:
-        typer.echo(
-            "  clusters to migrate: "
-            + ", ".join(f"{k} {v}" for k, v in sorted(report.forecasts.items()))
-        )
-    for w in report.warnings:
-        typer.secho(f"  warning: {w}", fg=typer.colors.YELLOW)
+    _step(config, steps.analyse, run_id=run_id)
 
 
 @app.command("clusters")
@@ -407,59 +324,8 @@ def apply_cmd(
     After a notes or intent change, `--stale` reruns only the clusters made with different
     knowledge (and the clusters built on them); `--redo --cluster N` reruns chosen ones.
     """
-    from patchmig import notes as engineer_notes
-    from patchmig.mcp_server.server import server_config
-
-    cfg, store, run = _open_run(config, run_id)
-    rid = run.id
-    if redo and not cluster:
-        typer.secho("--redo needs --cluster", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
-    if stale or redo:
-        actor = f"human:{by}" if by else "orchestrator"
-        if redo:
-            ids, why = list(cluster), "rerun requested"
-        else:
-            found = engineer_notes.stale_clusters(store, run)
-            found = [x for x in found if not cluster or x.id in cluster]
-            ids, why = [x.id for x in found], "knowledge changed"
-            for x in found:
-                typer.echo(f"  stale [{x.id}] {x.state:<14} {x.name}: {x.why}")
-            if not ids:
-                typer.echo(f"Run {rid}: no cluster is stale.")
-                return
-        try:
-            reopened, messages = engineer_notes.rerun(store, run, ids, actor, why)
-        except engineer_notes.NoteError as e:
-            typer.secho(str(e), fg=typer.colors.RED, err=True)
-            raise typer.Exit(1) from e
-        for m in messages:
-            typer.secho(f"  note: {m}", fg=typer.colors.YELLOW)
-        cluster = reopened
-    runner = None
-    if not no_agent and cfg.migrate.agent:
-        runner = AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
-    report = migrate(
-        cfg,
-        store,
-        run,
-        runner,
-        cluster_ids=cluster,
-        limit=limit,
-        mcp=server_config(str(config.resolve()), rid),
-        memory=_memory(cfg),
-    )
-    if not report.outcomes:
-        typer.echo(f"Run {rid}: no cluster to migrate (run migrate analyse first?)")
-    for o in report.outcomes:
-        conf = f" confidence {o.confidence:.2f}" if o.confidence is not None else ""
-        typer.echo(f"  [{o.cluster_id}] {o.state:<14} {o.name}{conf}")
-        if o.reason:
-            typer.echo(f"        {o.reason}")
-    if runner is not None:
-        typer.echo(f"Estimated credits used in this run so far: {report.credits:.1f}")
-    if report.stopped_by_budget:
-        typer.secho(f"Stopped: {report.stopped_by_budget}", fg=typer.colors.YELLOW)
+    _step(config, steps.apply, run_id=run_id, clusters=cluster, limit=limit, no_agent=no_agent,
+          stale=stale, redo=redo, by=by)  # fmt: skip
 
 
 @app.command("verify")
@@ -475,27 +341,7 @@ def verify_cmd(
     ] = False,
 ) -> None:
     """Build the affected modules of each migrated cluster on the build host, then test it."""
-    from patchmig.mcp_server.server import server_config
-
-    cfg, store, run = _open_run(config, run_id)
-    rid = run.id
-    runner = None if no_fix else AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
-    try:
-        report = verify(
-            cfg, store, run, runner, cluster_ids=cluster, limit=limit,
-            mcp=server_config(str(config.resolve()), rid),
-        )  # fmt: skip
-    except VerifyError as e:
-        typer.secho(str(e), fg=typer.colors.RED, err=True)
-        raise typer.Exit(1) from e
-    if not report.outcomes:
-        typer.echo(f"Run {rid}: no migrated cluster to verify (run migrate apply first?)")
-    for o in report.outcomes:
-        typer.echo(f"  [{o.cluster_id}] {o.state:<14} {o.name}")
-        if o.reason:
-            typer.echo(f"        {o.reason}")
-    if report.stopped_by_budget:
-        typer.secho(f"Stopped: {report.stopped_by_budget}", fg=typer.colors.YELLOW)
+    _step(config, steps.verify, run_id=run_id, clusters=cluster, limit=limit, no_fix=no_fix)
 
 
 @app.command("build-check")
@@ -517,19 +363,6 @@ def build_check_cmd(config: ConfigOption = DEFAULT_CONFIG) -> None:
         raise typer.Exit(1)
 
 
-def _review_host(cfg: ProjectConfig):
-    from patchmig.publish.hosts import ReviewHostError, client_for
-
-    try:
-        return client_for(cfg)
-    except ReviewHostError as e:
-        typer.secho(str(e), fg=typer.colors.RED, err=True)
-        raise typer.Exit(1) from e
-    except (KeyError, OSError) as e:
-        typer.secho(f"The output host's token is not available ({e}).", fg="red", err=True)
-        raise typer.Exit(1) from e
-
-
 @app.command("publish")
 def publish_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
@@ -543,24 +376,8 @@ def publish_cmd(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be pushed")] = False,
 ) -> None:
     """Push each verified cluster's branch and open (or refresh) one draft PR per repository."""
-    from patchmig.publish import PublishError, publish
-
-    cfg, store, run = _open_run(config, run_id)
-    try:
-        api = None if dry_run else _review_host(cfg)
-        report = publish(cfg, store, run, api, cluster_ids=cluster,
-                         include_unverified=unverified, dry_run=dry_run)  # fmt: skip
-    except PublishError as e:
-        typer.secho(str(e), fg=typer.colors.RED, err=True)
-        raise typer.Exit(1) from e
-    if not report.outcomes:
-        typer.echo(f"Run {run.id}: no verified cluster to publish")
-    for o in report.outcomes:
-        typer.echo(f"  [{o.cluster_id}] {o.status:<9} {o.name}")
-        for url in o.urls:
-            typer.echo(f"        {url}")
-        if o.reason:
-            typer.echo(f"        {o.reason}")
+    _step(config, steps.publish, run_id=run_id, clusters=cluster, unverified=unverified,
+          dry_run=dry_run)  # fmt: skip
 
 
 @review_app.command("list")
@@ -640,11 +457,7 @@ def review_decide(
 @review_app.command("sync")
 def review_sync(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
     """Read the PRs: merges and approvals approve, change requests and closes reject."""
-    from patchmig.review import sync_reviews
-
-    cfg, store, run = _open_run(config, run_id)
-    changes = sync_reviews(store, run, _review_host(cfg), cfg.output.target)
-    typer.echo("\n".join(changes) if changes else "No changes.")
+    _step(config, steps.review_sync, run_id=run_id)
 
 
 @app.command("jira-export")
@@ -657,37 +470,8 @@ def jira_export_cmd(
     ] = False,
 ) -> None:
     """Write the approved results to Jira: labels, PR links and one marker comment per ticket."""
-    from patchmig.jira_export import export, plan
-
-    cfg, store, run = _open_run(config, run_id)
-    if cfg.jira is None:
-        typer.secho("No jira section in the config.", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
-    if dry_run:
-        tickets = plan(cfg, store, run)
-        if not tickets:
-            typer.echo("Nothing approved to export yet.")
-        for t in tickets:
-            closing = "  (would close)" if t.close else ""
-            typer.echo(
-                f"{t.key or 'NEW: ' + (t.summary or '')}  labels: {', '.join(t.labels)}{closing}"
-            )
-            for url, _, _ in t.links:
-                typer.echo(f"  link: {url}")
-            typer.echo("  " + t.comment.replace("\n", "\n  ").rstrip())
-        return
-    report = export(cfg, store, run, _jira(cfg, True), create_missing=create_missing)
-    typer.echo(
-        f"Updated {len(report.updated)} ticket(s), created {len(report.created)}, "
-        f"closed {len(report.closed)}."
-    )
-    for line in report.skipped:
-        hint = " (use --create-missing)" if line.startswith("untracked") else ""
-        typer.echo(f"  skipped: {line}{hint}")
-    for line in report.errors:
-        typer.secho(f"  error: {line}", fg=typer.colors.RED)
-    if report.errors:
-        raise typer.Exit(1)
+    _step(config, steps.jira_export, run_id=run_id, dry_run=dry_run,
+          create_missing=create_missing)  # fmt: skip
 
 
 @app.command("jira-check")
@@ -739,34 +523,13 @@ def _open_memory(cfg: ProjectConfig, create: bool = False):
 @memory_app.command("record")
 def memory_record(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
     """Write the run's approved results, code mappings and decisions to the memory repo."""
-    cfg, store, run = _open_run(config, run_id)
-    mem = _open_memory(cfg, create=True)
-    r = mem.record(cfg, store, run)
-    typer.echo(f"Recorded {r.patches} patch(es), {r.mappings} mapping(s), {r.decisions} "
-               f"decision(s) in {mem.path}" + (f" (commit {r.commit[:12]})" if r.commit else
-                                               " (nothing new)"))  # fmt: skip
+    _step(config, steps.memory_record, run_id=run_id)
 
 
 @memory_app.command("curate")
 def memory_curate(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
     """Ask the memory curator for lessons from this run's feedback and fixes (one agent call)."""
-    from patchmig.agents.curator import curate
-
-    cfg, store, run = _open_run(config, run_id)
-    mem = _open_memory(cfg, create=True)
-    runner = AgentRunner(_adapter(cfg), store, run, cfg.llm, cfg.budget)
-    try:
-        r = curate(cfg, store, run, runner, mem)
-    except (AgentFailed, BudgetExceeded) as e:
-        typer.secho(f"Curator: {e}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1) from e
-    if not r.signals:
-        typer.echo("Nothing to learn from in this run (no feedback, decisions or fixes).")
-        return
-    typer.echo(f"{len(r.proposed)} lesson(s) proposed from {r.signals} cluster(s); review them "
-               "with: migrate memory list --proposed")  # fmt: skip
-    for name in r.proposed:
-        typer.echo(f"  {name}")
+    _step(config, steps.memory_curate, run_id=run_id)
 
 
 @memory_app.command("list")
@@ -849,8 +612,6 @@ def notes_add(
 ) -> None:  # fmt: skip
     """Add a note; with no scope option it is for every patch."""
     from patchmig import notes as engineer_notes
-    from patchmig.ledger import Ticket
-    from patchmig.memory import patch_key
 
     given = [(k, v) for k, v in (("path", path), ("patch", patch), ("cluster", cluster),
                                  ("ticket", ticket)) if v is not None]  # fmt: skip
@@ -858,25 +619,8 @@ def notes_add(
         raise _note_error(ValueError("give at most one of --path, --patch, --cluster, --ticket"))
     scope, value = given[0] if given else ("all", None)
     cfg, store, run = _open_run(config, run_id)
-    target, label = "", ""
-    with store.session() as s:
-        if scope == "path":
-            target = value
-        elif scope == "patch":
-            p = s.get(Patch, value)
-            if p is None or p.run_id != run.id or not (target := patch_key(p) or ""):
-                raise _note_error(LookupError(f"patch {value} not in run {run.id}"))
-            label = f"#{p.id} {p.subject}"[:200]
-        elif scope == "cluster":
-            c = s.get(Cluster, value)
-            if c is None or c.run_id != run.id:
-                raise _note_error(LookupError(f"cluster {value} not in run {run.id}"))
-            target, label = str(c.id), c.name
-        elif scope == "ticket":
-            t = s.get(Ticket, value)
-            target, label = value, t.summary if t else ""
     try:
-        n = engineer_notes.add(store, text, by, scope, target, label, stage)
+        n = engineer_notes.add_for_run(store, run, text, by, scope, value, stage)
     except engineer_notes.NoteError as e:
         raise _note_error(e) from e
     typer.echo(_note_line(n))
@@ -987,7 +731,7 @@ def serve_cmd(
     host: Annotated[str, typer.Option(help="Interface to listen on")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port")] = 8765,
     read_only: Annotated[
-        bool, typer.Option("--read-only", help="No settings editing in the browser")
+        bool, typer.Option("--read-only", help="Only show results: no actions, no settings edits")
     ] = False,
     secrets_dir: Annotated[
         Path | None,
@@ -997,9 +741,10 @@ def serve_cmd(
         ),
     ] = None,  # fmt: skip
 ) -> None:
-    """Serve the web front end: the ledger (read-only) and the project settings (editable).
+    """Serve the web front end: run every step, review, notes, lessons and settings there.
 
-    Editing needs the admin token: set PATCHMIG_ADMIN_TOKEN, or use the one printed at start.
+    Actions need the admin token: set PATCHMIG_ADMIN_TOKEN, or use the one printed at start.
+    To start it at boot, see `migrate service-file`.
     Without a valid config the server starts with only the settings, to create one.
     """
     import os
@@ -1027,13 +772,59 @@ def serve_cmd(
         token = os.environ.get("PATCHMIG_ADMIN_TOKEN") or secrets.token_urlsafe(18)
     typer.echo(f"Serving {name} on http://{host}:{port}/ (Ctrl+C to stop)")
     if read_only:
-        typer.echo("Settings are read-only.")
+        typer.echo("Read-only: results only, no actions and no settings edits.")
     elif "PATCHMIG_ADMIN_TOKEN" in os.environ:
-        typer.echo("Settings editing: admin token from PATCHMIG_ADMIN_TOKEN.")
+        typer.echo("Actions and settings: admin token from PATCHMIG_ADMIN_TOKEN.")
     else:
-        typer.echo(f"Settings editing: admin token for this session: {token}")
+        typer.echo(f"Actions and settings: admin token for this session: {token}")
     uvicorn.run(create_app(cfg, store, editor, token), host=host, port=port,
                 log_level="warning")  # fmt: skip
+
+
+@app.command("service-file")
+def service_file_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    host: Annotated[str, typer.Option(help="Interface to listen on")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port")] = 8765,
+    user: Annotated[str | None, typer.Option(help="Run as this user (default: you)")] = None,
+) -> None:
+    """Print a systemd unit that starts `migrate serve` at boot and restarts it if it stops.
+
+    Save it as /etc/systemd/system/patchmig.service, then: systemctl enable --now patchmig.
+    The admin token and the tokens given as env: references go in the environment file.
+    """
+    import getpass
+    import shlex
+    import shutil
+    import sys
+
+    path = config.resolve()
+    env_file = path.parent / ".patchmig" / "serve.env"
+    exe = shutil.which("migrate")
+    start = [exe, "serve"] if exe else [sys.executable, "-m", "patchmig.cli", "serve"]
+    start += ["--config", str(path), "--host", host, "--port", str(port)]
+    typer.echo(f"""# patchmig web front end for {path}
+# 1. Save as /etc/systemd/system/patchmig.service
+# 2. Put PATCHMIG_ADMIN_TOKEN=<a long random string> in {env_file}, with any tokens the
+#    config names as env: references (chmod 600 the file; tokens typed in the browser are
+#    stored in .patchmig/secrets and need nothing here).
+# 3. sudo systemctl daemon-reload && sudo systemctl enable --now patchmig
+[Unit]
+Description=Patch migration front end ({path.parent.name})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={user or getpass.getuser()}
+WorkingDirectory={path.parent}
+EnvironmentFile=-{env_file}
+ExecStart={shlex.join(start)}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target""")
 
 
 @app.command("check")

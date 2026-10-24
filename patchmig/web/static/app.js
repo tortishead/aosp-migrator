@@ -1,10 +1,10 @@
-// Front end over the migration ledger (read-only) and the project settings (editable).
-// No build step: Preact + htm, vendored. Live mode reads /api/...; a static export reads the
-// same answers from data/*.json and has no settings.
+// Front end over the migration ledger and the project settings. Live, it does everything the
+// command line does (actions.js: run steps, review, notes, lessons). No build step: Preact +
+// htm, vendored. Live mode reads /api/...; a static export reads the same answers from
+// data/*.json and has no settings and no actions.
 import { html, render, useEffect, useState } from "./htm-preact.js";
 import { SettingsPage } from "./settings.js";
-
-const STATIC = document.body.dataset.mode === "static";
+import { JobButton, MemoryPage, NotesPage, NotesPanel, ReportPage, ReviewActions, RunPage, STATIC, useActions } from "./actions.js";
 
 async function load(path) {
   const url = STATIC ? `data/${path}.json` : `api/${path}`;
@@ -13,18 +13,24 @@ async function load(path) {
   return res.json();
 }
 
-function useData(path) {
+// `version` reloads the data (after an action) without blanking the page first.
+function useData(path, version = 0) {
   const [state, setState] = useState({ data: null, error: null });
   useEffect(() => {
     let live = true;
-    setState({ data: null, error: null });
+    if (!version) setState({ data: null, error: null });
     load(path).then(
       (data) => live && setState({ data, error: null }),
       (error) => live && setState({ data: null, error }),
     );
     return () => { live = false; };
-  }, [path]);
+  }, [path, version]);
   return state;
+}
+
+function useReload() {
+  const [version, setVersion] = useState(0);
+  return [version, () => setVersion((v) => v + 1)];
 }
 
 function useRoute() {
@@ -194,7 +200,7 @@ function Dashboard({ run }) {
           <h2>Clusters to migrate, by forecast</h2>
           ${Object.keys(s.forecasts).length
             ? html`<${StackedBar} counts=${s.forecasts} order=${["clean", "conflict", "rewrite", "obsolete"]} color=${forecastColor} />`
-            : html`<p class="muted">No analysis yet. Run <code>migrate analyse</code>.</p>`}
+            : html`<p class="muted">No analysis yet. ${STATIC ? html`Run <code>migrate analyse</code>.` : html`Run <b>Analyse</b> on the <a href="#/run">Run page</a>.`}</p>`}
         </div>
         <div class="panel">
           <h2>Decided by</h2>
@@ -281,7 +287,8 @@ function Evidence({ verdict }) {
 }
 
 function PatchPage({ run, id }) {
-  const state = useData(`runs/${run}/patches/${id}`);
+  const [version, reload] = useReload();
+  const state = useData(`runs/${run}/patches/${id}`, version);
   return html`<${Loading} state=${state}>${(p) => html`
     <p><a href=${`#/r/${run}/patches`}>← Patches</a></p>
     <h1>${p.subject} <${State} s=${p.state} /></h1>
@@ -306,11 +313,12 @@ function PatchPage({ run, id }) {
     </div>
     <div class="stack"></div>
     <div class="grid">
-      <div class="panel"><h2>Intent</h2>${p.intent ? html`<pre class="block">${p.intent}</pre>` : html`<p class="muted">No intent yet (<code>migrate intents</code>).</p>`}</div>
+      <div class="panel"><h2>Intent</h2>${p.intent ? html`<pre class="block">${p.intent}</pre>` : html`<p class="muted">No intent yet (step <b>Write intents</b>).</p>`}
+        <div class="actions"><${JobButton} steps=${["intents"]} options=${{ intents: { patches: [p.id] } }} run=${run} label=${p.intent ? "Write this intent again" : "Write this intent"} /></div></div>
       <div class="panel"><h2>History</h2><${Timeline} items=${p.history} /></div>
     </div>
     <div class="stack"></div>
-    <${Notes} notes=${p.notes} />
+    <${NotesPanel} notes=${p.notes} run=${run} scope="patch" target=${p.id} onDone=${reload} />
     <div class="panel"><h2>Commit message</h2><pre class="block">${p.message}</pre></div>
     <div class="panel"><h2>Diff</h2><${Diff} text=${p.diff} /></div>`}<//>`;
 }
@@ -384,7 +392,8 @@ function Graph({ nodes, edges }) {
 }
 
 function ClusterPage({ run, id }) {
-  const state = useData(`runs/${run}/clusters/${id}`);
+  const [version, reload] = useReload();
+  const state = useData(`runs/${run}/clusters/${id}`, version);
   return html`<${Loading} state=${state}>${(c) => html`
     <p><a href=${`#/r/${run}/clusters`}>← Clusters</a></p>
     <h1>${c.order + 1}. ${c.name} <${State} s=${c.state} /> <${Forecast} f=${c.forecast?.level} /></h1>
@@ -412,8 +421,9 @@ function ClusterPage({ run, id }) {
       <div class="panel"><h2>History</h2><${Timeline} items=${c.history} /></div>
     </div>
     <div class="stack"></div>
-    <${ReviewStatus} c=${c} />
-    <${Notes} notes=${c.notes} />
+    <${ReviewStatus} c=${c} run=${run} onDone=${reload} />
+    <${ClusterSteps} c=${c} run=${run} />
+    <${NotesPanel} notes=${c.notes} run=${run} scope="cluster" target=${c.id} onDone=${reload} />
     ${c.migration ? html`<${Migration} m=${c.migration} />` : null}
     ${c.verification ? html`<${Verification} v=${c.verification} />` : null}
     <div class="panel"><h2>Net diff <span class="muted">(the patches still needed, folded on the source base)</span></h2><${Diff} text=${c.net_diff} /></div>`}<//>`;
@@ -491,33 +501,47 @@ const QUEUE_INFO = {
 };
 
 function ReviewPage({ run }) {
-  const state = useData(`runs/${run}/review`);
+  const [version, reload] = useReload();
+  const state = useData(`runs/${run}/review`, version);
+  const live = useActions();
   return html`<${Loading} state=${state}>${(r) => html`
     <h1>Review</h1>
-    <p class="muted">Approve with <code>migrate review approve ID --by NAME</code> or by approving or merging the PR; request changes on the PR or use <code>migrate review reject</code> to send a cluster back to the agent. <code>migrate review sync</code> reads the PRs.</p>
+    ${live ? html`<p class="muted">Approve or reject here, or on the PRs (then <b>Sync PR reviews</b>). A rejection sends the cluster back to the agent with your words; run <b>Migrate clusters</b> again for it. Approved clusters go to the Jira export.</p>
+      <div class="actions">
+        <${JobButton} steps=${["review_sync"]} run=${run} label="Sync PR reviews" />
+        <${JobButton} steps=${["jira_export"]} options=${{ jira_export: { dry_run: true } }} run=${run} label="Preview Jira export" />
+        <${JobButton} steps=${["jira_export"]} run=${run} label="Export to Jira" confirm="Write labels, PR links and a comment to the approved clusters' Jira tickets?" />
+        <a href=${`#/r/${run}/report`}>Report for the final approval →</a>
+      </div>`
+    : html`<p class="muted">Approve with <code>migrate review approve ID --by NAME</code> or by approving or merging the PR; request changes on the PR or use <code>migrate review reject</code> to send a cluster back to the agent. <code>migrate review sync</code> reads the PRs.</p>`}
     <div class="tiles">${Object.entries(QUEUE_INFO).map(([q, [name]]) => html`
       <div class="tile"><div class="value">${r.counts[q] || 0}</div><div class="label">${name.toLowerCase()}</div></div>`)}</div>
     ${Object.entries(QUEUE_INFO).filter(([q]) => r.queues[q]?.length).map(([q, [name, hint]]) => html`
       <div class="panel">
         <h2>${name} <span class="muted">· ${hint}</span></h2>
         <div class="table-wrap"><table>
-          <thead><tr><th>Cluster</th><th>State</th><th class="num">Confidence</th><th>PRs</th><th>Notes</th></tr></thead>
+          <thead><tr><th>Cluster</th><th>State</th><th class="num">Confidence</th><th>PRs</th><th>Notes</th>${live ? html`<th>Decision</th>` : null}</tr></thead>
           <tbody>${r.queues[q].map((c) => html`<tr>
             <td class="wrap"><a href=${`#/r/${run}/clusters/${c.id}`}>${c.name}</a></td>
             <td><${State} s=${c.state} /></td>
             <td class="num">${c.confidence != null ? c.confidence.toFixed(2) : "–"}</td>
             <td>${c.prs.length ? c.prs.map((u) => html`<div><a href=${u} target="_blank" rel="noopener">${u.split("/").slice(-3).join("/")}</a></div>`) : "–"}</td>
             <td class="wrap">${c.question ? html`<b>Question:</b> ${c.question}` : c.review ? html`${c.review.decision} by ${c.review.by}${c.jira.length ? ` · Jira: ${c.jira.join(", ")}` : ""}` : c.reason || ""}</td>
+            ${live ? html`<td><${ReviewActions} run=${run} cluster=${c.id} queue=${q} onDone=${reload} compact=${true} /></td>` : null}
           </tr>`)}</tbody>
         </table></div>
       </div>`)}`}<//>`;
 }
 
-function ReviewStatus({ c }) {
+function ReviewStatus({ c, run, onDone }) {
   const prs = c.publish?.prs || [];
-  if (!prs.length && !c.review && !c.feedback.length && !c.decisions.length) return null;
+  const live = useActions();
+  const canAct = live && !["in_progress"].includes(c.queue);
+  if (!canAct && !prs.length && !c.review && !c.feedback.length && !c.decisions.length) return null;
   return html`<div class="panel">
     <h2>Review <span class="muted">· ${(QUEUE_INFO[c.queue] || [c.queue])[0]}</span></h2>
+    ${c.queue === "needs_decision" && c.migration?.question ? html`<p><b>Question:</b> ${c.migration.question}</p>` : null}
+    <${ReviewActions} run=${run} cluster=${c.id} queue=${c.queue} onDone=${onDone} />
     ${c.review ? html`<p>${label(c.review.decision)} by ${c.review.by} (${c.review.source}) · ${fmtTime(c.review.at)}${c.review.reason ? html`<br />${c.review.reason}` : null}</p>` : null}
     ${prs.length ? html`<p>${prs.map((pr) => html`<div>${pr.project}: <a href=${pr.url} target="_blank" rel="noopener">${pr.repo} #${pr.number}</a> <span class="muted">(${pr.branch})</span></div>`)}</p>` : null}
     ${c.publish?.error ? html`<p class="error">Publishing failed: ${c.publish.error}</p>` : null}
@@ -527,10 +551,19 @@ function ReviewStatus({ c }) {
   </div>`;
 }
 
-function Notes({ notes }) {
-  if (!notes || !notes.length) return null;
-  return html`<div class="panel"><h2>Engineer notes <span class="muted">(given to the agents; edit with <code>migrate notes</code>)</span></h2>
-    <ul class="plain">${notes.map((n) => html`<li><span class="muted">[${n.id}] ${n.where} · ${n.stages.join("+")} · ${n.author}${n.stale ? " · changed since this result" : ""}</span><br />${n.text}</li>`)}</ul></div>`;
+// Steps for this one cluster: rerun its migration, build and test it, publish it.
+function ClusterSteps({ c, run }) {
+  const live = useActions();
+  if (!live || c.queue === "approved") return null;
+  const migrated = Boolean(c.migration);
+  const ids = [c.id];
+  return html`<div class="panel"><h2>Steps for this cluster</h2><div class="actions">
+    ${c.state === "needed" ? html`<${JobButton} steps=${["apply"]} options=${{ apply: { clusters: ids } }} run=${run} label="Migrate" primary=${true} />` : null}
+    ${migrated && c.state !== "needed" ? html`<${JobButton} steps=${["apply"]} options=${{ apply: { clusters: ids, redo: true } }} run=${run} label="Migrate again"
+      confirm="Migrate this cluster again? Clusters built on it are migrated again too." />` : null}
+    ${["applied", "resolved", "rewritten"].includes(c.state) ? html`<${JobButton} steps=${["verify"]} options=${{ verify: { clusters: ids } }} run=${run} label="Build and test" primary=${true} />` : null}
+    ${c.state === "verified" ? html`<${JobButton} steps=${["publish"]} options=${{ publish: { clusters: ids } }} run=${run} label=${c.publish?.prs?.length ? "Refresh PRs" : "Publish PRs"} />` : null}
+  </div><p class="muted small">Each starts a job on the <a href="#/run">Run page</a>.</p></div>`;
 }
 
 function RunsPage({ runs }) {
@@ -542,23 +575,36 @@ function RunsPage({ runs }) {
   </table></div>`;
 }
 
-const TABS = [["", "Overview"], ["review", "Review"], ["patches", "Patches"], ["clusters", "Clusters"], ["knowledge", "Knowledge"], ["agents", "Agent calls"], ["config", "Config"]];
+const TABS = [["", "Overview"], ["review", "Review"], ["patches", "Patches"], ["clusters", "Clusters"], ["notes", "Notes"], ["knowledge", "Knowledge"], ["agents", "Agent calls"], ["report", "Report"], ["config", "Config"]];
+const LIVE_ONLY = new Set(["notes", "report"]);
 
-function SettingsShell({ section, run }) {
+// Pages for the whole project, not one run: Run, Memory, Settings.
+function ProjectShell({ page, run, children }) {
   return html`
     <header>
       <span class="title">Patch migration</span>
-      <nav>${run ? html`<a href=${`#/r/${run}`}>Overview</a>` : null}<a class="active" href="#/settings">Settings</a></nav>
+      <nav>${run ? html`<a href=${`#/r/${run}`}>Overview</a>` : null}
+        <a class=${page === "run" ? "active" : ""} href="#/run">Run</a>
+        <a class=${page === "memory" ? "active" : ""} href="#/memory">Memory</a>
+        <a class=${page === "settings" ? "active" : ""} href="#/settings">Settings</a></nav>
     </header>
-    <main key=${`settings/${section || ""}`}><${SettingsPage} section=${section} /></main>`;
+    <main>${children}</main>`;
 }
 
 function App() {
-  const runs = useData("runs");
+  const [version, reload] = useReload();
+  const runs = useData("runs", version);
   const parts = useRoute();
+  useEffect(() => { if (parts[0] === "run" || parts[0] === "r") reload(); }, [parts.join("/")]);
   return html`<${Loading} state=${runs}>${(list) => {
-    if (parts[0] === "settings" && !STATIC) return html`<${SettingsShell} section=${parts[1]} run=${list[0]?.id} />`;
-    if (!list.length) return html`<main><h1>No runs yet</h1><p>Start with <code>migrate ingest</code>, then <code>migrate analyse</code>.${STATIC ? "" : html` Check the <a href="#/settings">settings</a> first.`}</p></main>`;
+    if (!STATIC && parts[0] === "settings") return html`<${ProjectShell} page="settings" run=${list[0]?.id}><${SettingsPage} key=${`settings/${parts[1] || ""}`} section=${parts[1]} /><//>`;
+    if (!STATIC && parts[0] === "run") return html`<${ProjectShell} page="run" run=${list[0]?.id}><${RunPage} runs=${list} jobId=${parts[1]} onRunsChanged=${reload} /><//>`;
+    if (!STATIC && parts[0] === "memory") return html`<${ProjectShell} page="memory" run=${list[0]?.id}><${MemoryPage} run=${list[0]?.id} /><//>`;
+    if (!list.length) {
+      if (STATIC) return html`<main><h1>No runs yet</h1><p>Start with <code>migrate ingest</code>, then <code>migrate analyse</code>.</p></main>`;
+      return html`<${ProjectShell} page="">
+        <h1>No runs yet</h1><p>Check the <a href="#/settings">settings</a> and test the connections, then start the migration on the <a href="#/run">Run page</a> (Ingest first, then Analyse).</p><//>`;
+    }
     const latest = list[0].id;
     const run = parts[0] === "r" ? Number(parts[1]) : latest;
     const page = parts[0] === "r" ? parts[2] || "" : parts[0] === "runs" ? "runs" : "";
@@ -573,13 +619,15 @@ function App() {
     else if (page === "knowledge") body = html`<${KnowledgePage} run=${run} />`;
     else if (page === "agents") body = html`<${AgentsPage} run=${run} />`;
     else if (page === "config") body = html`<${ConfigPage} run=${run} />`;
+    else if (page === "notes" && !STATIC) body = html`<${NotesPage} run=${run} />`;
+    else if (page === "report" && !STATIC) body = html`<${ReportPage} run=${run} />`;
     else body = html`<${Dashboard} run=${run} />`;
     return html`
       <header>
         <span class="title">Patch migration${STATIC ? html` <span class="badge-static">static snapshot</span>` : null}</span>
-        <nav>${TABS.map(([p, name]) => html`<a class=${page === p ? "active" : ""} href=${`#/r/${run}${p ? `/${p}` : ""}`}>${name}</a>`)}
+        <nav>${TABS.filter(([p]) => !STATIC || !LIVE_ONLY.has(p)).map(([p, name]) => html`<a class=${page === p ? "active" : ""} href=${`#/r/${run}${p ? `/${p}` : ""}`}>${name}</a>`)}
           <a class=${page === "runs" ? "active" : ""} href="#/runs">Runs</a>
-          ${STATIC ? null : html`<a href="#/settings">Settings</a>`}</nav>
+          ${STATIC ? null : html`<span class="nav-sep"></span><a href="#/run">Run</a><a href="#/memory">Memory</a><a href="#/settings">Settings</a>`}</nav>
         <select aria-label="Run" value=${run} onChange=${(e) => { location.hash = `#/r/${e.target.value}${page && page !== "runs" ? `/${page}` : ""}`; }}>
           ${list.map((r) => html`<option value=${r.id}>Run ${r.id}${r.note ? ` · ${r.note}` : ""}</option>`)}
         </select>
