@@ -72,11 +72,22 @@ class TreeConfig(Model):
     head_ref: str | None = Field(
         default=None, description="Tag or branch with the OEM patches (source tree only)"
     )
+    remote: str | None = Field(
+        default=None,
+        description="Remote that `migrate history` deepens shallow projects from; default: the "
+        "project's only remote",
+    )
 
 
 class TreesConfig(Model):
     source: TreeConfig
     target: TreeConfig
+    history_commits: int = Field(
+        default=20_000,
+        ge=100,
+        description="Target commits searched for an upstream fix when the trees share no "
+        "history; also how deep `migrate history` fetches a shallow target project",
+    )
 
     @model_validator(mode="after")
     def _source_needs_head(self) -> TreesConfig:

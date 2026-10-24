@@ -31,6 +31,7 @@ from patchmig.ingest.diffparse import parse_diff
 from patchmig.ingest.manifest import project_for_path
 from patchmig.ingest.normalize import RawPatch
 from patchmig.jira_client import JiraError, JiraReader, Ticket
+from patchmig.knowledge.history import has_range, is_shallow
 
 SPREADSHEET_FIELDS = ("commit", "project", "jira", "subject")
 
@@ -70,6 +71,11 @@ def from_git_range(src: GitRangeSource, ctx: SourceContext) -> list[RawPatch]:
         repo = ctx.tree / project
         if project not in ctx.projects:
             ctx.warn(f"git_range: project {project} is not in the source tree")
+            continue
+        if is_shallow(repo) and not has_range(repo, ctx.base, ctx.head):
+            # base..head in a shallow clone silently lists only the commits it holds
+            ctx.warn(f"git_range: {project}: shallow checkout without the OEM range; "
+                     "run migrate history first")  # fmt: skip
             continue
         try:
             shas = rev_list(repo, ctx.base, ctx.head)
