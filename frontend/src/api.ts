@@ -99,6 +99,101 @@ export interface Facets {
   fix_versions: string[];
 }
 
+export interface JiraComment {
+  id: number;
+  author: string;
+  created: string;
+  body_html: string;
+}
+
+export type FileStatus = "modified" | "added" | "deleted" | "renamed" | "copied";
+
+export interface FileChange {
+  path: string;
+  old_path: string | null;
+  status: FileStatus;
+  added: number;
+  removed: number;
+  binary: boolean;
+}
+
+export interface ParsedDiff {
+  format: "format-patch" | "plain";
+  files: FileChange[];
+}
+
+/** A diff as the viewer gets it: each file also carries the raw text of its hunks. */
+export interface DiffWithHunks {
+  format: ParsedDiff["format"];
+  files: (FileChange & { hunks: string[] })[];
+}
+
+export interface Attachment {
+  id: number;
+  jira_id: string;
+  filename: string;
+  size: number;
+  mime: string;
+  kind: "diff" | "image" | "other";
+  jira_url: string;
+  // Not downloaded: null.
+  local_url: string | null;
+  is_current: boolean;
+  created: string;
+  parsed: ParsedDiff | null;
+}
+
+export interface Issue {
+  key: string;
+  summary: string;
+  description_html: string;
+  status: string;
+  labels: string[];
+  components: string[];
+  fix_versions: string[];
+  jira_updated: string;
+  fetched_at: string;
+  browse_url: string | null;
+  comments: JiraComment[];
+  attachments: Attachment[];
+}
+
+export interface IssueLink {
+  link_type: string;
+  direction: string;
+  description: string;
+  // Set when the linked ticket is a backlog item too.
+  item_id: number | null;
+  issue: Issue;
+}
+
+export interface Note {
+  id: number;
+  text: string;
+  created_at: string;
+}
+
+export interface HistoryEvent {
+  id: number;
+  type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ItemDetail {
+  id: number;
+  local_state: LocalState;
+  dropped: boolean;
+  last_import_error: string | null;
+  created_at: string;
+  jira_base_url: string | null;
+  issue: Issue;
+  links: IssueLink[];
+  notes: Note[];
+  // Oldest first.
+  history: HistoryEvent[];
+}
+
 export type JobStatus = "running" | "done" | "failed" | "canceled";
 
 export interface ImportJob {
@@ -141,10 +236,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ keys, state }),
     }),
+  item: (workspaceId: number, key: string) =>
+    apiFetch<ItemDetail>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}`),
+  addNote: (workspaceId: number, key: string, text: string) =>
+    apiFetch<Note>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  diff: (workspaceId: number, jiraId: string) =>
+    apiFetch<DiffWithHunks>(`/workspaces/${workspaceId}/diffs/${encodeURIComponent(jiraId)}`),
   // No keys: import everything the workspace JQL matches.
   startImport: (workspaceId: number, keys?: string[]) =>
     apiFetch<ImportJob>(`/workspaces/${workspaceId}/import`, { method: "POST", body: JSON.stringify({ keys }) }),
   importJobs: (workspaceId: number, limit: number) =>
     apiFetch<ImportJob[]>(`/workspaces/${workspaceId}/import-jobs?limit=${limit}`),
+  importJob: (jobId: number) => apiFetch<ImportJob>(`/import-jobs/${jobId}`),
   cancelImport: (jobId: number) => apiFetch<ImportJob>(`/import-jobs/${jobId}/cancel`, { method: "POST" }),
 };

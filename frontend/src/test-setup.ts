@@ -7,3 +7,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+// jsdom has no layout, so no scrolling either.
+Element.prototype.scrollIntoView ??= () => {};

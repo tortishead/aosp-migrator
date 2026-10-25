@@ -241,3 +241,370 @@ body {
   gap: 12px;
   margin-top: 12px;
 }
+
+.issue-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 0 0 12px;
+}
+
+.issue-fields dt {
+  color: #59636e;
+  font-size: 0.85em;
+}
+
+.issue-fields dd {
+  margin: 0;
+}
+
+.item-actions {
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.item section {
+  margin-top: 24px;
+}
+
+.item h2 {
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #d0d7de;
+  font-size: 1.15em;
+}
+
+/* Jira rendered HTML */
+.jira-html {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.jira-html img {
+  max-width: 100%;
+}
+
+.jira-html table {
+  margin: 8px 0;
+  border-collapse: collapse;
+}
+
+.jira-html th,
+.jira-html td {
+  padding: 4px 8px;
+  border: 1px solid #d0d7de;
+  text-align: left;
+  vertical-align: top;
+}
+
+.jira-html th {
+  background: #f6f8fa;
+}
+
+.jira-html .table-wrap {
+  overflow-x: auto;
+}
+
+.jira-html pre,
+.jira-html tt,
+.jira-html code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+.jira-html pre {
+  margin: 0;
+  padding: 8px 12px;
+  overflow-x: auto;
+  background: #f6f8fa;
+  white-space: pre;
+}
+
+.jira-html .panel,
+.jira-html .code {
+  margin: 8px 0;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.jira-html .panelHeader,
+.jira-html .codeHeader {
+  padding: 4px 12px;
+  border-bottom: 1px solid #d0d7de;
+  background: #eaeef2;
+  font-weight: 600;
+}
+
+.jira-html .panelContent {
+  padding: 8px 12px;
+}
+
+.jira-html .codeContent {
+  padding: 0;
+}
+
+.jira-html blockquote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 4px solid #d0d7de;
+  color: #59636e;
+}
+
+.jira-comment {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+}
+
+.jira-comment-header {
+  margin-bottom: 4px;
+  font-size: 0.9em;
+}
+
+.jira-comment-header time,
+.timeline time,
+.notes time {
+  color: #59636e;
+  font-size: 0.9em;
+}
+
+.linked {
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+}
+
+.linked summary {
+  cursor: pointer;
+}
+
+.linked-body section {
+  margin-top: 12px;
+}
+
+.notes {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.notes li {
+  margin-bottom: 8px;
+}
+
+.note-text {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+}
+
+.timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline > li {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid #eaeef2;
+}
+
+.timeline ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
+.timeline ul.note-text {
+  padding-left: 0;
+  list-style: none;
+}
+
+/* Diff viewer */
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid #d0d7de;
+}
+
+.tab {
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab.active {
+  border-color: #d0d7de;
+  background: #ffffff;
+  font-weight: 600;
+}
+
+.view-toggle {
+  display: inline-flex;
+  margin-left: auto;
+}
+
+.view-toggle button[aria-pressed="true"] {
+  background: #ddf4ff;
+  font-weight: 600;
+}
+
+.diff-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+}
+
+.diff-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.diff-files {
+  position: sticky;
+  top: 8px;
+  font-size: 0.9em;
+}
+
+.diff-files ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diff-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0969da;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-counts {
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}
+
+.diff-counts .added {
+  color: #1a7f37;
+}
+
+.diff-counts .removed {
+  color: #d1242f;
+}
+
+.diff-main {
+  min-width: 0;
+}
+
+.diff-file {
+  margin-bottom: 12px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.item section.diff-file {
+  margin-top: 0;
+}
+
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #d0d7de;
+  background: #f6f8fa;
+}
+
+.diff-file-header .diff-counts {
+  margin-left: auto;
+}
+
+.diff-note {
+  padding: 8px 12px;
+}
+
+.diff {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.hunk-header {
+  color: #59636e;
+}
+
+/* Syntax highlight tokens (refractor / Prism classes) */
+.token.comment,
+.token.prolog,
+.token.doctype {
+  color: #6e7781;
+}
+
+.token.keyword,
+.token.important {
+  color: #cf222e;
+}
+
+.token.string,
+.token.char,
+.token.attr-value {
+  color: #0a3069;
+}
+
+.token.number,
+.token.boolean,
+.token.constant {
+  color: #0550ae;
+}
+
+.token.function,
+.token.class-name {
+  color: #8250df;
+}
+
+.token.tag,
+.token.annotation,
+.token.macro,
+.token.directive {
+  color: #116329;
+}
+
+.token.attr-name,
+.token.property {
+  color: #953800;
+}
+
+/* Prism's `tag` token must not pick up the `.tag` pill style. */
+.diff-code .token.tag {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: inherit;
+}

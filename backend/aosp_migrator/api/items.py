@@ -1,13 +1,16 @@
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import ColumnElement, Integer, Select, cast, column, exists, func, literal_column, or_, select, table
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
-from aosp_migrator.db.models import Attachment, HistoryEvent, Item, JiraIssue, LocalState, Workspace
+from aosp_migrator.config import JIRA_BASE_URL, Config
+from aosp_migrator.db.models import Attachment, Comment, HistoryEvent, Item, ItemLink, JiraIssue, LocalState, Note, Workspace
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/items")
 
@@ -60,6 +63,85 @@ class StateChange(BaseModel):
 class StateChangeOut(BaseModel):
     # Keys whose state actually changed; the others already had it.
     changed: list[str]
+
+
+class CommentOut(BaseModel):
+    id: int
+    author: str
+    created: datetime
+    body_html: str
+
+
+class AttachmentOut(BaseModel):
+    id: int
+    jira_id: str
+    filename: str
+    size: int
+    mime: str
+    kind: str
+    # Jira download URL, and where this server serves the downloaded copy (None if not downloaded).
+    jira_url: str
+    local_url: str | None
+    is_current: bool
+    created: datetime
+    parsed: dict[str, Any] | None
+
+
+class IssueOut(BaseModel):
+    key: str
+    summary: str
+    description_html: str
+    status: str
+    labels: list[str]
+    components: list[str]
+    fix_versions: list[str]
+    jira_updated: datetime
+    fetched_at: datetime
+    # Browse URL in Jira; None while no Jira base URL is set.
+    browse_url: str | None
+    comments: list[CommentOut]
+    attachments: list[AttachmentOut]
+
+
+class LinkOut(BaseModel):
+    link_type: str
+    direction: str
+    description: str
+    # Set when the linked ticket is a backlog item of this workspace too.
+    item_id: int | None
+    issue: IssueOut
+
+
+class NoteOut(BaseModel):
+    id: int
+    text: str
+    created_at: datetime
+
+
+class HistoryOut(BaseModel):
+    id: int
+    type: str
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class ItemDetail(BaseModel):
+    id: int
+    local_state: str
+    dropped: bool
+    last_import_error: str | None
+    created_at: datetime
+    # For relative Jira links inside the rendered HTML.
+    jira_base_url: str | None
+    issue: IssueOut
+    links: list[LinkOut]
+    notes: list[NoteOut]
+    # Oldest first.
+    history: list[HistoryOut]
+
+
+class NoteIn(BaseModel):
+    text: str = Field(min_length=1)
 
 
 def _workspace(session: Session, workspace_id: int) -> Workspace:
@@ -208,3 +290,105 @@ def change_state(workspace_id: int, body: StateChange, session: SessionDep) -> S
     session.commit()
     return StateChangeOut(changed=changed)
 
+
+
+def _local_url(workspace_id: int, attachment: Attachment) -> str | None:
+    if attachment.local_path is None:
+        return None
+    return f"/api/workspaces/{workspace_id}/attachments/{attachment.jira_id}/{quote(Path(attachment.local_path).name)}"
+
+
+def _issue_out(session: Session, issue: JiraIssue, base_url: str | None) -> IssueOut:
+    comments = session.scalars(select(Comment).where(Comment.issue_id == issue.id).order_by(Comment.created, Comment.id))
+    attachments = session.scalars(select(Attachment).where(Attachment.issue_id == issue.id).order_by(Attachment.created, Attachment.id))
+    return IssueOut(
+        key=issue.key,
+        summary=issue.summary,
+        description_html=issue.description_html,
+        status=issue.status,
+        labels=issue.labels,
+        components=issue.components,
+        fix_versions=issue.fix_versions,
+        jira_updated=issue.jira_updated,
+        fetched_at=issue.fetched_at,
+        browse_url=f"{base_url.rstrip('/')}/browse/{quote(issue.key)}" if base_url else None,
+        comments=[CommentOut(id=c.id, author=c.author, created=c.created, body_html=c.body_html) for c in comments],
+        attachments=[
+            AttachmentOut(
+                id=a.id,
+                jira_id=a.jira_id,
+                filename=a.filename,
+                size=a.size,
+                mime=a.mime,
+                kind=a.kind,
+                jira_url=a.url,
+                local_url=_local_url(issue.workspace_id, a),
+                is_current=a.is_current,
+                created=a.created,
+                parsed=a.parsed,
+            )
+            for a in attachments
+        ],
+    )
+
+
+def _item(session: Session, workspace_id: int, key: str) -> tuple[Item, JiraIssue]:
+    _workspace(session, workspace_id)
+    row = session.execute(_backlog(workspace_id).where(JiraIssue.key == key)).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Not in this workspace's backlog: {key}")
+    item, issue = row
+    return item, issue
+
+
+@router.get("/{key}")
+def get_item(workspace_id: int, key: str, request: Request, session: SessionDep) -> ItemDetail:
+    """One backlog item with its ticket, linked tickets, notes and history."""
+    item, issue = _item(session, workspace_id, key)
+    config: Config = request.app.state.config
+    base_url = config.get(JIRA_BASE_URL)
+    links = session.execute(
+        select(ItemLink, JiraIssue, Item.id)
+        .join(JiraIssue, ItemLink.issue_id == JiraIssue.id)
+        .outerjoin(Item, Item.issue_id == JiraIssue.id)
+        .where(ItemLink.item_id == item.id)
+        .order_by(ItemLink.id)
+    )
+    notes = session.scalars(select(Note).where(Note.item_id == item.id).order_by(Note.created_at, Note.id))
+    history = session.scalars(select(HistoryEvent).where(HistoryEvent.item_id == item.id).order_by(HistoryEvent.created_at, HistoryEvent.id))
+    return ItemDetail(
+        id=item.id,
+        local_state=item.local_state,
+        dropped=item.dropped,
+        last_import_error=item.last_import_error,
+        created_at=item.created_at,
+        jira_base_url=base_url,
+        issue=_issue_out(session, issue, base_url),
+        links=[
+            LinkOut(
+                link_type=link.link_type,
+                direction=link.direction,
+                description=link.description,
+                item_id=linked_item_id,
+                issue=_issue_out(session, linked, base_url),
+            )
+            for link, linked, linked_item_id in links
+        ],
+        notes=[NoteOut(id=n.id, text=n.text, created_at=n.created_at) for n in notes],
+        history=[HistoryOut(id=h.id, type=h.type, payload=h.payload, created_at=h.created_at) for h in history],
+    )
+
+
+@router.post("/{key}/notes", status_code=201)
+def add_note(workspace_id: int, key: str, body: NoteIn, session: SessionDep) -> NoteOut:
+    """Append a note. Notes are never edited or deleted; each one also goes into the history."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Note is empty")
+    item, _ = _item(session, workspace_id, key)
+    note = Note(item_id=item.id, text=text)
+    session.add(note)
+    session.flush()
+    session.add(HistoryEvent(item_id=item.id, type="note_added", payload={"note_id": note.id, "text": text}))
+    session.commit()
+    return NoteOut(id=note.id, text=note.text, created_at=note.created_at)

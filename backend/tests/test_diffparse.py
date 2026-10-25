@@ -155,3 +155,15 @@ def test_sniff_detects_fixture_diffs(name: str) -> None:
 )
 def test_sniff_rejects_non_diffs(text: str) -> None:
     assert not looks_like_diff(text)
+
+
+def test_hunk_text() -> None:
+    parsed = parse_diff(fixture_text("camera-fix.v2.patch"))
+    header = parsed.files[1].hunks[0]
+    assert header.splitlines()[0] == "@@ -310,5 +310,5 @@ public:"
+    # Ends with the last context line, before the format-patch signature.
+    assert header.splitlines()[-1] == "     status_t            dump(int fd, const Vector<String16>& args);"
+    assert [len(f.hunks) for f in parse_diff(fixture_text("icons.patch")).files] == [0, 1]
+    # Hunks are left out of the stored JSON unless asked for.
+    assert "hunks" not in parsed.to_json()["files"][0]
+    assert parsed.to_json(hunks=True)["files"][1]["hunks"] == [header]

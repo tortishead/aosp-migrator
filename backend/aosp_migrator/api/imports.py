@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.config import JIRA_BASE_URL, JIRA_PAT, Config
 from aosp_migrator.db.models import Attachment, ImportJob, Item, JiraIssue, Workspace
+from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.importer.runner import ImportRunner, JobConflictError
 
 router = APIRouter()
@@ -105,9 +106,7 @@ def cancel_import_job(job_id: int, session: SessionDep) -> ImportJobOut:
     return ImportJobOut.model_validate(job)
 
 
-@router.get("/workspaces/{workspace_id}/attachments/{jira_id}/{filename}")
-def get_attachment(workspace_id: int, jira_id: str, filename: str, session: SessionDep) -> FileResponse:
-    """A downloaded attachment. The filename is cosmetic; the Jira id identifies it."""
+def _downloaded(session: Session, workspace_id: int, jira_id: str) -> tuple[Attachment, Path]:
     attachment = session.scalar(
         select(Attachment)
         .join(JiraIssue, Attachment.issue_id == JiraIssue.id)
@@ -115,6 +114,22 @@ def get_attachment(workspace_id: int, jira_id: str, filename: str, session: Sess
     )
     if attachment is None or attachment.local_path is None or not Path(attachment.local_path).is_file():
         raise HTTPException(status_code=404, detail="Attachment not found")
+    return attachment, Path(attachment.local_path)
+
+
+@router.get("/workspaces/{workspace_id}/diffs/{jira_id}")
+def get_diff(workspace_id: int, jira_id: str, session: SessionDep) -> dict[str, Any]:
+    """A downloaded diff attachment, parsed, with the raw text of each hunk for the diff viewer."""
+    attachment, path = _downloaded(session, workspace_id, jira_id)
+    if attachment.kind != "diff":
+        raise HTTPException(status_code=404, detail="Attachment is not a diff")
+    return parse_diff(path.read_bytes().decode("utf-8", errors="replace")).to_json(hunks=True)
+
+
+@router.get("/workspaces/{workspace_id}/attachments/{jira_id}/{filename}")
+def get_attachment(workspace_id: int, jira_id: str, filename: str, session: SessionDep) -> FileResponse:
+    """A downloaded attachment. The filename is cosmetic; the Jira id identifies it."""
+    attachment, path = _downloaded(session, workspace_id, jira_id)
     # Attachments are untrusted content (an SVG could carry script): never let them run as a page of this origin.
     headers = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"}
-    return FileResponse(attachment.local_path, media_type=attachment.mime, headers=headers)
+    return FileResponse(path, media_type=attachment.mime, headers=headers)

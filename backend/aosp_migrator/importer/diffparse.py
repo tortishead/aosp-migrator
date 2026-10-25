@@ -27,6 +27,8 @@ class FileChange:
     added: int = 0
     removed: int = 0
     binary: bool = False
+    # Raw text of each hunk, `@@` header included. Left out of the stored JSON.
+    hunks: list[str] = field(default_factory=list, compare=False)
 
 
 @dataclass
@@ -34,8 +36,12 @@ class ParsedDiff:
     format: Literal["format-patch", "plain"]
     files: list[FileChange] = field(default_factory=list)
 
-    def to_json(self) -> dict[str, Any]:
-        return asdict(self)
+    def to_json(self, *, hunks: bool = False) -> dict[str, Any]:
+        data = asdict(self)
+        if not hunks:
+            for change in data["files"]:
+                del change["hunks"]
+        return data
 
 
 def looks_like_diff(text: str) -> bool:
@@ -85,7 +91,9 @@ def parse_diff(text: str) -> ParsedDiff:
             i += 2
             continue
         elif current is not None and (hunk := _HUNK.match(line)):
-            i = _count_hunk(lines, i + 1, current, _count(hunk.group(1)), _count(hunk.group(2)))
+            end = _count_hunk(lines, i + 1, current, _count(hunk.group(1)), _count(hunk.group(2)))
+            current.hunks.append("\n".join(lines[i:end]))
+            i = end
             continue
         elif current is not None:
             _git_extended_header(line, current)

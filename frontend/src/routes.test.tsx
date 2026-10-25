@@ -14,8 +14,10 @@ describe("routes", () => {
   });
 
   it("renders item detail from a deep link", async () => {
+    const calls = mockApi({});
     renderRoute("/workspaces/3/items/ABC-1");
     expect(await screen.findByRole("heading", { name: "ABC-1" })).toBeInTheDocument();
+    expect(calls.map((c) => c.path)).toContain("/workspaces/3/items/ABC-1");
   });
 
   it("renders not found for unknown paths", async () => {
