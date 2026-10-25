@@ -1,0 +1,9 @@
+--- a/core/java/android/os/BatteryStats.java
++++ b/core/java/android/os/BatteryStats.java
+@@ -2210,5 +2210,5 @@ public abstract class BatteryStats {
+     public static final int STEP_LEVEL_MODE_SCREEN_STATE = 0x03;
+-    public static final long STEP_LEVEL_TIME_MASK = 0x000000ffffffffffL;
++    public static final long STEP_LEVEL_TIME_MASK = 0x00000fffffffffffL;
+     public static final int STEP_LEVEL_LEVEL_SHIFT = 40;
+ 
+     /**

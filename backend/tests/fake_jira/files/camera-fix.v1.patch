@@ -1,0 +1,26 @@
+From 3f2a9c1d4e5b6a7c8d9e0f1a2b3c4d5e6f7a8b9c Mon Sep 17 00:00:00 2001
+From: Jane Doe <jane.doe@example.com>
+Date: Mon, 21 Sep 2026 10:12:00 +0200
+Subject: [PATCH] camera: fix null deref on resume
+
+Bug: PROJ-101
+---
+ services/camera/libcameraservice/CameraService.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/services/camera/libcameraservice/CameraService.cpp b/services/camera/libcameraservice/CameraService.cpp
+index 1a2b3c4..5d6e7f8 100644
+--- a/services/camera/libcameraservice/CameraService.cpp
++++ b/services/camera/libcameraservice/CameraService.cpp
+@@ -1200,6 +1200,9 @@ status_t CameraService::onResume(int cameraId) {
+     sp<BasicClient> client = getClient(cameraId);
+     ALOGV("%s: camera %d", __FUNCTION__, cameraId);
+ 
++    if (client == nullptr) {
++        return NO_INIT;
++    }
+     client->notifyResume();
+     return OK;
+ }
+-- 
+2.43.0

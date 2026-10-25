@@ -1,0 +1,23 @@
+From 5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f Mon Sep 17 00:00:00 2001
+From: Jane Doe <jane.doe@example.com>
+Date: Thu, 17 Sep 2026 14:00:00 +0200
+Subject: [PATCH] audio: guard HAL callback against released stream
+
+---
+ media/libaudiohal/impl/StreamHalAidl.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/media/libaudiohal/impl/StreamHalAidl.cpp b/media/libaudiohal/impl/StreamHalAidl.cpp
+index 3d4e5f6..4e5f6a7 100644
+--- a/media/libaudiohal/impl/StreamHalAidl.cpp
++++ b/media/libaudiohal/impl/StreamHalAidl.cpp
+@@ -410,5 +410,7 @@ void StreamHalAidl::onWriteReady() {
+     auto callback = mCallback.promote();
++    if (callback == nullptr) return;
++
+     callback->onWriteReady();
+ }
+ 
+ void StreamHalAidl::onDrainReady() {
+-- 
+2.43.0

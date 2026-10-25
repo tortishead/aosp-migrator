@@ -100,3 +100,11 @@ def test_jira_test_unreachable(config: Config) -> None:
     body = client.post("/api/settings/jira/test", json={}).json()
     assert body["ok"] is False
     assert "Cannot reach Jira" in body["error"]
+
+
+def test_jira_test_against_fake_jira(config: Config, jira_url: str, fake_jira) -> None:
+    client = TestClient(create_app(config))
+    body = client.post("/api/settings/jira/test", json={"base_url": jira_url, "pat": fake_jira.pat}).json()
+    assert body == {"ok": True, "user": "Jane Doe"}
+    body = client.post("/api/settings/jira/test", json={"base_url": jira_url, "pat": "wrong"}).json()
+    assert body == {"ok": False, "error": "Authentication failed (HTTP 401)"}

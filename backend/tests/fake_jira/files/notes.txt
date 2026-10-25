@@ -1,0 +1,8 @@
+Repro notes from QA
+
+--- Device ---
+Pixel 8, build AP2A.240905.003
++++ Steps +++
+1. Enable battery saver
+2. Leave screen off for 8 hours
+3. Battery history shows a gap

@@ -1,0 +1,51 @@
+diff --git a/src/com/android/settings/display/BrightnessLevelPreferenceController.java b/src/com/android/settings/display/BrightnessLevelPreferenceController.java
+index 2b3c4d5..3c4d5e6 100644
+--- a/src/com/android/settings/display/BrightnessLevelPreferenceController.java
++++ b/src/com/android/settings/display/BrightnessLevelPreferenceController.java
+@@ -88,6 +88,7 @@ public class BrightnessLevelPreferenceController extends AbstractPreferenceContr
+     @Override
+     public void updateState(Preference preference) {
+-        preference.setSummary(NumberFormat.getPercentInstance().format(getCurrentBrightness()));
++        double brightness = Math.max(0, Math.min(1, getCurrentBrightness()));
++        preference.setSummary(NumberFormat.getPercentInstance().format(brightness));
+     }
+ 
+     private double getCurrentBrightness() {
+diff --git a/res/values/oem_strings.xml b/res/values/oem_strings.xml
+new file mode 100644
+index 0000000..7d8e9f0
+--- /dev/null
++++ b/res/values/oem_strings.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="oem_brightness_title">Screen brightness</string>
++</resources>
+diff --git a/src/com/android/settings/display/OemDisplayUtils.java b/src/com/android/settings/display/DisplayUtilsOem.java
+similarity index 92%
+rename from src/com/android/settings/display/OemDisplayUtils.java
+rename to src/com/android/settings/display/DisplayUtilsOem.java
+index 4e5f6a7..5f6a7b8 100644
+--- a/src/com/android/settings/display/OemDisplayUtils.java
++++ b/src/com/android/settings/display/DisplayUtilsOem.java
+@@ -18,7 +18,7 @@ package com.android.settings.display;
+ 
+ import android.content.Context;
+ 
+-public final class OemDisplayUtils {
++public final class DisplayUtilsOem {
+     private static final String TAG = "OemDisplay";
+ 
+     public static boolean isOemPanel(Context context) {
+diff --git a/Android.bp b/Android.bp
+index 6a7b8c9..7b8c9d0 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -40,6 +40,7 @@ android_library {
+     static_libs: [
+         "SettingsLib",
+         "androidx.preference_preference",
++        "oem-display-utils",
+     ],
+ }
+ 

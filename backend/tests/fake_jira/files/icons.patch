@@ -1,0 +1,34 @@
+From 0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d Mon Sep 17 00:00:00 2001
+From: Raj Patel <raj.patel@example.com>
+Date: Tue, 29 Sep 2026 09:00:00 +0200
+Subject: [PATCH] SystemUI: replace OEM battery icon
+
+---
+ packages/SystemUI/res/drawable-xxhdpi/oem_battery.png | Bin 68 -> 70 bytes
+ packages/SystemUI/res/values/dimens.xml               | 2 +-
+ 2 files changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/SystemUI/res/drawable-xxhdpi/oem_battery.png b/packages/SystemUI/res/drawable-xxhdpi/oem_battery.png
+index 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b..9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c 100644
+GIT binary patch
+literal 70
+zcmeAS@N?(olHy`uVBq!ia0vp^j3CUx1|;Q0k8}blwj^(N7l!{JxM1({$v_d#0*}aI
+R1_o|n5N2eUHAey{LI7rT4Rimb
+
+literal 68
+zcmeAS@N?(olHy`uVBq!ia0vp^j3CUx0wlM}@Gt=>wj^(N7l!{JxM1({$v_d#0*}aI
+P1_o|n5N2eUJ2(OW4Ilv5
+
+diff --git a/packages/SystemUI/res/values/dimens.xml b/packages/SystemUI/res/values/dimens.xml
+index 1b2c3d4..2c3d4e5 100644
+--- a/packages/SystemUI/res/values/dimens.xml
++++ b/packages/SystemUI/res/values/dimens.xml
+@@ -120,5 +120,5 @@
+     <dimen name="status_bar_battery_icon_height">13.0dp</dimen>
+-    <dimen name="status_bar_battery_icon_width">20.0dp</dimen>
++    <dimen name="status_bar_battery_icon_width">22.0dp</dimen>
+     <dimen name="status_bar_battery_icon_padding">2dp</dimen>
+ 
+     <!-- Battery percentage text -->
+-- 
+2.43.0

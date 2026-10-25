@@ -1,0 +1,41 @@
+From 9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a Mon Sep 17 00:00:00 2001
+From: Jane Doe <jane.doe@example.com>
+Date: Fri, 25 Sep 2026 16:40:00 +0200
+Subject: [PATCH] camera: fix null deref on resume
+
+Log the missing client and return NO_INIT instead of crashing.
+
+Bug: PROJ-101
+---
+ services/camera/libcameraservice/CameraService.cpp | 4 ++++
+ services/camera/libcameraservice/CameraService.h   | 2 +-
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/services/camera/libcameraservice/CameraService.cpp b/services/camera/libcameraservice/CameraService.cpp
+index 1a2b3c4..6e7f8a9 100644
+--- a/services/camera/libcameraservice/CameraService.cpp
++++ b/services/camera/libcameraservice/CameraService.cpp
+@@ -1200,6 +1200,10 @@ status_t CameraService::onResume(int cameraId) {
+     sp<BasicClient> client = getClient(cameraId);
+     ALOGV("%s: camera %d", __FUNCTION__, cameraId);
+ 
++    if (client == nullptr) {
++        ALOGW("%s: no client for camera %d", __FUNCTION__, cameraId);
++        return NO_INIT;
++    }
+     client->notifyResume();
+     return OK;
+ }
+diff --git a/services/camera/libcameraservice/CameraService.h b/services/camera/libcameraservice/CameraService.h
+index 0f1e2d3..4c5b6a7 100644
+--- a/services/camera/libcameraservice/CameraService.h
++++ b/services/camera/libcameraservice/CameraService.h
+@@ -310,5 +310,5 @@ public:
+     virtual status_t    onSuspend(int cameraId);
+-    virtual void        onResume(int cameraId);
++    virtual status_t    onResume(int cameraId);
+ 
+     // Debug
+     status_t            dump(int fd, const Vector<String16>& args);
+-- 
+2.43.0

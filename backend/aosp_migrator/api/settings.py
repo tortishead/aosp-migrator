@@ -1,10 +1,11 @@
 from urllib.parse import urlparse
 
-import httpx2
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from aosp_migrator.config import GITHUB_PAT, JIRA_BASE_URL, JIRA_PAT, Config, Field
+from aosp_migrator.jira.base import JiraAuthError, JiraError
+from aosp_migrator.jira.datacenter import DataCenterClient
 
 router = APIRouter(prefix="/settings")
 
@@ -73,22 +74,15 @@ def test_jira(body: JiraTestRequest, request: Request) -> dict:
         return {"ok": False, "error": "Jira base URL and PAT are required"}
     base_url = normalize_base_url(base_url)
 
-    transport = request.app.state.http_transport
+    # One attempt only: the user is waiting on the button.
+    client = DataCenterClient(base_url, pat, transport=request.app.state.http_transport, timeout=15, max_attempts=1)
     try:
-        with httpx2.Client(transport=transport, timeout=15) as client:
-            response = client.get(
-                f"{base_url}/rest/api/2/myself",
-                headers={"Authorization": f"Bearer {pat}", "Accept": "application/json"},
-            )
-    except httpx2.HTTPError as exc:
-        return {"ok": False, "error": f"Cannot reach Jira: {exc}"}
-
-    if response.status_code in (401, 403):
-        return {"ok": False, "error": f"Authentication failed (HTTP {response.status_code})"}
-    if response.status_code != 200:
-        return {"ok": False, "error": f"Unexpected response (HTTP {response.status_code})"}
-    try:
-        user = response.json()
-    except ValueError:
-        return {"ok": False, "error": "Response is not JSON. Is this a Jira base URL?"}
-    return {"ok": True, "user": user.get("displayName") or user.get("name")}
+        with client:
+            user = client.myself()
+    except JiraAuthError as exc:
+        return {"ok": False, "error": str(exc)}
+    except JiraError as exc:
+        if exc.status is not None and exc.status != 200:
+            return {"ok": False, "error": f"Unexpected response (HTTP {exc.status})"}
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "user": user}
