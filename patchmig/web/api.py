@@ -311,7 +311,8 @@ def create_app(
 
     @app.get("/api/steps")
     def step_list() -> dict:
-        return {"steps": steps.catalogue(), "pipeline": steps.PIPELINE,
+        workflow = [{"title": t, "help": h, "steps": names} for t, h, names in steps.WORKFLOW]
+        return {"steps": steps.catalogue(), "pipeline": steps.PIPELINE, "workflow": workflow,
                 "actions": actions}  # fmt: skip
 
     @app.get("/api/jobs")

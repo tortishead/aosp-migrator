@@ -243,6 +243,7 @@ def test_publish_and_sync_on_gitlab(tmp_path: Path, monkeypatch):
     gl = RepoOutput(owner="oem", token="env:GH_TOKEN", repo_map=REPOS, base_branch="main",
                     git_url=str(p.hub / "{repo}.git"), reviewers=["lead"])  # fmt: skip
     p.config = p.config.model_copy(update={"output": OutputConfig(target="gitlab", gitlab=gl)})
+    p.approve_verified()
     report = p.publish()
     assert report.outcomes and all(o.status == "published" for o in report.outcomes)
     repo = next(r for r, v in p.gh.prs.items() if v)

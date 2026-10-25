@@ -5,12 +5,13 @@ from pathlib import Path
 
 import pytest
 import yaml
+from sqlalchemy import select
 from typer.testing import CliRunner
 
 from patchmig.cli import app
 from patchmig.config.schema import GithubOutput, JiraConfig, OutputConfig
 from patchmig.jira_export import export, plan
-from patchmig.ledger import Patch, State
+from patchmig.ledger import Cluster, Patch, State
 from patchmig.publish import MARKER, publish
 from patchmig.review import Reviewer, ReviewError, queues, sync_github
 from tests.fixtures.scenario import BT_NEW, CAR, FRAMEWORKS, PROJECTS
@@ -127,6 +128,17 @@ class Published(Built):
     def reviewer(self) -> Reviewer:
         return Reviewer(self.store, self.run)
 
+    def approve_verified(self, by: str = "xuan") -> None:
+        """The human review that comes before publishing."""
+        with self.store.session() as s:
+            ids = s.scalars(
+                select(Cluster.id).where(
+                    Cluster.run_id == self.run.id, Cluster.state == State.VERIFIED
+                )
+            ).all()
+        for cid in ids:
+            self.reviewer().approve(cid, by, "reviewed")
+
 
 @pytest.fixture
 def published(tmp_path: Path, monkeypatch) -> Published:
@@ -134,8 +146,16 @@ def published(tmp_path: Path, monkeypatch) -> Published:
     return Published(tmp_path)
 
 
+def test_nothing_is_published_before_a_human_approves(published):
+    p = published
+    assert p.publish().outcomes == [] and not p.gh.prs
+    p.reviewer().approve(p.cluster_of("P3").id, "xuan")
+    assert [o.cluster_id for o in p.publish().outcomes] == [p.cluster_of("P3").id]
+
+
 def test_publish_opens_one_pr_per_repo_and_is_repeatable(published):
     p = published
+    p.approve_verified()
     report = p.publish()
     assert {o.status for o in report.outcomes} == {"published"}
     power, bt = p.cluster_of("P1"), p.cluster_of("P3")
@@ -151,7 +171,8 @@ def test_publish_opens_one_pr_per_repo_and_is_repeatable(published):
     fw_pr = p.gh.get_pr(REPOS[FRAMEWORKS], prs[FRAMEWORKS]["number"])
     assert fw_pr["title"] == "[A14→A15] Add OEM power mode" and fw_pr["draft"]
     body = fw_pr["body"]
-    assert "Review queue: careful review" in body and "Fix OEM power mode check" in body
+    assert "**Approved by xuan** in patchmig: reviewed" in body
+    assert "Fix OEM power mode check" in body
     assert "`frameworks/base` (this PR): resolved" in body and "Reviewer agent" in body
     assert "Modules: `framework`" in body and prs[CAR]["url"] in body  # sibling link
     assert MARKER in body
@@ -159,7 +180,8 @@ def test_publish_opens_one_pr_per_repo_and_is_repeatable(published):
     assert p.gh.requested[(REPOS[FRAMEWORKS], 1)] == ["lead"]
 
     again = p.publish()
-    assert {o.status for o in again.outcomes} == {"updated"}
+    assert {(o.status, o.reason) for o in again.outcomes} == {
+        ("skipped", "already published, unchanged since")}  # fmt: skip
     assert len(p.gh.prs[REPOS[FRAMEWORKS]]) == 2  # power and bt; nothing new
     bt = p.cluster_of("P3")
     assert "RECONNECT_TIMEOUT_MS = 12000" in subprocess.run(
@@ -170,6 +192,7 @@ def test_publish_opens_one_pr_per_repo_and_is_repeatable(published):
 
 def test_publish_needs_a_repo_for_every_project_and_supports_dry_run(published):
     p = published
+    p.approve_verified()
     gh = p.config.output.github.model_copy(update={"repo_map": {FRAMEWORKS: "fw"}})
     p.config = p.config.model_copy(
         update={"output": p.config.output.model_copy(update={"github": gh})}
@@ -209,6 +232,7 @@ def test_queues_and_direct_review_actions(published):
 
 def test_changes_requested_on_the_pr_sends_the_cluster_back_with_feedback(published):
     p = published
+    p.approve_verified()
     p.publish()
     bt = p.cluster_of("P3")
     pr = bt.result["publish"]["projects"][FRAMEWORKS]
@@ -240,8 +264,9 @@ def test_changes_requested_on_the_pr_sends_the_cluster_back_with_feedback(publis
     assert "15000" in bt.result["migration"]["diff"]
 
 
-def test_merge_or_approval_approves_and_a_closed_pr_rejects(published):
+def test_a_merge_is_recorded_and_a_closed_pr_rejects(published):
     p = published
+    p.approve_verified()
     p.publish()
     bt, power = p.cluster_of("P3"), p.cluster_of("P1")
     bt_pr = bt.result["publish"]["projects"][FRAMEWORKS]
@@ -251,8 +276,10 @@ def test_merge_or_approval_approves_and_a_closed_pr_rejects(published):
         e = power.result["publish"]["projects"][project]
         p.gh.get_pr(e["repo"], e["number"])["state"] = "closed"
     changes = sync_github(p.store, p.run, p.gh)
-    assert f"cluster {bt.id}: approved by lead" in changes
-    assert p.cluster_of("P3").result["review"]["source"] == "github"
+    assert f"cluster {bt.id}: {FRAMEWORKS} PR merged by lead" in changes
+    assert p.cluster_of("P3").result["publish"]["projects"][FRAMEWORKS]["merged"]
+    assert p.cluster_of("P3").result["review"]["by"] == "xuan"  # approved before publishing
+    assert p.publish().outcomes[0].reason == "already published, unchanged since"
     assert p.cluster_of("P1").state == State.NEEDED
     assert "PR closed without merge" in p.cluster_of("P1").result["feedback"][-1]["text"]
 
@@ -261,6 +288,7 @@ def test_a_closed_pr_rejects_once_and_unreadable_prs_are_skipped(published):
     from patchmig.publish.hosts import ReviewHostError
 
     p = published
+    p.approve_verified()
     p.publish()
     bt = p.cluster_of("P3")
     e = bt.result["publish"]["projects"][FRAMEWORKS]
@@ -322,11 +350,12 @@ def test_decisions_answer_needs_decision_clusters(tmp_path, monkeypatch):
 
 def test_jira_export_of_approved_clusters_is_idempotent(published):
     p = published
-    p.publish()
     r = p.reviewer()
     bt, brightness = p.cluster_of("P3"), p.cluster_of("P7")
     r.approve(bt.id, "xuan")
     r.approve(brightness.id, "xuan", "both upstream")
+    p.publish()
+    bt = p.cluster_of("P3")
     jira = FakeJiraWriter()
     report = export(p.config, p.store, p.run, jira)
     assert sorted(report.updated) == ["OEM-202", "OEM-505", "OEM-808"]
@@ -384,24 +413,27 @@ def test_web_review_view(published):
     from patchmig.web import data
 
     p = published
-    p.publish()
     view = data.review(p.store, p.run.id)
     assert view["counts"]["quick_approve"] == 1 and view["counts"]["careful_review"] == 1
-    item = view["queues"]["careful_review"][0]
+    p.approve_verified()
+    p.publish()
+    view = data.review(p.store, p.run.id)
+    assert view["counts"]["approved"] == 2
+    item = next(i for i in view["queues"]["approved"] if i["id"] == p.cluster_of("P1").id)
     assert len(item["prs"]) == 2
     c = data.cluster(p.store, p.run.id, p.cluster_of("P1").id)
-    assert c["queue"] == "careful_review" and len(c["publish"]["prs"]) == 2
+    assert c["queue"] == "approved" and len(c["publish"]["prs"]) == 2
 
 
-def test_rework_asks_reviewers_again_and_approved_clusters_are_left_alone(published):
+def test_rework_after_a_change_request_updates_the_same_pr_after_a_new_approval(published):
     p = published
+    p.approve_verified()
     p.publish()
     bt, power = p.cluster_of("P3"), p.cluster_of("P1")
     bt_pr = bt.result["publish"]["projects"][FRAMEWORKS]
     key = (bt_pr["repo"], bt_pr["number"])
     assert p.gh.request_calls.count(key) == 1
     prs_before = {repo: len(prs) for repo, prs in p.gh.prs.items()}
-    p.reviewer().approve(power.id, "lead")
     p.reviewer().reject(bt.id, "lead", "Use 15 s.")
 
     def rework(task, attempt):
@@ -411,10 +443,13 @@ def test_rework_asks_reviewers_again_and_approved_clusters_are_left_alone(publis
 
     p.migrate(p.runner(rework), cluster_ids=[bt.id])
     p.verify(cluster_ids=[bt.id])
+    assert p.publish(cluster_ids=[bt.id]).outcomes == []  # reworked, not approved again yet
     pushed = {pr: p.remote_head(pr, f"migration/migrate-test/r{p.run.id}-c{power.id}")
               for pr in PROJECTS}  # fmt: skip
+    p.reviewer().approve(bt.id, "lead", "15 s is right")
     report = p.publish()
-    assert [o.cluster_id for o in report.outcomes] == [bt.id]  # approved power: not touched
+    assert {o.cluster_id: o.status for o in report.outcomes} == {power.id: "skipped",
+                                                                  bt.id: "updated"}  # fmt: skip
     assert p.gh.request_calls.count(key) == 2  # same PR, reviewers asked again
     assert {repo: len(prs) for repo, prs in p.gh.prs.items()} == prs_before  # no new PRs
     for project, head in pushed.items():

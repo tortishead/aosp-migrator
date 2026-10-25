@@ -61,7 +61,6 @@ migrate analyse  -c pilot/project.yaml        # checks, then Copilot per backlog
 migrate clusters -c pilot/project.yaml        # check the clusters and forecasts
 migrate apply    -c pilot/project.yaml        # cherry-pick, net diff, then the agent
 migrate verify   -c pilot/project.yaml        # affected modules only, then tests
-migrate publish  -c pilot/project.yaml
 migrate report   -c pilot/project.yaml --out pilot/report-1.md
 ```
 
@@ -86,22 +85,26 @@ What to check:
 | `analyse` | Every patch you know is upstream is `upstream` with evidence; chains share a cluster |
 | `apply` | Rungs: most clusters by cherry-pick or net diff, the agent only for real conflicts |
 | `verify` | Build failures are blamed correctly (baseline reruns), fix attempts are few |
-| `publish` | PR bodies are enough to review without opening the ledger |
 | `report` | Credits per agent are within the budget you would accept for the full migration |
 
 ## 3. Review
 
-Review every PR, also the quick-approve ones (the point of the pilot is to find out whether
-the queue can be trusted). Use the PRs or `migrate review`; `migrate review sync` brings PR
-outcomes in. Send back with concrete words: they reach the agent on the next `apply`, and
-they become memory.
+Review every cluster, also the quick-approve ones (the point of the pilot is to find out
+whether the queue can be trusted), with `migrate review` or on the Review page. Nothing is
+pushed before you approve it. Send back with concrete words: they reach the agent on the next
+`apply`, and they become memory. Then publish the approved clusters; change requests on their
+PRs come back with `migrate review sync`.
 
 ```bash
-migrate review sync -c pilot/project.yaml
+migrate review list -c pilot/project.yaml
+migrate review approve <id> --by <you> -c pilot/project.yaml     # or reject / decide / retry
 migrate apply  -c pilot/project.yaml          # only clusters sent back or retried
 migrate verify -c pilot/project.yaml
-migrate publish -c pilot/project.yaml
+migrate publish -c pilot/project.yaml         # approved clusters only: PRs to the target
+migrate review sync -c pilot/project.yaml     # merges and change requests on the PRs
 ```
+
+Check that the PR bodies are enough for the target's reviewers without opening the ledger.
 
 Repeat until every cluster is approved, decided or consciously left out, then
 `migrate jira-export --dry-run` and `migrate jira-export`.

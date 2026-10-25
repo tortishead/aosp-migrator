@@ -192,10 +192,14 @@ class Reviewer:
 def sync_reviews(store: LedgerStore, run: Run, api, source: str = "github") -> list[str]:
     """Bring PR outcomes into the ledger; returns one line per change.
 
-    A merged PR or an approving review approves the cluster; a review requesting changes
-    (Bitbucket: needs work) rejects it with the review text as feedback; a PR closed without
-    merge rejects it. Each review, and each close, is acted on once. A cluster whose PRs
-    cannot be read is reported and skipped. `source` names the host in the record.
+    Clusters are approved in patchmig before they are published, so a PR is a second look in
+    the target's own review. A merge is recorded on the PR (publish never pushes to it again);
+    a review requesting changes (Bitbucket: needs work) rejects the cluster with the review
+    text as feedback, and so does a PR closed without merge: the cluster goes back to the
+    cluster agent, and after the rework and a new approval publish updates the same PR. An
+    approving review or a merge approves a cluster not approved yet. Each review, and each
+    close, is acted on once. A cluster whose PRs cannot be read is reported and skipped.
+    `source` names the host in the record.
     """
     from patchmig.publish.hosts import ReviewHostError  # patchmig.publish imports this module
 
@@ -212,14 +216,17 @@ def sync_reviews(store: LedgerStore, run: Run, api, source: str = "github") -> l
             continue
         seen = set((c.result.get("publish") or {}).get("seen_reviews", []))
         events: list[tuple[str, str, str, str | None]] = []  # (kind, by, text, seen key)
+        merged: dict[str, str] = {}  # project -> who merged its PR, first seen now
         try:
             states = []
-            for entry in prs.values():
+            for project, entry in prs.items():
                 pr = api.get_pr(entry["repo"], entry["number"])
                 states.append(pr)
                 if pr.get("merged"):
                     by = (pr.get("merged_by") or {}).get("login", source)
                     events.append(("approve", by, f"merged {entry['url']}", None))
+                    if not entry.get("merged"):
+                        merged[project] = by
                 for rv in api.reviews(entry["repo"], entry["number"]):
                     key = f"{entry['repo']}#{rv['id']}"
                     if key in seen:
@@ -257,6 +264,12 @@ def sync_reviews(store: LedgerStore, run: Run, api, source: str = "github") -> l
         c = reviewer._cluster(cid)
         publish = {**(c.result.get("publish") or {}), "seen_reviews": sorted(seen),
                    "synced_at": _now()}  # fmt: skip
+        if merged:
+            publish["projects"] = {
+                p: {**e, "merged": True, "merged_by": merged[p]} if p in merged else e
+                for p, e in publish.get("projects", {}).items()
+            }
+            changes += [f"cluster {cid}: {p} PR merged by {by}" for p, by in merged.items()]
         reviewer._update(c, publish=publish)
     return changes
 

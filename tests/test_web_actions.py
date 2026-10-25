@@ -334,3 +334,14 @@ def test_service_file_starts_the_server_with_this_config(served):
         and f"EnvironmentFile=-{path.parent}/.patchmig/serve.env" in out.output
     )
     assert "Restart=on-failure" in out.output
+
+
+def test_the_workflow_covers_every_step_once_and_publishing_waits_for_review(served):
+    client, *_ = served
+    cat = client.get("/api/steps").json()
+    titles = [w["title"] for w in cat["workflow"]]
+    assert titles == ["Import", "Backlog", "Analyse", "Build and test", "Review, then publish",
+                      "Save knowledge"]  # fmt: skip
+    listed = [n for w in cat["workflow"] for n in w["steps"]]
+    assert sorted(listed) == sorted(s["name"] for s in cat["steps"])
+    assert cat["pipeline"] == ["ingest", "history", "analyse", "apply", "verify"]

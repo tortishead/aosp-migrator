@@ -232,7 +232,7 @@ export function RunPage({ runs, jobId, onRunsChanged }) {
     ${error ? html`<p class="field-error banner">${error}</p>` : null}
     ${shown ? html`<${JobView} key=${shown} id=${shown} steps=${cat.steps} onFinished=${() => { setVersion((v) => v + 1); onRunsChanged && onRunsChanged(); }} />` : null}
     <div class="panel">
-      <h2>Whole migration <span class="muted">· in this order; stops at the first failure or when the credit budget is reached</span></h2>
+      <h2>Steps 1 to 4 in one go <span class="muted">· import, analyse, build and test, in this order; stops at the first failure or when the credit budget is reached. Step 5 starts with your review.</span></h2>
       <div class="pipeline">${cat.pipeline.map((n) => html`<label class="check"><input type="checkbox" checked=${chosen.has(n)}
           onChange=${(e) => { const next = new Set(chosen); e.target.checked ? next.add(n) : next.delete(n); setChosen(next); }} /> ${byName[n].title}</label>`)}</div>
       <p class="muted small">${runs.length ? html`Works on the backlog of the run chosen here: ${runPicker}${pipe.includes("ingest") ? " (Import refreshes it; its option New backlog starts a new run)" : ""}` : pipe.includes("ingest") ? "The first import starts the backlog (run 1)." : "No backlog yet: include Import."}
@@ -242,8 +242,10 @@ export function RunPage({ runs, jobId, onRunsChanged }) {
         ${running ? html`<span class="muted">Job ${running.id} is running.</span>` : null}
       </div>
     </div>
-    <h2>Single steps ${runs.length ? html`<span class="muted">· on ${runPicker}</span>` : null}</h2>
-    <div class="cards">${cat.steps.map((s) => {
+    <h2>The workflow, step by step ${runs.length ? html`<span class="muted">· on ${runPicker}</span>` : null}</h2>
+    ${(cat.workflow || []).map((w, n) => html`<div class="workflow-step">
+      <h3>${n + 1}. ${w.title}</h3><p class="muted small">${w.help}${w.steps.length ? "" : html` <a href=${runId ? `#/r/${runId}/backlog` : "#/run"}>Open the backlog →</a>`}</p>
+      ${w.steps.length ? html`<div class="cards">${w.steps.map((name) => byName[name]).filter(Boolean).map((s) => {
       const [tag, cls] = CREDIT_TAGS[s.credits];
       return html`<div class="panel card">
         <h2>${s.title} <span class=${`tag ${cls}`}>${tag}</span></h2>
@@ -251,7 +253,7 @@ export function RunPage({ runs, jobId, onRunsChanged }) {
         ${s.options.length ? html`<div class="opts">${s.options.map((o) => html`<${OptionInput} opt=${o} value=${options[s.name]?.[o.name]} set=${(v) => setOpt(s.name, o.name, v)} />`)}</div>` : null}
         <button type="button" disabled=${disabled || (s.needs_run && !runs.length)} onClick=${() => launch([s.name])}>Run</button>
       </div>`;
-    })}</div>
+    })}</div>` : null}</div>`)}
     ${jobs.length ? html`<div class="panel table-wrap"><h2>Jobs</h2><table>
       <thead><tr><th>Job</th><th>Steps</th><th>By</th><th>State</th><th>Started</th><th>Took</th><th class="num">Credits</th><th>Run</th></tr></thead>
       <tbody>${jobs.slice(0, 50).map((j) => html`<tr>

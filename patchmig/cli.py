@@ -374,14 +374,14 @@ def publish_cmd(
     cluster: Annotated[
         list[int] | None, typer.Option("--cluster", help="Only this cluster id (repeatable)")
     ] = None,
-    unverified: Annotated[
-        bool, typer.Option("--unverified", help="Also publish migrated, not yet verified clusters")
-    ] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be pushed")] = False,
 ) -> None:
-    """Push each verified cluster's branch and open (or refresh) one draft PR per repository."""
-    _step(config, steps.publish, run_id=run_id, clusters=cluster, unverified=unverified,
-          dry_run=dry_run)  # fmt: skip
+    """Push each approved cluster's branch and open (or refresh) one PR per repository.
+
+    Only clusters that are verified and approved by a human (migrate review approve) are
+    pushed: nothing reaches the target repos before the review.
+    """
+    _step(config, steps.publish, run_id=run_id, clusters=cluster, dry_run=dry_run)
 
 
 @review_app.command("list")

@@ -380,10 +380,9 @@ def publish(
     ctx: Context,
     run_id: int | None = None,
     clusters: list[int] | None = None,
-    unverified: bool = False,
     dry_run: bool = False,
 ) -> None:
-    """Push each verified cluster's branch and open (or refresh) one draft PR per repo."""
+    """Push each approved cluster's branch and open (or refresh) one PR per repo."""
     from patchmig.publish import PublishError
     from patchmig.publish import publish as do_publish
 
@@ -391,11 +390,12 @@ def publish(
     try:
         api = None if dry_run else ctx.host_client()
         report = do_publish(ctx.config, ctx.store, run, api, cluster_ids=clusters,
-                            include_unverified=unverified, dry_run=dry_run)  # fmt: skip
+                            dry_run=dry_run)  # fmt: skip
     except PublishError as e:
         raise StepFailed(str(e)) from e
     if not report.outcomes:
-        ctx.info(f"Run {run.id}: no verified cluster to publish")
+        ctx.info(f"Run {run.id}: no approved cluster to publish. Clusters are published after "
+                 "a human approves them (Review page, or migrate review approve).")  # fmt: skip
     for o in report.outcomes:
         ctx.info(f"  [{o.cluster_id}] {o.status:<9} {o.name}")
         for url in o.urls:
@@ -535,10 +535,9 @@ STEPS: dict[str, Step] = {s.name: s for s in (
          "the tests; the agent fixes build breaks.", verify, "maybe",
          (CLUSTERS, LIMIT, Option("no_fix", "bool", "Do not ask the agent to fix builds")),
          in_pipeline=True),
-    Step("publish", "Publish PRs", "Push each verified cluster and open one draft PR per repo.",
-         publish, "none", (CLUSTERS, Option("unverified", "bool", "Also unverified clusters"),
-                           Option("dry_run", "bool", "Only show what would be pushed")),
-         in_pipeline=True),
+    Step("publish", "Publish PRs", "After the review: push each approved cluster to the "
+         "target repos and open one PR per repo.", publish, "none",
+         (CLUSTERS, Option("dry_run", "bool", "Only show what would be pushed"))),
     Step("review_sync", "Sync PR reviews", "Approvals and merges approve; change requests and "
          "closes send the cluster back.", review_sync, "none"),
     Step("jira_export", "Export to Jira", "Labels, PR links and one marker comment per "
@@ -552,6 +551,24 @@ STEPS: dict[str, Step] = {s.name: s for s in (
 )}  # fmt: skip
 
 PIPELINE = [s.name for s in STEPS.values() if s.in_pipeline]
+
+# The workflow, in the order people follow it: (title, what happens, its steps). The whole
+# migration (PIPELINE) runs steps 1 to 4 on its own; step 5 starts with a human review.
+WORKFLOW = [
+    ("Import", "Jira tickets with their linked tickets, comments and attachments, and the "
+     "patches.", ["history", "ingest"]),
+    ("Backlog", "The import is saved as a lasting backlog. Add what a ticket leaves out (text, "
+     "links, files) on the Backlog page, then import and analyse the item again.", []),
+    ("Analyse", "Is it still needed in the target, related items, a solution: the checks, "
+     "then Copilot where needed.", ["analyse"]),
+    ("Build and test", "Migrate the solution onto the target, build the affected modules, run "
+     "the tests.", ["apply", "verify"]),
+    ("Review, then publish", "A human reviews and approves each cluster (Review page). Only "
+     "then: push to the target repos, open PRs, update Jira.",
+     ["publish", "review_sync", "jira_export"]),
+    ("Save knowledge", "Record the approved results; approve the lessons Copilot proposes.",
+     ["memory_record", "memory_curate"]),
+]  # fmt: skip
 
 
 def catalogue() -> list[dict]:

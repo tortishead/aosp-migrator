@@ -35,8 +35,9 @@ migrate apply -c myproject/project.yaml --no-agent   # free rungs only: cherry-p
 migrate apply -c myproject/project.yaml --limit 3    # then the cluster agent where they fail
 migrate build-check -c myproject/project.yaml        # SSH to the build server, slots prepared?
 migrate verify -c myproject/project.yaml     # build affected modules, run TEST_MAPPING tests
-migrate publish -c myproject/project.yaml    # one draft PR per verified cluster and repo
-migrate review list -c myproject/project.yaml        # review queues; approve/reject/decide/sync
+migrate review list -c myproject/project.yaml        # review queues; approve/reject/decide
+migrate publish -c myproject/project.yaml    # after approval: one PR per cluster and repo
+migrate review sync -c myproject/project.yaml        # merges and change requests on the PRs
 migrate jira-export -c myproject/project.yaml --dry-run   # approved results back to Jira
 migrate check -c myproject/project.yaml      # trees, Git host tokens, Copilot sign-in, Jira, build host
 migrate serve -c myproject/project.yaml      # web front end (every step, review, settings) on :8765
@@ -292,21 +293,24 @@ TEST_MAPPING tests run; failures are re-run on the unpatched target so existing 
 not blamed on the cluster. Clusters end `verified`, `failed` or `needs_decision`, with logs
 on the cluster page. See `docs/verify-m7.md`.
 
-## Publish, review and Jira export
+## Review, publish and Jira export
 
-`migrate publish` pushes each verified cluster and opens one draft PR per repository it
+Nothing leaves the orchestrator before a human approved it. Verified clusters sit in review
+queues (quick approve, careful review, needs decision, failed, dropped, approved); reviewers
+approve, reject (back to the cluster agent with their words), decide or retry with
+`migrate review` or on the Review page.
+
+`migrate publish` then pushes each approved cluster and opens one PR per repository it
 touches, with everything a reviewer needs in the body. `output.target` is `github` (also
 Enterprise), `gitlab` (merge requests, marked "Draft:"), `bitbucket_cloud` or
 `bitbucket_server` (Data Center); its section (`output.github`, `output.gitlab`, ...) takes the
 owner (org, group path, workspace or project key), `repo_map`, base branch and reviewers.
 URL, user and token default to `trees.target.host`, so the target repo's token set in the
-settings serves for fetching, pushing and PRs. On GitLab and Bitbucket, a reviewer's state
-counts as the review: approved approves; GitLab "request changes" and Bitbucket "needs work"
-send the cluster back, with that reviewer's latest PR comments as the feedback. Labels exist only on GitHub and GitLab. Clusters sit in review queues
-(quick approve, careful review, needs decision, failed, dropped, approved). Reviewers decide
-on the PRs (approve or merge; request changes; close) or with `migrate review`, and
-`migrate review sync` brings PR outcomes into the ledger. A rejected cluster goes back to the
-cluster agent with the reviewer's words. `migrate jira-export` writes approved results to
+settings serves for fetching, pushing and PRs. The PRs are the target's own review:
+`migrate review sync` records merges, and a change request (GitLab "request changes",
+Bitbucket "needs work", with that reviewer's latest PR comments as the feedback) or a PR
+closed unmerged sends the cluster back to the cluster agent; after the rework and a new
+approval, publish updates the same PR. Labels exist only on GitHub and GitLab. `migrate jira-export` writes approved results to
 Jira with labels, PR links and one marker comment per ticket, updated in place, and can
 create tracking tickets for untracked patches. See `docs/review-m8.md`.
 

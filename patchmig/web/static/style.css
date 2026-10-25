@@ -300,3 +300,7 @@ details.conf-scale td { border-bottom: 0; padding: 2px 10px 2px 0; }
 
 /* workspace: project list and switcher */
 a.button-link { align-self: flex-start; margin-top: auto; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+
+.workflow-step { margin: 18px 0 6px; }
+.workflow-step h3 { margin: 0 0 2px; font-size: 15px; }
+.workflow-step > p { margin: 0 0 8px; }

@@ -652,7 +652,7 @@ const QUEUE_INFO = {
   failed: ["Failed", "Could not be migrated or verified"],
   dropped: ["Dropped", "Upstream, obsolete or reverted: confirm"],
   in_progress: ["In progress", "Still to migrate or verify"],
-  approved: ["Approved", "Ready for the Jira export"],
+  approved: ["Approved", "Reviewed: publish PRs to the target, then export to Jira"],
 };
 
 function ReviewPage({ run }) {
@@ -661,14 +661,15 @@ function ReviewPage({ run }) {
   const live = useActions();
   return html`<${Loading} state=${state}>${(r) => html`
     <h1>Review</h1>
-    ${live ? html`<p class="muted">Approve or reject here, or on the PRs (then <b>Sync PR reviews</b>). A rejection sends the cluster back to the agent with your words; run <b>Migrate clusters</b> again for it. Approved clusters go to the Jira export.</p>
+    ${live ? html`<p class="muted">Review each verified cluster here first: nothing goes to the target repos or to Jira before you approve it. A rejection sends the cluster back to the agent with your words; run <b>Migrate clusters</b> again for it. After approving: <b>Publish PRs</b> pushes the approved clusters and opens their PRs, <b>Export to Jira</b> updates their tickets. Change requests on a PR send the cluster back too (<b>Sync PR reviews</b>).</p>
       <div class="actions">
+        <${JobButton} steps=${["publish"]} run=${run} label="Publish PRs" primary=${(r.counts.approved || 0) > 0} confirm="Push the approved clusters to the target repos and open (or update) their PRs?" />
         <${JobButton} steps=${["review_sync"]} run=${run} label="Sync PR reviews" />
         <${JobButton} steps=${["jira_export"]} options=${{ jira_export: { dry_run: true } }} run=${run} label="Preview Jira export" />
         <${JobButton} steps=${["jira_export"]} run=${run} label="Export to Jira" confirm="Write labels, PR links and a comment to the approved clusters' Jira tickets?" />
         <a href=${`#/r/${run}/report`}>Report for the final approval →</a>
       </div>`
-    : html`<p class="muted">Approve with <code>migrate review approve ID --by NAME</code> or by approving or merging the PR; request changes on the PR or use <code>migrate review reject</code> to send a cluster back to the agent. <code>migrate review sync</code> reads the PRs.</p>`}
+    : html`<p class="muted">Approve with <code>migrate review approve ID --by NAME</code>, then <code>migrate publish</code> pushes the approved clusters and opens their PRs and <code>migrate jira-export</code> updates Jira. <code>migrate review reject</code>, or a change request on the PR (<code>migrate review sync</code>), sends a cluster back to the agent.</p>`}
     <${ConfidenceScale} />
     <div class="tiles">${Object.entries(QUEUE_INFO).map(([q, [name]]) => html`
       <div class="tile"><div class="value">${r.counts[q] || 0}</div><div class="label">${name.toLowerCase()}</div></div>`)}</div>
@@ -710,7 +711,13 @@ function ReviewStatus({ c, run, onDone }) {
 // Steps for this one cluster: rerun its migration, build and test it, publish it.
 function ClusterSteps({ c, run }) {
   const live = useActions();
-  if (!live || c.queue === "approved") return null;
+  if (!live) return null;
+  if (c.queue === "approved") {
+    if (c.state !== "verified") return null;
+    return html`<div class="panel"><h2>Steps for this cluster</h2><div class="actions">
+      <${JobButton} steps=${["publish"]} options=${{ publish: { clusters: [c.id] } }} run=${run} label=${c.publish?.prs?.length ? "Update its PRs" : "Publish PRs"} primary=${!c.publish?.prs?.length} />
+    </div><p class="muted small">Approved: pushes the cluster to the target repos and opens one PR per repo.</p></div>`;
+  }
   const migrated = Boolean(c.migration);
   const ids = [c.id];
   return html`<div class="panel"><h2>Steps for this cluster</h2><div class="actions">
@@ -718,7 +725,7 @@ function ClusterSteps({ c, run }) {
     ${migrated && c.state !== "needed" ? html`<${JobButton} steps=${["apply"]} options=${{ apply: { clusters: ids, redo: true } }} run=${run} label="Migrate again"
       confirm="Migrate this cluster again? Clusters built on it are migrated again too." />` : null}
     ${["applied", "resolved", "rewritten"].includes(c.state) ? html`<${JobButton} steps=${["verify"]} options=${{ verify: { clusters: ids } }} run=${run} label="Build and test" primary=${true} />` : null}
-    ${c.state === "verified" ? html`<${JobButton} steps=${["publish"]} options=${{ publish: { clusters: ids } }} run=${run} label=${c.publish?.prs?.length ? "Refresh PRs" : "Publish PRs"} />` : null}
+    ${c.state === "verified" && c.queue !== "approved" ? html`<span class="muted small">Review it (above) before it is published.</span>` : null}
   </div><p class="muted small">Each starts a job on the <a href="#/run">Run page</a>.</p></div>`;
 }
 

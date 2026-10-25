@@ -117,8 +117,8 @@ def test_full_export_against_rest(tmp_path, monkeypatch):
     monkeypatch.setenv("GH_TOKEN", "test-token")
     monkeypatch.setenv("JIRA_TOKEN", "t0ken")
     p = Published(tmp_path)
+    p.reviewer().approve(p.cluster_of("P3").id, "xuan")  # reviewed first, then published
     p.publish()
-    p.reviewer().approve(p.cluster_of("P3").id, "xuan")
     with FakeJira(cloud=True, auth=basic("bot@example.com", "t0ken")) as fake:
         fake.add("OEM-202", "BT timeout")
         cfg = p.config.model_copy(update={"jira": p.config.jira.model_copy(update={

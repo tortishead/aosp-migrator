@@ -42,7 +42,6 @@ class Remembered(Published):
                 p.intent_detail = {"source": "agent"}
         self.migrate(self.runner(resolve_power))
         self.verify()
-        self.publish()
         r = self.reviewer()
         power = self.cluster_of("P1")
         r.reject(power.id, "lead", "Pass REASON_OEM, not 0, as the reason.")
@@ -50,6 +49,7 @@ class Remembered(Published):
         self.verify(cluster_ids=[power.id])
         for key in ("P1", "P3", "P7"):
             r.approve(self.cluster_of(key).id, "xuan")
+        self.publish()
         self.memory = Memory.open(self.config, create=True)
         self.report = self.memory.record(self.config, self.store, self.run)
 
