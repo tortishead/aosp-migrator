@@ -2,10 +2,11 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
-import { api, type Item, type LocalState } from "../api";
+import { api, type Cluster, type ClusterRef, type Item, type LocalState } from "../api";
 import { Filters } from "../backlog/Filters";
 import { facetsKey, ImportPanel, itemsKey, useStartImport } from "../backlog/ImportPanel";
 import { apiParams, currentPage, hasFilters, PAGE_SIZE, STATE_LABELS } from "../backlog/params";
+import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
 import { workspacesKey } from "../queryClient";
 
 const SORTS: [string, string][] = [
@@ -31,6 +32,9 @@ export function BacklogPage() {
     placeholderData: keepPreviousData,
   });
   const facets = useQuery({ queryKey: facetsKey(workspaceId), queryFn: () => api.itemFacets(workspaceId) });
+  const clusters = useQuery({ queryKey: clustersKey(workspaceId), queryFn: () => api.clusters(workspaceId) });
+  // Where the last bulk cluster action put the selected items.
+  const [clustered, setClustered] = useState<ClusterRef | null>(null);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // A selection only makes sense for the rows on screen.
@@ -82,12 +86,13 @@ export function BacklogPage() {
         {workspace && (
           <>
             <span className="mono hint">{workspace.jql}</span>
+            <Link to={`/workspaces/${workspaceId}/clusters`}>Clusters</Link>
             <Link to={`/workspaces/${workspaceId}/edit`}>Edit workspace</Link>
           </>
         )}
       </div>
       <ImportPanel workspaceId={workspaceId} />
-      <Filters search={search} facets={facets.data} update={update} />
+      <Filters search={search} facets={facets.data} clusters={clusters.data} update={update} />
       <div className="backlog-toolbar">
         <select aria-label="Sort" value={search.get("sort") ?? "key"} onChange={(e) => update((next) => next.set("sort", e.target.value))}>
           {SORTS.map(([value, label]) => (
@@ -100,11 +105,21 @@ export function BacklogPage() {
           <BulkActions
             workspaceId={workspaceId}
             keys={[...selected]}
+            clusters={clusters.data ?? []}
             onStateChanged={() => {
               setSelected(new Set());
               void queryClient.invalidateQueries({ queryKey: itemsKey(workspaceId) });
             }}
+            onClustered={(cluster) => {
+              setSelected(new Set());
+              setClustered(cluster);
+            }}
           />
+        )}
+        {selected.size === 0 && clustered && (
+          <span role="status">
+            Saved to cluster <Link to={`/workspaces/${workspaceId}/clusters/${clustered.id}`}>{clustered.name}</Link>
+          </span>
         )}
       </div>
 
@@ -133,6 +148,7 @@ export function BacklogPage() {
               <th>Components</th>
               <th>Fix version</th>
               <th>Diffs</th>
+              <th>Cluster</th>
               <th>Updated</th>
             </tr>
           </thead>
@@ -195,6 +211,7 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
       <td>{item.components.join(", ")}</td>
       <td>{item.fix_versions.join(", ")}</td>
       <td>{item.diff_count || ""}</td>
+      <td>{item.cluster && <Link to={`/workspaces/${workspaceId}/clusters/${item.cluster.id}`}>{item.cluster.name}</Link>}</td>
       <td className="nowrap">{new Date(item.jira_updated).toLocaleDateString()}</td>
     </tr>
   );
@@ -203,10 +220,12 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
 interface BulkProps {
   workspaceId: number;
   keys: string[];
+  clusters: Cluster[];
   onStateChanged: () => void;
+  onClustered: (cluster: ClusterRef) => void;
 }
 
-function BulkActions({ workspaceId, keys, onStateChanged }: BulkProps) {
+function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered }: BulkProps) {
   const [state, setState] = useState<LocalState | "">("");
   const changeState = useMutation({
     mutationFn: (to: LocalState) => api.changeState(workspaceId, keys, to),
@@ -216,6 +235,22 @@ function BulkActions({ workspaceId, keys, onStateChanged }: BulkProps) {
     },
   });
   const reimport = useStartImport(workspaceId);
+  const refreshClusters = useRefreshClusters(workspaceId);
+  const [target, setTarget] = useState("");
+  // No target cluster: a new one from the selection.
+  const cluster = useMutation({
+    mutationFn: (clusterId: number | null) =>
+      confirmingDissolve((confirm) =>
+        clusterId === null
+          ? api.createCluster(workspaceId, keys, confirm)
+          : api.addClusterMembers(workspaceId, clusterId, keys, confirm),
+      ),
+    onSuccess: (result) => {
+      if (result === null) return;
+      refreshClusters();
+      onClustered({ id: result.id, name: result.name });
+    },
+  });
 
   return (
     <div className="bulk-actions" role="group" aria-label="Bulk actions">
@@ -234,7 +269,30 @@ function BulkActions({ workspaceId, keys, onStateChanged }: BulkProps) {
       <button onClick={() => reimport.mutate(keys)} disabled={reimport.isPending}>
         Reimport selected
       </button>
+      <button
+        onClick={() => cluster.mutate(null)}
+        disabled={keys.length < 2 || cluster.isPending}
+        title={keys.length < 2 ? "A cluster needs at least two items" : undefined}
+      >
+        New cluster from selected
+      </button>
+      {clusters.length > 0 && (
+        <>
+          <select aria-label="Target cluster" value={target} onChange={(e) => setTarget(e.target.value)}>
+            <option value="">Add to cluster…</option>
+            {clusters.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <button onClick={() => target && cluster.mutate(Number(target))} disabled={!target || cluster.isPending}>
+            Add
+          </button>
+        </>
+      )}
       {changeState.isError && <span className="error">{changeState.error.message}</span>}
+      {cluster.isError && <span className="error">{cluster.error.message}</span>}
       {reimport.isError && <span className="error">{reimport.error.message}</span>}
     </div>
   );

@@ -116,12 +116,14 @@ export function itemDetail(overrides: Partial<ItemDetail> = {}): ItemDetail {
       comments: [{ id: 1, author: "Raj Patel", created: "2026-09-22T00:00:00Z", body_html: "<p>Reproduced on <b>AP2A</b>.</p>" }],
       attachments: cameraAttachments,
     },
+    cluster: null,
     links: [
       {
         link_type: "Relates",
         direction: "outward",
         description: "relates to",
         item_id: null,
+        cluster: null,
         issue: {
           key: "PROJ-201",
           summary: "Audio HAL callback after stream release",

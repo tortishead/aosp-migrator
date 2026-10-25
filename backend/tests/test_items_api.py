@@ -52,6 +52,7 @@ def test_list_fields_and_natural_key_order(client: TestClient, imported: int) ->
         "last_import_error": None,
         # Two versions of one patch count once; the screenshot is not a diff.
         "diff_count": 1,
+        "cluster": None,
     }
     assert [i["diff_count"] for i in page["items"][1:4]] == [1, 1, 1]
 

@@ -14,8 +14,8 @@ Source of requirements: [spec.md](spec.md).
 
 | MS | Workflow step | Status |
 |----|---------------|--------|
-| MS1 | Import + web UI (workspaces, backlog, item detail, settings) | Planned (below) |
-| MS2 | Pre-processing (repo mapping, relevance, clustering, cluster UI) | Needs grilling |
+| MS1 | Import + web UI (workspaces, backlog, item detail, settings, manual clustering) | Planned (below) |
+| MS2 | Pre-processing (repo mapping, relevance, automatic cluster suggestions) | Needs grilling |
 | MS3 | Migration level 1 (plain patch apply) | Needs grilling |
 | MS4 | Migration level 2 (3-way / other merge strategies) | Needs grilling |
 | MS5 | Migration level 3 (Copilot re-implementation) | Needs grilling |
@@ -150,7 +150,12 @@ Each step lists what is built and what proves it works.
 - Manual acceptance by user against real Jira DC with a real JQL.
 - As built: `e2e/` is its own pnpm package (`@playwright/test`, Chromium only, one worker). `playwright.config.ts` starts the fake Jira on 8791 and `aosp-migrator serve` on 8792 with a fresh `e2e/.data/` (data dir + empty target tree; gitignored), with `AOSP_MIGRATOR_JIRA_*` unset so the UI settings apply; the app serves the prebuilt bundle, so `make test-e2e` runs `pnpm build` first. `make test` now includes `test-e2e`; `make install` installs the e2e deps and Chromium. One test, `tests/smoke.spec.ts`, walks the whole flow and also checks the label facet, diff-path search, the description table/code block, unified/split diff, note and state in history, and the state filter on the backlog after reimport. Filter checkboxes follow the URL, so the test clicks and then asserts `toBeChecked` instead of `check()`.
 
-### MS1 exit criteria
-
-- `make test` green, including the Playwright smoke test.
-- User imports a real JQL from their Jira DC, checks tables and diffs render correctly, and signs off.
+**1.10 Manual clustering** — done
+- A cluster is a manual, local group of backlog items that later milestones migrate together. Import and reimport never create or change clusters (like notes and state).
+- Rules: an item is in at most one cluster; members are backlog items only (not linked-only tickets); a cluster has at least 2 members, so removing the second-to-last member or moving it away dissolves the cluster after a confirm; members are ordered (default: oldest current diff `created`, then key, items without a diff last; reorder with up/down); not_relevant / closed / dropped members stay and get a warning badge. Moving an item to another cluster removes it from the old one.
+- Cluster fields: name (default: first member's key + summary), description, append-only notes, history (created, renamed, description changed, members added/removed, reordered, note added). Item history gets `cluster_joined` / `cluster_left`.
+- Data: migration `0005` adds `cluster` (id, workspace_id, name, description, created_at, updated_at), `cluster_member` (cluster_id, item_id unique, position), `cluster_note`, `cluster_event`, all `ON DELETE CASCADE`.
+- API: `GET/POST /api/workspaces/{id}/clusters`, `GET/PATCH/DELETE .../clusters/{cid}` (DELETE dissolves, items stay), `POST .../clusters/{cid}/members` `{keys}`, `DELETE .../clusters/{cid}/members/{key}`, `PUT .../clusters/{cid}/order` `{keys}`, `POST .../clusters/{cid}/notes`. A change that would leave another cluster with one member answers 409 unless confirmed. Cluster detail has members and a combined changed-file list with `touched_by` keys. Items API: `cluster` (id, name) per item, filter `cluster` = `any` / `none` / id. Item detail: its cluster with siblings; each link says the linked item's cluster.
+- UI: backlog cluster column and filter, bulk "New cluster from selected" and "Add to cluster…"; Clusters page; cluster page (rename, description, ordered members with state and diff count, warning badges, remove, set state for all, combined files with overlaps highlighted, notes, history, dissolve); item page cluster badge with siblings, remove from cluster, "Add to my cluster" on linked backlog items.
+- Test: exclusivity on move, dissolve on fewer than 2 members (409 without confirm), reorder validation, reimport leaves clusters alone, workspace delete cascade, items filter, file overlap; component tests for bulk actions, cluster page and item badge; Playwright smoke creates a cluster from 2 items, reorders it and checks the item badge.
+- As built: `api/clusters.py`; `natural_key` and `ClusterRef` live in `api/items.py`. Item history: `cluster_joined` `{cluster_id, name}`, `cluster_left` `{cluster_id, name}` plus `moved_to` (name) or `dissolved: true`. Cluster history: `created` `{keys}`, `renamed` / `description_changed` `{old, new}`, `members_added` `{keys}`, `member_removed` `{key, moved_to?}`, `reordered` `{keys}`, `note_added`. Dissolving deletes the cluster with its notes and history; the item histories keep the trace. Confirmation is `confirm_dissolve` (body for create / add members, query param for member removal); the frontend `confirmingDissolve` asks with `window.confirm` on a 409 and retries. Added members are appended in default order; members already in the target cluster are ignored. Combined files come from current diffs' parsed paths incl. rename sources. The items list filter uses an aliased `cluster_member` (the list query also outer-joins it). Routes `/workspaces/:id/clusters` and `/workspaces/:id/clusters/:clusterId`; `HistoryTimeline` takes an optional `describe` for cluster events.

@@ -6,11 +6,23 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import ColumnElement, Integer, Select, cast, column, exists, func, literal_column, or_, select, table
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.config import JIRA_BASE_URL, Config
-from aosp_migrator.db.models import Attachment, Comment, HistoryEvent, Item, ItemLink, JiraIssue, LocalState, Note, Workspace
+from aosp_migrator.db.models import (
+    Attachment,
+    Cluster,
+    ClusterMember,
+    Comment,
+    HistoryEvent,
+    Item,
+    ItemLink,
+    JiraIssue,
+    LocalState,
+    Note,
+    Workspace,
+)
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/items")
 
@@ -23,6 +35,17 @@ issue_fts = table("issue_fts", column("rowid"), column("key"), column("summary")
 TRIGRAM = 3
 
 Sort = Literal["key", "-key", "updated", "-updated", "status", "-status", "state", "-state"]
+
+
+def natural_key(key: str) -> tuple[str, int]:
+    """PROJ-9 before PROJ-10."""
+    prefix, _, number = key.rpartition("-")
+    return (prefix, int(number)) if number.isdigit() else (key, 0)
+
+
+class ClusterRef(BaseModel):
+    id: int
+    name: str
 
 
 class ItemOut(BaseModel):
@@ -39,6 +62,7 @@ class ItemOut(BaseModel):
     last_import_error: str | None
     # Current diff attachments (one per filename).
     diff_count: int
+    cluster: ClusterRef | None
 
 
 class ItemPage(BaseModel):
@@ -109,6 +133,8 @@ class LinkOut(BaseModel):
     description: str
     # Set when the linked ticket is a backlog item of this workspace too.
     item_id: int | None
+    # The linked backlog item's cluster.
+    cluster: ClusterRef | None
     issue: IssueOut
 
 
@@ -125,6 +151,17 @@ class HistoryOut(BaseModel):
     created_at: datetime
 
 
+class SiblingOut(BaseModel):
+    key: str
+    summary: str
+    local_state: str
+
+
+class ItemCluster(ClusterRef):
+    # All members including this item, in migration order.
+    members: list[SiblingOut]
+
+
 class ItemDetail(BaseModel):
     id: int
     local_state: str
@@ -134,6 +171,7 @@ class ItemDetail(BaseModel):
     # For relative Jira links inside the rendered HTML.
     jira_base_url: str | None
     issue: IssueOut
+    cluster: ItemCluster | None
     links: list[LinkOut]
     notes: list[NoteOut]
     # Oldest first.
@@ -176,6 +214,20 @@ def _has_diff() -> ColumnElement[bool]:
     return exists(select(Attachment.id).where(Attachment.issue_id == JiraIssue.id, Attachment.kind == "diff"))
 
 
+def _in_cluster(cluster: str) -> ColumnElement[bool]:
+    """`any`: in some cluster, `none`: in no cluster, a number: in that cluster."""
+    # Aliased: the list query also joins cluster_member, which would swallow the correlation.
+    joined = aliased(ClusterMember)
+    member = select(joined.id).where(joined.item_id == Item.id)
+    if cluster == "any":
+        return exists(member)
+    if cluster == "none":
+        return ~exists(member)
+    if cluster.isdigit():
+        return exists(member.where(joined.cluster_id == int(cluster)))
+    raise HTTPException(status_code=422, detail="cluster must be any, none or a cluster id")
+
+
 def _sort_key(sort: Sort) -> list[Any]:
     name = sort.removeprefix("-")
     if name == "key":
@@ -201,6 +253,7 @@ def list_items(
     fix_version: ListParam = None,
     dropped: bool | None = None,
     has_diff: bool | None = None,
+    cluster: str | None = None,
     sort: Sort = "key",
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -222,6 +275,8 @@ def list_items(
         conditions.append(Item.dropped.is_(dropped))
     if has_diff is not None:
         conditions.append(_has_diff() if has_diff else ~_has_diff())
+    if cluster:
+        conditions.append(_in_cluster(cluster))
     if q:
         conditions.extend(_text_term(term) for term in q.split())
 
@@ -232,7 +287,14 @@ def list_items(
         .where(Attachment.issue_id == JiraIssue.id, Attachment.kind == "diff", Attachment.is_current.is_(True))
         .scalar_subquery()
     )
-    rows = session.execute(query.add_columns(diff_count).order_by(*_sort_key(sort)).offset(offset).limit(limit))
+    rows = session.execute(
+        query.add_columns(diff_count, Cluster.id, Cluster.name)
+        .outerjoin(ClusterMember, ClusterMember.item_id == Item.id)
+        .outerjoin(Cluster, ClusterMember.cluster_id == Cluster.id)
+        .order_by(*_sort_key(sort))
+        .offset(offset)
+        .limit(limit)
+    )
     items = [
         ItemOut(
             id=item.id,
@@ -247,8 +309,9 @@ def list_items(
             dropped=item.dropped,
             last_import_error=item.last_import_error,
             diff_count=count,
+            cluster=ClusterRef(id=cluster_id, name=cluster_name) if cluster_id is not None else None,
         )
-        for item, issue, count in rows
+        for item, issue, count, cluster_id, cluster_name in rows
     ]
     return ItemPage(items=items, total=total, offset=offset, limit=limit)
 
@@ -332,6 +395,33 @@ def _issue_out(session: Session, issue: JiraIssue, base_url: str | None) -> Issu
     )
 
 
+def _cluster_of(session: Session, item_id: int) -> Cluster | None:
+    return session.scalar(select(Cluster).join(ClusterMember, ClusterMember.cluster_id == Cluster.id).where(ClusterMember.item_id == item_id))
+
+
+def _cluster_ref(session: Session, item_id: int | None) -> ClusterRef | None:
+    cluster = _cluster_of(session, item_id) if item_id is not None else None
+    return ClusterRef(id=cluster.id, name=cluster.name) if cluster else None
+
+
+def _item_cluster(session: Session, item_id: int) -> ItemCluster | None:
+    cluster = _cluster_of(session, item_id)
+    if cluster is None:
+        return None
+    members = session.execute(
+        select(Item, JiraIssue)
+        .join(JiraIssue, Item.issue_id == JiraIssue.id)
+        .join(ClusterMember, ClusterMember.item_id == Item.id)
+        .where(ClusterMember.cluster_id == cluster.id)
+        .order_by(ClusterMember.position, ClusterMember.id)
+    )
+    return ItemCluster(
+        id=cluster.id,
+        name=cluster.name,
+        members=[SiblingOut(key=issue.key, summary=issue.summary, local_state=item.local_state) for item, issue in members],
+    )
+
+
 def _item(session: Session, workspace_id: int, key: str) -> tuple[Item, JiraIssue]:
     _workspace(session, workspace_id)
     row = session.execute(_backlog(workspace_id).where(JiraIssue.key == key)).one_or_none()
@@ -364,12 +454,14 @@ def get_item(workspace_id: int, key: str, request: Request, session: SessionDep)
         created_at=item.created_at,
         jira_base_url=base_url,
         issue=_issue_out(session, issue, base_url),
+        cluster=_item_cluster(session, item.id),
         links=[
             LinkOut(
                 link_type=link.link_type,
                 direction=link.direction,
                 description=link.description,
                 item_id=linked_item_id,
+                cluster=_cluster_ref(session, linked_item_id),
                 issue=_issue_out(session, linked, base_url),
             )
             for link, linked, linked_item_id in links

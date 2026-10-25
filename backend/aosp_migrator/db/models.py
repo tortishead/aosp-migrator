@@ -168,3 +168,46 @@ class ImportJob(Base):
     cancel_requested: Mapped[bool] = mapped_column(default=False)
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     finished_at: Mapped[datetime | None]
+
+
+class Cluster(Base):
+    """Backlog items the user grouped by hand, to be migrated together."""
+
+    __tablename__ = "cluster"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class ClusterMember(Base):
+    __tablename__ = "cluster_member"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cluster_id: Mapped[int] = mapped_column(ForeignKey("cluster.id", ondelete="CASCADE"), index=True)
+    # An item is in at most one cluster.
+    item_id: Mapped[int] = mapped_column(ForeignKey("item.id", ondelete="CASCADE"), unique=True)
+    # Migration order inside the cluster, ascending; gaps are fine.
+    position: Mapped[int]
+
+
+class ClusterNote(Base):
+    __tablename__ = "cluster_note"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cluster_id: Mapped[int] = mapped_column(ForeignKey("cluster.id", ondelete="CASCADE"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ClusterEvent(Base):
+    __tablename__ = "cluster_event"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cluster_id: Mapped[int] = mapped_column(ForeignKey("cluster.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, Any]]
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)

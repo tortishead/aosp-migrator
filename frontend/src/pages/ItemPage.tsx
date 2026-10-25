@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 
-import { api, type Attachment, type Issue, type ItemDetail, type LocalState } from "../api";
+import { api, type Attachment, type Issue, type IssueLink, type ItemDetail, type LocalState } from "../api";
 import { facetsKey, itemsKey, POLL_MS } from "../backlog/ImportPanel";
 import { STATE_LABELS } from "../backlog/params";
+import { confirmingDissolve, memberWarning, useRefreshClusters } from "../clusters/shared";
 import { DiffTabs } from "../item/DiffViewer";
 import { HistoryTimeline } from "../item/History";
 import { JiraHtml } from "../item/JiraHtml";
@@ -54,6 +55,7 @@ export function ItemPage() {
       {detail.dropped && <p className="tag tag-warn">Dropped: no longer matched by the workspace JQL</p>}
       {detail.last_import_error && <p className="error">Last import failed: {detail.last_import_error}</p>}
       <ItemActions workspaceId={workspaceId} detail={detail} />
+      <ClusterBox workspaceId={workspaceId} detail={detail} />
 
       <section aria-label="Description">
         <h2>Description</h2>
@@ -93,6 +95,73 @@ function IssueFields({ issue }: { issue: Issue }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+function ClusterBox({ workspaceId, detail }: { workspaceId: number; detail: ItemDetail }) {
+  const refresh = useRefreshClusters(workspaceId);
+  const key = detail.issue.key;
+  const cluster = detail.cluster;
+  const remove = useMutation({
+    mutationFn: () => confirmingDissolve((confirm) => api.removeClusterMember(workspaceId, cluster!.id, key, confirm)),
+    onSuccess: (result) => result !== null && refresh(),
+  });
+
+  return (
+    <section aria-label="Cluster" className="cluster-box">
+      {cluster === null ? (
+        <p className="hint">
+          Not in a cluster. Group items from the backlog selection, or with “Add to my cluster” on a linked backlog item.
+        </p>
+      ) : (
+        <>
+          <p className="actions">
+            <span>
+              Cluster <Link to={`/workspaces/${workspaceId}/clusters/${cluster.id}`}>{cluster.name}</Link>
+            </span>
+            <button onClick={() => remove.mutate()} disabled={remove.isPending}>
+              Remove from cluster
+            </button>
+            {remove.isError && <span className="error">{remove.error.message}</span>}
+          </p>
+          <ol className="cluster-siblings" aria-label="Cluster items">
+            {cluster.members.map((m) => {
+              const warning = memberWarning(m);
+              return (
+                <li key={m.key}>
+                  {m.key === key ? <strong>{m.key}</strong> : <Link to={`/workspaces/${workspaceId}/items/${m.key}`}>{m.key}</Link>}{" "}
+                  {m.summary}
+                  {warning && <span className="tag tag-warn">{warning}</span>}
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
+    </section>
+  );
+}
+
+function AddToMyCluster({ workspaceId, detail, link }: { workspaceId: number; detail: ItemDetail; link: IssueLink }) {
+  const refresh = useRefreshClusters(workspaceId);
+  const mine = detail.cluster;
+  const add = useMutation({
+    mutationFn: () =>
+      confirmingDissolve((confirm) =>
+        mine
+          ? api.addClusterMembers(workspaceId, mine.id, [link.issue.key], confirm)
+          : api.createCluster(workspaceId, [detail.issue.key, link.issue.key], confirm),
+      ),
+    onSuccess: (result) => result !== null && refresh(),
+  });
+  if (mine && link.cluster?.id === mine.id) return <span className="hint">In this cluster</span>;
+  return (
+    <>
+      <button onClick={() => add.mutate()} disabled={add.isPending}>
+        Add to my cluster
+      </button>
+      {add.isError && <span className="error">{add.error.message}</span>}
+    </>
   );
 }
 
@@ -236,10 +305,12 @@ function LinkedTickets({ workspaceId, detail }: { workspaceId: number; detail: I
             <summary>
               <span className="hint">{link.description}</span> <strong>{linked.key}</strong> {linked.summary}{" "}
               <span className="tag">{linked.status}</span>
+              {link.cluster && <span className="tag">cluster: {link.cluster.name}</span>}
             </summary>
             <div className="linked-body">
               <p className="actions">
                 {link.item_id !== null && <Link to={`/workspaces/${workspaceId}/items/${linked.key}`}>Open backlog item</Link>}
+                {link.item_id !== null && <AddToMyCluster workspaceId={workspaceId} detail={detail} link={link} />}
                 {linked.browse_url && (
                   <a href={linked.browse_url} target="_blank" rel="noopener noreferrer">
                     Open in Jira

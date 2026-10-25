@@ -44,7 +44,12 @@ function describeUpdate(payload: Record<string, unknown>): string[] {
   return parts;
 }
 
-function describe(event: HistoryEvent): { title: string; details: string[] } {
+interface Description {
+  title: string;
+  details: string[];
+}
+
+function describe(event: HistoryEvent): Description {
   const p = event.payload;
   switch (event.type) {
     case "imported":
@@ -61,18 +66,56 @@ function describe(event: HistoryEvent): { title: string; details: string[] } {
       return { title: `State: ${stateLabel(p.old)} → ${stateLabel(p.new)}`, details: [] };
     case "note_added":
       return { title: "Note", details: [String(p.text ?? "")] };
+    case "cluster_joined":
+      return { title: `Added to cluster ${p.name}`, details: [] };
+    case "cluster_left":
+      if (p.moved_to) return { title: `Moved from cluster ${p.name} to ${p.moved_to}`, details: [] };
+      if (p.dissolved) return { title: `Cluster ${p.name} dissolved`, details: [] };
+      return { title: `Removed from cluster ${p.name}`, details: [] };
     default:
       return { title: event.type, details: [] };
   }
 }
 
+function keyList(value: unknown): string {
+  return Array.isArray(value) ? value.join(", ") : "";
+}
+
+export function describeClusterEvent(event: HistoryEvent): Description {
+  const p = event.payload;
+  switch (event.type) {
+    case "created":
+      return { title: `Created with ${keyList(p.keys)}`, details: [] };
+    case "renamed":
+      return { title: `Renamed: ${p.old} → ${p.new}`, details: [] };
+    case "description_changed":
+      return { title: "Description changed", details: [] };
+    case "members_added":
+      return { title: `Added ${keyList(p.keys)}`, details: [] };
+    case "member_removed":
+      return { title: p.moved_to ? `${p.key} moved to cluster ${p.moved_to}` : `Removed ${p.key}`, details: [] };
+    case "reordered":
+      return { title: `Reordered: ${keyList(p.keys)}`, details: [] };
+    case "note_added":
+      return { title: "Note", details: [String(p.text ?? "")] };
+    default:
+      return { title: event.type, details: [] };
+  }
+}
+
+interface TimelineProps {
+  events: HistoryEvent[];
+  // Defaults to item history events.
+  describe?: (event: HistoryEvent) => Description;
+}
+
 /** Newest first. */
-export function HistoryTimeline({ events }: { events: HistoryEvent[] }) {
+export function HistoryTimeline({ events, describe: describeEvent = describe }: TimelineProps) {
   if (events.length === 0) return <p className="hint">No history yet.</p>;
   return (
     <ol className="timeline" aria-label="History">
       {[...events].reverse().map((event) => {
-        const { title, details } = describe(event);
+        const { title, details } = describeEvent(event);
         return (
           <li key={event.id} className={`timeline-${event.type}`}>
             <time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>

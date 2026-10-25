@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { HistoryEvent, ImportJob, ItemDetail, Note } from "../api";
 import { diffHandlers, itemDetail } from "../item/fixtures";
@@ -178,5 +178,72 @@ describe("ItemPage", () => {
     mockApi({});
     renderRoute("/workspaces/1/items/PROJ-404");
     expect(await screen.findByText("Not mocked")).toBeInTheDocument();
+  });
+});
+
+describe("ItemPage cluster", () => {
+  it("shows the cluster with siblings and removes the item from it", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const detail = itemDetail({
+      cluster: {
+        id: 5,
+        name: "Camera",
+        members: [
+          { key: "PROJ-103", summary: "Battery", local_state: "closed" },
+          { key: "PROJ-101", summary: "Camera HAL crash on resume", local_state: "new" },
+        ],
+      },
+    });
+    const calls = itemApi({
+      "GET /workspaces/1/items/PROJ-101": () => detail,
+      "DELETE /workspaces/1/clusters/5/members/PROJ-101": () => ({ status: 409, body: { detail: "Would dissolve 'Camera'" } }),
+      "DELETE /workspaces/1/clusters/5/members/PROJ-101?confirm_dissolve=true": () => ({ dissolved: true }),
+    });
+    renderRoute(URL);
+    const box = await screen.findByRole("region", { name: "Cluster" });
+    expect(within(box).getByRole("link", { name: "Camera" })).toHaveAttribute("href", "/workspaces/1/clusters/5");
+    const siblings = within(box).getByRole("list", { name: "Cluster items" });
+    expect(within(siblings).getByRole("link", { name: "PROJ-103" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-103");
+    expect(within(siblings).getByText("closed")).toBeInTheDocument();
+    expect(within(siblings).queryByRole("link", { name: "PROJ-101" })).toBeNull();
+
+    await userEvent.click(within(box).getByRole("button", { name: "Remove from cluster" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(2));
+  });
+
+  it("adds a linked backlog item to a new cluster", async () => {
+    const detail = itemDetail();
+    detail.links[0].item_id = 2;
+    const calls = itemApi({
+      "GET /workspaces/1/items/PROJ-101": () => detail,
+      "POST /workspaces/1/clusters": () => ({ status: 201, body: { id: 9, name: "PROJ-101 Camera" } }),
+    });
+    renderRoute(URL);
+    expect(await screen.findByText(/Not in a cluster/)).toBeInTheDocument();
+    const links = screen.getByRole("region", { name: "Linked tickets" });
+    await userEvent.click(within(links).getByRole("button", { name: "Add to my cluster" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "POST")?.body).toEqual({ keys: ["PROJ-101", "PROJ-201"], confirm_dissolve: false }),
+    );
+  });
+
+  it("adds a linked backlog item to the item's cluster, or says it is already in it", async () => {
+    const detail = itemDetail({ cluster: { id: 5, name: "Camera", members: [] } });
+    detail.links[0].item_id = 2;
+    const calls = itemApi({
+      "GET /workspaces/1/items/PROJ-101": () => detail,
+      "POST /workspaces/1/clusters/5/members": () => ({ id: 5, name: "Camera" }),
+    });
+    const { unmount } = renderRoute(URL);
+    const links = await screen.findByRole("region", { name: "Linked tickets" });
+    await userEvent.click(within(links).getByRole("button", { name: "Add to my cluster" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ keys: ["PROJ-201"], confirm_dissolve: false }));
+    unmount();
+
+    detail.links[0].cluster = { id: 5, name: "Camera" };
+    renderRoute(URL);
+    const again = await screen.findByRole("region", { name: "Linked tickets" });
+    expect(within(again).getByText("In this cluster")).toBeInTheDocument();
+    expect(within(again).getByText("cluster: Camera")).toBeInTheDocument();
   });
 });

@@ -1,8 +1,8 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type { Facets, ImportJob, Item, ItemPage } from "../api";
+import type { Cluster, Facets, ImportJob, Item, ItemPage } from "../api";
 import { POLL_MS } from "../backlog/ImportPanel";
 import { mockApi, renderRoute, type ApiCall } from "../test-utils";
 
@@ -40,6 +40,7 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     dropped: false,
     last_import_error: null,
     diff_count: 1,
+    cluster: null,
     ...overrides,
   };
 }
@@ -315,5 +316,67 @@ describe("ImportPanel", () => {
     renderRoute("/workspaces/1");
     await userEvent.click(await screen.findByRole("button", { name: "Import from Jira" }));
     expect(await screen.findByText("Set the Jira base URL and PAT in the settings first")).toBeInTheDocument();
+  });
+});
+
+function clusterOf(id: number, name: string): Cluster {
+  return { id, name, description: "", created_at: "2026-10-25T19:00:00Z", updated_at: "2026-10-25T19:00:00Z", members: [] };
+}
+
+describe("Backlog clusters", () => {
+  it("shows the cluster column and filters by cluster", async () => {
+    const calls = backlogApi({
+      "GET /workspaces/1/items": () => page([item("PROJ-101", { cluster: { id: 5, name: "Camera" } }), item("PROJ-102")]),
+      "GET /workspaces/1/clusters": () => [clusterOf(5, "Camera")],
+    });
+    const { router } = renderRoute("/workspaces/1");
+    expect(await screen.findByRole("link", { name: "Camera" })).toHaveAttribute("href", "/workspaces/1/clusters/5");
+    expect(screen.getByRole("link", { name: "Clusters" })).toHaveAttribute("href", "/workspaces/1/clusters");
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Cluster" }), "Not in a cluster");
+    expect(new URLSearchParams(router.state.location.search).get("cluster")).toBe("none");
+    await waitFor(() => expect(lastItemQuery(calls).get("cluster")).toBe("none"));
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Cluster" }), "Camera");
+    await waitFor(() => expect(lastItemQuery(calls).get("cluster")).toBe("5"));
+  });
+
+  it("creates a cluster from the selection", async () => {
+    const calls = backlogApi({
+      "POST /workspaces/1/clusters": () => ({ status: 201, body: clusterOf(9, "PROJ-101 Summary of PROJ-101") }),
+    });
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select PROJ-101" }));
+    expect(screen.getByRole("button", { name: "New cluster from selected" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select PROJ-102" }));
+    await userEvent.click(screen.getByRole("button", { name: "New cluster from selected" }));
+
+    expect(calls.find((c) => c.method === "POST")).toEqual({
+      method: "POST",
+      path: "/workspaces/1/clusters",
+      body: { keys: ["PROJ-101", "PROJ-102"], confirm_dissolve: false },
+    });
+    const status = await screen.findByRole("status");
+    expect(within(status).getByRole("link", { name: "PROJ-101 Summary of PROJ-101" })).toHaveAttribute("href", "/workspaces/1/clusters/9");
+    expect(screen.queryByRole("group", { name: "Bulk actions" })).not.toBeInTheDocument();
+  });
+
+  it("adds the selection to an existing cluster, confirming a dissolve", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const calls = backlogApi({
+      "GET /workspaces/1/clusters": () => [clusterOf(5, "Camera"), clusterOf(6, "Power")],
+      "POST /workspaces/1/clusters/6/members": (body) =>
+        (body as { confirm_dissolve: boolean }).confirm_dissolve
+          ? clusterOf(6, "Power")
+          : { status: 409, body: { detail: "This would leave fewer than 2 items in 'Camera' and dissolve it" } },
+    });
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select PROJ-102" }));
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Target cluster" }), "Power");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved to cluster Power");
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([
+      { keys: ["PROJ-102"], confirm_dissolve: false },
+      { keys: ["PROJ-102"], confirm_dissolve: true },
+    ]);
   });
 });

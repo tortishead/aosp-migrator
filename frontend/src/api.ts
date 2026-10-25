@@ -73,6 +73,11 @@ export interface AuthStatus {
 
 export type LocalState = "new" | "not_relevant" | "closed";
 
+export interface ClusterRef {
+  id: number;
+  name: string;
+}
+
 export interface Item {
   id: number;
   key: string;
@@ -86,6 +91,7 @@ export interface Item {
   dropped: boolean;
   last_import_error: string | null;
   diff_count: number;
+  cluster: ClusterRef | null;
 }
 
 export interface ItemPage {
@@ -167,6 +173,8 @@ export interface IssueLink {
   description: string;
   // Set when the linked ticket is a backlog item too.
   item_id: number | null;
+  // That backlog item's cluster.
+  cluster: ClusterRef | null;
   issue: Issue;
 }
 
@@ -183,6 +191,11 @@ export interface HistoryEvent {
   created_at: string;
 }
 
+export interface ItemCluster extends ClusterRef {
+  // All members including this item, in migration order.
+  members: { key: string; summary: string; local_state: LocalState }[];
+}
+
 export interface ItemDetail {
   id: number;
   local_state: LocalState;
@@ -191,7 +204,36 @@ export interface ItemDetail {
   created_at: string;
   jira_base_url: string | null;
   issue: Issue;
+  cluster: ItemCluster | null;
   links: IssueLink[];
+  notes: Note[];
+  // Oldest first.
+  history: HistoryEvent[];
+}
+
+export interface ClusterMember {
+  item_id: number;
+  key: string;
+  summary: string;
+  status: string;
+  local_state: LocalState;
+  dropped: boolean;
+  diff_count: number;
+}
+
+export interface Cluster {
+  id: number;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  // Migration order.
+  members: ClusterMember[];
+}
+
+export interface ClusterDetail extends Cluster {
+  // Member keys per changed path, in member order.
+  files: { path: string; touched_by: string[] }[];
   notes: Note[];
   // Oldest first.
   history: HistoryEvent[];
@@ -243,6 +285,42 @@ export const api = {
     apiFetch<ItemDetail>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}`),
   addNote: (workspaceId: number, key: string, text: string) =>
     apiFetch<Note>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  clusters: (workspaceId: number) => apiFetch<Cluster[]>(`/workspaces/${workspaceId}/clusters`),
+  cluster: (workspaceId: number, clusterId: number) =>
+    apiFetch<ClusterDetail>(`/workspaces/${workspaceId}/clusters/${clusterId}`),
+  // `confirmDissolve`: allowed to dissolve a cluster that would keep fewer than two items (409 otherwise).
+  createCluster: (workspaceId: number, keys: string[], confirmDissolve = false) =>
+    apiFetch<ClusterDetail>(`/workspaces/${workspaceId}/clusters`, {
+      method: "POST",
+      body: JSON.stringify({ keys, confirm_dissolve: confirmDissolve }),
+    }),
+  updateCluster: (workspaceId: number, clusterId: number, update: { name?: string; description?: string }) =>
+    apiFetch<ClusterDetail>(`/workspaces/${workspaceId}/clusters/${clusterId}`, {
+      method: "PATCH",
+      body: JSON.stringify(update),
+    }),
+  dissolveCluster: (workspaceId: number, clusterId: number) =>
+    apiFetch<void>(`/workspaces/${workspaceId}/clusters/${clusterId}`, { method: "DELETE" }),
+  addClusterMembers: (workspaceId: number, clusterId: number, keys: string[], confirmDissolve = false) =>
+    apiFetch<ClusterDetail>(`/workspaces/${workspaceId}/clusters/${clusterId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ keys, confirm_dissolve: confirmDissolve }),
+    }),
+  removeClusterMember: (workspaceId: number, clusterId: number, key: string, confirmDissolve = false) =>
+    apiFetch<{ dissolved: boolean }>(
+      `/workspaces/${workspaceId}/clusters/${clusterId}/members/${encodeURIComponent(key)}${confirmDissolve ? "?confirm_dissolve=true" : ""}`,
+      { method: "DELETE" },
+    ),
+  reorderCluster: (workspaceId: number, clusterId: number, keys: string[]) =>
+    apiFetch<ClusterDetail>(`/workspaces/${workspaceId}/clusters/${clusterId}/order`, {
+      method: "PUT",
+      body: JSON.stringify({ keys }),
+    }),
+  addClusterNote: (workspaceId: number, clusterId: number, text: string) =>
+    apiFetch<Note>(`/workspaces/${workspaceId}/clusters/${clusterId}/notes`, {
       method: "POST",
       body: JSON.stringify({ text }),
     }),

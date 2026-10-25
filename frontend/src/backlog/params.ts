@@ -6,7 +6,7 @@ export const PAGE_SIZE = 50;
 export const LIST_FILTERS = ["state", "status", "label", "component", "fix_version"] as const;
 export type ListFilter = (typeof LIST_FILTERS)[number];
 
-const FILTERS = [...LIST_FILTERS, "q", "dropped", "has_diff"];
+const FILTERS = [...LIST_FILTERS, "q", "dropped", "has_diff", "cluster"];
 // URL params the items API understands; `page` is turned into offset/limit.
 const API_PARAMS = [...FILTERS, "sort"];
 

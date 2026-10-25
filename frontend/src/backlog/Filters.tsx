@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { Facets, LocalState } from "../api";
+import type { Cluster, Facets, LocalState } from "../api";
 import { hasFilters, STATE_LABELS, type ListFilter } from "./params";
 
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -10,10 +10,11 @@ type Update = (change: (next: URLSearchParams) => void, options?: { replace?: bo
 interface Props {
   search: URLSearchParams;
   facets: Facets | undefined;
+  clusters: Cluster[] | undefined;
   update: Update;
 }
 
-export function Filters({ search, facets, update }: Props) {
+export function Filters({ search, facets, clusters, update }: Props) {
   const states = Object.entries(STATE_LABELS) as [LocalState, string][];
   return (
     <div className="filters" role="search">
@@ -25,6 +26,7 @@ export function Filters({ search, facets, update }: Props) {
       <MultiFilter label="Fix version" param="fix_version" options={pairs(facets?.fix_versions)} search={search} update={update} />
       <FlagFilter label="Diff" param="has_diff" yes="With diff" no="Without diff" search={search} update={update} />
       <FlagFilter label="Dropped" param="dropped" yes="Dropped only" no="Not dropped" search={search} update={update} />
+      <ClusterFilter clusters={clusters} search={search} update={update} />
       {hasFilters(search) && (
         <button
           type="button"
@@ -115,6 +117,34 @@ function MultiFilter({ label, param, options, search, update }: MultiFilterProps
         ))}
       </div>
     </details>
+  );
+}
+
+function ClusterFilter({ clusters, search, update }: { clusters: Cluster[] | undefined; search: URLSearchParams; update: Update }) {
+  const value = search.get("cluster") ?? "";
+  const known = value === "" || value === "any" || value === "none" || clusters?.some((c) => String(c.id) === value);
+  return (
+    <select
+      aria-label="Cluster"
+      value={value}
+      onChange={(e) =>
+        update((next) => {
+          if (e.target.value) next.set("cluster", e.target.value);
+          else next.delete("cluster");
+        })
+      }
+    >
+      <option value="">Cluster: any</option>
+      <option value="any">In a cluster</option>
+      <option value="none">Not in a cluster</option>
+      {clusters?.map((c) => (
+        <option key={c.id} value={c.id}>
+          {c.name}
+        </option>
+      ))}
+      {/* A cluster from an old link that no longer exists, so it can be cleared. */}
+      {!known && <option value={value}>Cluster {value}</option>}
+    </select>
   );
 }
 

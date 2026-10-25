@@ -90,4 +90,24 @@ test("import from fake Jira, triage an item, reimport keeps local state", async 
   await page.getByRole("group", { name: "State" }).getByLabel("Not relevant").click();
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("PROJ-101");
+
+  // Cluster two related items; default order is oldest diff first (PROJ-102), then reorder.
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(rows).toHaveCount(25);
+  await page.getByRole("checkbox", { name: "Select PROJ-101" }).click();
+  await page.getByRole("checkbox", { name: "Select PROJ-102" }).click();
+  await page.getByRole("button", { name: "New cluster from selected" }).click();
+  await page.getByRole("status").getByRole("link", { name: /^PROJ-102 / }).click();
+  const members = page.getByRole("region", { name: "Members" });
+  await expect(members.locator("tbody tr").first()).toContainText("PROJ-102");
+  await expect(members.getByText("not relevant", { exact: true })).toBeVisible();
+  await members.getByRole("button", { name: "Move PROJ-101 up" }).click();
+  await expect(members.locator("tbody tr").first()).toContainText("PROJ-101");
+  await expect(page.getByRole("region", { name: "History" })).toContainText("Reordered: PROJ-101, PROJ-102");
+
+  // The item page shows the cluster and its siblings.
+  await members.getByRole("link", { name: "PROJ-102" }).click();
+  const cluster = page.getByRole("region", { name: "Cluster" });
+  await expect(cluster.getByRole("link", { name: /^PROJ-102 / })).toBeVisible();
+  await expect(cluster.getByRole("list", { name: "Cluster items" }).locator("li")).toHaveText([/^PROJ-101 /, /^PROJ-102 /]);
 });

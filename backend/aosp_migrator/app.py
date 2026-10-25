@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from aosp_migrator import db
-from aosp_migrator.api import auth, health, imports, items, settings, workspaces
+from aosp_migrator.api import auth, clusters, health, imports, items, settings, workspaces
 from aosp_migrator.config import Config, resolve_data_dir
 from aosp_migrator.importer.runner import ImportRunner, fail_interrupted_jobs
 from aosp_migrator.jira import JiraClient, client_from_config
@@ -49,6 +49,7 @@ def create_app(
     app.include_router(workspaces.router, prefix="/api")
     app.include_router(imports.router, prefix="/api")
     app.include_router(items.router, prefix="/api")
+    app.include_router(clusters.router, prefix="/api")
 
     static_root = (static_dir or DEFAULT_STATIC_DIR).resolve()
 
