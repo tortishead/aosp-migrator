@@ -1,6 +1,7 @@
 """The migration ledger: what happened to every patch and cluster, and why."""
 
 from patchmig.ledger.models import (
+    BacklogItem,
     Cluster,
     KnowledgeItem,
     Note,
@@ -15,6 +16,7 @@ from patchmig.ledger.store import LedgerStore
 __all__ = [
     "DROPPED",
     "MIGRATED",
+    "BacklogItem",
     "Cluster",
     "InvalidTransition",
     "KnowledgeItem",

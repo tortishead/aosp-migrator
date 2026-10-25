@@ -7,14 +7,14 @@ from pathlib import Path
 import pytest
 import yaml
 from openpyxl import Workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 from typer.testing import CliRunner
 
 from patchmig.cli import app
 from patchmig.config import load_config
 from patchmig.ingest import IngestError, collect, ingest
 from patchmig.jira_client import JiraError, Ticket
-from patchmig.ledger import LedgerStore, Patch
+from patchmig.ledger import BacklogItem, LedgerStore, Patch, State
 from patchmig.ledger import Ticket as TicketRow
 from tests.fixtures.scenario import (
     BT_OLD,
@@ -304,7 +304,7 @@ def test_one_unreadable_ticket_does_not_stop_the_others(make_config):
     assert any("OEM-101" in w and "403" in w for w in report.warnings)
 
 
-def test_ingest_stores_patches_and_refuses_second_ingest(scenario, make_config):
+def test_ingest_stores_patches_and_a_second_ingest_refreshes_the_backlog(scenario, make_config):
     cfg = load_config(make_config([{"type": "git_range"}], jira=JIRA))
     store = LedgerStore.in_memory()
     run = store.create_run(cfg)
@@ -325,8 +325,20 @@ def test_ingest_stores_patches_and_refuses_second_ingest(scenario, make_config):
         rows = s.scalars(select(Patch).where(Patch.run_id == run.id).order_by(Patch.seq)).all()
     assert [r.commit_sha for r in rows] == [scenario.commits[f"P{i}"] for i in range(1, N + 1)]
     assert rows[0].footprint["files"][0]["path"] == "core/java/android/os/PowerHelper.java"
-    with pytest.raises(IngestError, match=f"already has {N} patches"):
-        ingest(cfg, store, run)
+    with store.session() as s:
+        items = s.scalars(select(BacklogItem).order_by(BacklogItem.id)).all()
+    # One item per ticket key; P10's ticket is in a trailer on the second line of its message.
+    assert [i.key for i in items] == [f"OEM-{n}" for n in (101, 202, 303, 404, 505, 606, 808,
+                                                            707)]  # fmt: skip
+    assert items[0].title == "OEM power mode" and items[1].title == rows[2].subject
+
+    # Again: nothing new, the patches keep what the analysis gave them.
+    store.transition(rows[0], State.NEEDED, actor="orchestrator")
+    again = ingest(cfg, store, run)
+    assert (again.new_patches, again.known_patches, again.items_new) == (0, N, [])
+    with store.session() as s:
+        assert s.get(Patch, rows[0].id).state == State.NEEDED
+        assert s.scalar(select(func.count()).select_from(Patch)) == N
 
 
 def test_missing_manifest_is_reported(make_config, scenario):
@@ -343,7 +355,7 @@ def test_cli_ingest_and_list(make_config):
     runner = CliRunner()
     result = runner.invoke(app, ["ingest", "-c", str(path), "--no-jira"])
     assert result.exit_code == 0, result.output
-    assert f"Run 1: {N} patches" in result.output
+    assert f"Run 1 (new backlog): {N} new patches" in result.output
     assert "revert 1" in result.output
     result = runner.invoke(app, ["patches", "-c", str(path)])
     assert result.exit_code == 0, result.output

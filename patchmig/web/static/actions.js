@@ -215,7 +215,7 @@ export function RunPage({ runs, jobId, onRunsChanged }) {
   const launch = async (names) => {
     setError(null);
     try {
-      const job = await startJob(names, optsFor(names), names.includes("ingest") ? null : runId);
+      const job = await startJob(names, optsFor(names), options.ingest?.new_run ? null : runId);
       setVersion((v) => v + 1);
       location.hash = `#/run/${job.id}`;
     } catch (e) { setError(e.message); }
@@ -235,7 +235,7 @@ export function RunPage({ runs, jobId, onRunsChanged }) {
       <h2>Whole migration <span class="muted">· in this order; stops at the first failure or when the credit budget is reached</span></h2>
       <div class="pipeline">${cat.pipeline.map((n) => html`<label class="check"><input type="checkbox" checked=${chosen.has(n)}
           onChange=${(e) => { const next = new Set(chosen); e.target.checked ? next.add(n) : next.delete(n); setChosen(next); }} /> ${byName[n].title}</label>`)}</div>
-      <p class="muted small">${pipe.includes("ingest") ? "Ingest starts a new run; the later steps work on it." : runs.length ? html`Works on the run chosen here: ${runPicker}` : "No run yet: include Ingest."}
+      <p class="muted small">${runs.length ? html`Works on the backlog of the run chosen here: ${runPicker}${pipe.includes("ingest") ? " (Import refreshes it; its option New backlog starts a new run)" : ""}` : pipe.includes("ingest") ? "The first import starts the backlog (run 1)." : "No backlog yet: include Import."}
         ${" "}Options set on the step cards below apply here too.${credits.length ? ` Copilot credits: ${credits.map((n) => byName[n].title).join(", ")}.` : ""}</p>
       <div class="actions">
         <button type="button" class="primary" disabled=${disabled || !pipe.length || (!pipe.includes("ingest") && !runs.length)} onClick=${() => launch(pipe)}>Run ${pipe.length} step${pipe.length === 1 ? "" : "s"}</button>
@@ -249,7 +249,7 @@ export function RunPage({ runs, jobId, onRunsChanged }) {
         <h2>${s.title} <span class=${`tag ${cls}`}>${tag}</span></h2>
         <p class="muted small">${s.help}</p>
         ${s.options.length ? html`<div class="opts">${s.options.map((o) => html`<${OptionInput} opt=${o} value=${options[s.name]?.[o.name]} set=${(v) => setOpt(s.name, o.name, v)} />`)}</div>` : null}
-        <button type="button" disabled=${disabled || (s.run_scoped && !runs.length)} onClick=${() => launch([s.name])}>Run</button>
+        <button type="button" disabled=${disabled || (s.needs_run && !runs.length)} onClick=${() => launch([s.name])}>Run</button>
       </div>`;
     })}</div>
     ${jobs.length ? html`<div class="panel table-wrap"><h2>Jobs</h2><table>
@@ -419,6 +419,68 @@ export function NotesPage({ run }) {
       ${notes.length ? html`<ul class="plain notes">${notes.map((n) => html`<${NoteRow} key=${`${n.id}-${n.updated_at}`} n=${n} onDone=${reload} />`)}</ul>` : html`<p class="muted">No notes yet.</p>`}
       ${allowed && !ready ? html`<p class="muted small">Sign in to add, edit or remove notes.</p>` : null}
     </div>`;
+}
+
+// ---------- backlog: add information to an item, then import and analyse it again ----------
+
+const enc = (key) => encodeURIComponent(key);
+
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.slice(r.result.indexOf(",") + 1)); // base64 after the data: prefix
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+export function InfoForm({ run, item, onDone }) {
+  const allowed = useActions();
+  const { ready } = useAuth();
+  const [kind, setKind] = useState("text");
+  const [text, setText] = useState("");
+  const [file, setFile] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  if (!allowed) return null;
+  if (!ready) return html`<p class="muted small"><a href="#/run">Sign in</a> to add information.</p>`;
+  const send = async () => {
+    setBusy(true); setError(null);
+    try {
+      const body = { by: auth.author.trim() };
+      if (kind === "text") body.text = text;
+      else if (kind === "link") body.link = text;
+      else Object.assign(body, { filename: file.name, content: await readFile(file), base64: true });
+      await call("POST", `runs/${run}/backlog/${enc(item.key)}/info`, body);
+      setText(""); setFile(null); onDone && onDone();
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+  const empty = kind === "file" ? !file : !text.trim();
+  return html`<div class="inline-form">
+    <div class="opts"><label class="opt">Add <select value=${kind} onChange=${(e) => { setKind(e.target.value); setError(null); }}>
+      <option value="text">text: a note for the agents</option><option value="link">a link: commit, PR, spec…</option>
+      <option value="file">a file: .diff/.patch, log, document</option></select></label></div>
+    ${kind === "text" ? html`<textarea rows="3" placeholder="What the ticket leaves out" value=${text} onInput=${(e) => setText(e.target.value)}></textarea>`
+      : kind === "link" ? html`<input type="text" placeholder="https://…" value=${text} onInput=${(e) => setText(e.target.value)} />`
+      : html`<input type="file" onChange=${(e) => setFile(e.target.files[0] || null)} />`}
+    <div class="actions"><button type="button" class="primary" disabled=${busy || empty} onClick=${send}>Add</button>
+      <span class="muted small">${item.kind === "ticket" ? "Commit/PR links and .diff/.patch files become patches of the ticket at the next import; the rest is context for the analysis." : "Context for the analysis of this patch."}</span>
+      ${error ? html`<span class="field-error inline">${error}</span>` : null}</div>
+  </div>`;
+}
+
+export function RemoveAddition({ run, item, addition, onDone }) {
+  const allowed = useActions();
+  const { ready } = useAuth();
+  const [error, setError] = useState(null);
+  if (!allowed || !ready || addition.removed_at) return null;
+  const go = async () => {
+    if (!window.confirm(`Remove ${addition.url || addition.filename}? It stays in the history.`)) return;
+    try { await call("POST", `runs/${run}/backlog/${enc(item.key)}/info/${addition.id}/remove`, { by: auth.author.trim() }); onDone && onDone(); }
+    catch (e) { setError(e.message); }
+  };
+  return html` <button type="button" class="link" onClick=${go}>remove</button>${error ? html` <span class="field-error inline">${error}</span>` : null}`;
 }
 
 // ---------- migration memory ----------

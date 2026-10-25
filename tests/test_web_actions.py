@@ -63,14 +63,15 @@ def test_pipeline_from_the_browser_logs_what_the_cli_prints(served):
     run = store.latest_run()
     assert job["run_id"] == run.id and job["by"] == "xuan"
     needed = sum(1 for e in EXPECTED if e.verdict == "needed")
-    assert f"Run {run.id}: {len(EXPECTED)} patches" in text(job)
+    assert f"Run {run.id} (new backlog): {len(EXPECTED)} new patches, 0 already there" in text(job)
     assert "== Analyse" in text(job) and job["log"][0]["level"] == "step"
     # Credits: exactly the agent calls the job made, one per needed patch.
     assert len(fake.calls) == needed and job["agent_calls"] == needed
     with store.session() as s:
         assert job["credits"] == s.scalar(select(func.sum(AgentCall.credits)))
     # The CLI runs the same step function and prints the same lines.
-    assert CliRunner().invoke(cli, ["ingest", "--no-jira", "--config", str(path)]).exit_code == 0
+    new = ["ingest", "--no-jira", "--new-run", "--config", str(path)]
+    assert CliRunner().invoke(cli, new).exit_code == 0
     out = CliRunner().invoke(cli, ["analyse", "--config", str(path)]).output
     i, j = text(job).index("== Analyse"), text(job).index("== Write intents")
     in_job = "\n".join(text(job)[i + 1 : j]).replace(f"Run {run.id}:", f"Run {run.id + 1}:")
@@ -248,6 +249,36 @@ def test_notes_from_the_browser_and_what_they_make_stale(analysed):
     )
     md = client.get(f"/api/runs/{run.id}/report").json()["markdown"]
     assert md.startswith("#")
+
+
+def test_backlog_information_from_the_browser(served):
+    import base64
+
+    client, jobs, *_ = served
+    job = start(client, jobs, ["ingest"], {"ingest": {"use_jira": False}})
+    run = job["run_id"]
+    items = client.get(f"/api/runs/{run}/backlog").json()
+    assert items[0]["key"] == "OEM-101" and items[0]["patches"] == 2
+    url = f"/api/runs/{run}/backlog/OEM-101/info"
+    assert client.post(url, json={"by": "xuan", "text": "x"}).status_code == 401
+    client.post(url, headers=AUTH, json={"by": "xuan", "text": "Only on head units"})
+    client.post(url, headers=AUTH, json={"by": "xuan", "link": "https://wiki.oem/power"})
+    log = base64.b64encode(b"E/Power: \xff mode 0").decode()
+    item = client.post(url, headers=AUTH, json={"by": "xuan", "filename": "boot.log",
+                                                "content": log, "base64": True}).json()  # fmt: skip
+    assert [n["text"] for n in item["notes"]] == ["Only on head units"]
+    link, file = item["added"]
+    assert link["url"] == "https://wiki.oem/power" and "path" not in file
+    assert file["filename"] == "boot.log" and file["preview"].startswith("E/Power: ")
+    bad = client.post(url, headers=AUTH, json={"by": "xuan", "link": "javascript:alert(1)"})
+    assert bad.status_code == 422
+    gone = client.post(f"{url}/1/remove", headers=AUTH, json={"by": "xuan"}).json()
+    assert gone["added"][0]["removed_by"] == "xuan"
+    assert client.get(f"/api/runs/{run}/backlog/OEM-999").status_code == 404
+    # Import the item again from the browser: its option takes the key as text.
+    again = start(client, jobs, ["ingest"], {"ingest": {"use_jira": False, "items": "OEM-101"}},
+                  run_id=run)  # fmt: skip
+    assert again["state"] == "done" and "0 new patches, 2 already there" in " ".join(text(again))
 
 
 def test_memory_lessons_in_the_browser(served):

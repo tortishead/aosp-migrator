@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from patchmig.config import ProjectConfig, config_hash
 from patchmig.config.loader import config_to_dict
-from patchmig.ledger.models import Base, Cluster, Patch, Run, Transition
+from patchmig.ledger.models import BacklogItem, Base, Cluster, Patch, Run, Transition
 from patchmig.ledger.states import InvalidTransition, State, can_transition
 
 ENTITY_TYPES: dict[type, str] = {Patch: "patch", Cluster: "cluster"}
@@ -79,8 +79,9 @@ class LedgerStore:
     def discard_run(self, run: Run) -> bool:
         """Delete a run that holds nothing yet (a failed ingest); True if it was deleted."""
         with self.session() as s, s.begin():
-            if s.scalar(select(func.count()).select_from(Patch).where(Patch.run_id == run.id)):
-                return False
+            for model in (Patch, BacklogItem):
+                if s.scalar(select(func.count()).select_from(model).where(model.run_id == run.id)):
+                    return False
             if (row := s.get(Run, run.id)) is not None:
                 s.delete(row)
         return True

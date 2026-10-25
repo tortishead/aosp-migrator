@@ -102,8 +102,12 @@ def test_static_export_matches_the_api(client, project, tmp_path: Path):
     patches = client.get(f"/api/runs/{run.id}/patches").json()
     for p in patches:
         assert (out / "data" / f"runs/{run.id}/patches/{p['id']}.json").exists()
-    # runs.json, 8 views per run, and one file per patch and per cluster.
-    assert n == 1 + 2 * 8 + len(patches) + 6
+    items = client.get(f"/api/runs/{run.id}/backlog").json()
+    for i in items:
+        exported = json.loads((out / "data" / f"runs/{run.id}/backlog/{i['key']}.json").read_text())
+        assert exported == client.get(f"/api/runs/{run.id}/backlog/{i['key']}").json()
+    # runs.json, 9 views per run, and one file per patch, backlog item and cluster.
+    assert n == 1 + 2 * 9 + len(patches) + len(items) + 6
     with pytest.raises(FileExistsError):
         export_site(cfg, store, out)
 

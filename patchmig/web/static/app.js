@@ -4,7 +4,7 @@
 // data/*.json and has no settings and no actions.
 import { html, render, useEffect, useState } from "./htm-preact.js";
 import { SettingsPage } from "./settings.js";
-import { JobButton, MemoryPage, NotesPage, NotesPanel, ReportPage, ReviewActions, RunPage, STATIC, useActions } from "./actions.js";
+import { InfoForm, JobButton, MemoryPage, NotesPage, NotesPanel, RemoveAddition, ReportPage, ReviewActions, RunPage, STATIC, useActions } from "./actions.js";
 import { ProjectSwitcher, WORKSPACE, WorkspacePage } from "./workspace.js";
 
 async function load(path) {
@@ -362,6 +362,87 @@ function PatchPage({ run, id }) {
     <div class="panel"><h2>Diff</h2><${Diff} text=${p.diff} /></div>`}<//>`;
 }
 
+// ---------- backlog ----------
+
+const States = ({ states }) => Object.entries(states).map(([s, n]) => html`<${State} s=${s} /> ${n > 1 ? `×${n} ` : ""}`);
+
+function BacklogPage({ run }) {
+  const state = useData(`runs/${run}/backlog`);
+  const [text, setText] = useState("");
+  const [st, setSt] = useState("");
+  return html`<${Loading} state=${state}>${(rows) => {
+    const statuses = [...new Set(rows.map((r) => r.status))];
+    const q = text.toLowerCase();
+    const shown = rows.filter((r) => (!st || r.status === st) && (!q || r.key.toLowerCase().includes(q) || r.title.toLowerCase().includes(q)));
+    return html`
+      <h1>Backlog <span class="muted">(${shown.length} of ${rows.length}) · one item per Jira ticket, or per patch without one</span></h1>
+      <div class="filters">
+        <input placeholder="Filter by key or title" value=${text} onInput=${(e) => setText(e.target.value)} />
+        <select value=${st} onChange=${(e) => setSt(e.target.value)}>
+          <option value="">Any status</option>${statuses.map((s) => html`<option value=${s}>${s}</option>`)}
+        </select>
+      </div>
+      ${rows.length ? null : html`<p class="muted">Empty: run <b>Import</b> on the <a href="#/run">Run page</a>.</p>`}
+      <div class="panel table-wrap"><table>
+        <thead><tr><th>Item</th><th>Title</th><th>Status</th><th>Jira</th><th>Patches</th><th class="num">Comments</th><th class="num">Attachments</th><th class="num">Added</th><th>Refreshed</th></tr></thead>
+        <tbody>${shown.map((i) => html`<tr>
+          <td><a href=${`#/r/${run}/backlog/${i.key}`}>${i.key}</a></td>
+          <td class="wrap">${i.title}</td><td>${i.status}</td><td>${i.jira_status || "–"}</td>
+          <td>${i.patches ? html`<${States} states=${i.states} />` : html`<span class="muted">none</span>`}</td>
+          <td class="num">${i.comments}</td><td class="num">${i.attachments}</td><td class="num">${i.added}</td>
+          <td>${fmtTime(i.refreshed_at)}</td></tr>`)}</tbody>
+      </table></div>`;
+  }}<//>`;
+}
+
+function Preview({ text }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return null;
+  return html` <button type="button" class="link" onClick=${() => setOpen(!open)}>${open ? "hide" : "show"}</button>${open ? html`<pre class="block">${text}</pre>` : null}`;
+}
+
+function BacklogItemPage({ run, itemKey }) {
+  const [version, reload] = useReload();
+  const state = useData(`runs/${run}/backlog/${encodeURIComponent(itemKey)}`, version);
+  return html`<${Loading} state=${state}>${(i) => {
+    const t = i.ticket;
+    return html`
+    <p><a href=${`#/r/${run}/backlog`}>← Backlog</a></p>
+    <h1>${i.key} · ${i.title} <span class="muted">${i.status}</span></h1>
+    <div class="grid">
+      <div class="panel"><h2>${t ? "Jira ticket" : "Patch without a ticket"}</h2>
+        ${t ? html`<dl class="kv">
+          <dt>status</dt><dd>${t.status || "–"}</dd>
+          <dt>linked</dt><dd>${t.linked.length ? t.linked.map((l, n) => html`${n ? ", " : ""}${l.key}${l.summary ? html` <span class="muted">${l.summary} (${l.status})</span>` : ""}`) : "–"}</dd>
+          <dt>links</dt><dd>${t.remote_links.length ? t.remote_links.map((r) => html`<div><a href=${r.url} rel="noreferrer" target="_blank">${r.title || r.url}</a></div>`) : "–"}</dd>
+          <dt>fetched</dt><dd>${fmtTime(t.fetched_at)}</dd>
+        </dl>
+        ${t.description ? html`<pre class="block">${t.description}</pre>` : html`<p class="muted">No description.</p>`}`
+        : html`<p class="muted">Add a note, a link or a file below to tell the analysis what the patch is for.</p>`}
+        <p class="muted small">Imported ${fmtTime(i.imported_at)} by ${i.sources.join(", ")}; refreshed ${fmtTime(i.refreshed_at)}.</p>
+      </div>
+      <div class="panel"><h2>Patches <span class="muted">(${i.patches.length})</span></h2>
+        ${i.patches.length ? html`<ul class="plain">${i.patches.map((p) => html`<li><a href=${`#/r/${run}/patches/${p.id}`}>${p.subject}</a> <${State} s=${p.state} />
+          <span class="muted">${p.project} · ${short(p.commit)} · ${p.sources.join(", ")}${p.cluster_id ? html` · <a href=${`#/r/${run}/clusters/${p.cluster_id}`}>cluster ${p.cluster_id}</a>` : ""}</span></li>`)}</ul>`
+        : html`<p class="muted">No patch found for this ticket. Add a commit or PR link, or a .diff file, and import it again.</p>`}
+      </div>
+    </div>
+    <div class="stack"></div>
+    ${t?.comments.length ? html`<div class="panel"><h2>Comments <span class="muted">(${t.comments.length})</span></h2>
+      <ul class="plain notes">${t.comments.map((c) => html`<li class="note"><div class="note-text">${c}</div></li>`)}</ul></div>` : null}
+    ${t?.attachments.length ? html`<div class="panel"><h2>Attachments <span class="muted">(${t.attachments.length})</span></h2>
+      <ul class="plain">${t.attachments.map((a) => html`<li>${a.filename} <span class="muted">${a.size} bytes · ${a.path ? "kept" : a.note || "listed"}</span><${Preview} text=${a.preview} /></li>`)}</ul></div>` : null}
+    <div class="panel"><h2>Added by engineers <span class="muted">(${i.added.filter((a) => !a.removed_at).length})</span></h2>
+      ${i.added.length ? html`<ul class="plain">${i.added.map((a) => html`<li class=${a.removed_at ? "muted" : ""}>[${a.id}] ${a.kind === "link" ? html`<a href=${a.url} rel="noreferrer" target="_blank">${a.url}</a>` : a.filename}
+        <span class="muted">· ${a.by} · ${fmtTime(a.at)}${a.removed_at ? ` · removed by ${a.removed_by}` : ""}</span><${RemoveAddition} run=${run} item=${i} addition=${a} onDone=${reload} /><${Preview} text=${a.preview} /></li>`)}</ul>`
+        : html`<p class="muted">Nothing yet.</p>`}
+      <${InfoForm} run=${run} item=${i} onDone=${reload} />
+      <div class="actions"><${JobButton} steps=${["ingest"]} options=${{ ingest: { items: i.key } }} run=${run} label="Import this item again" /></div>
+    </div>
+    <${NotesPanel} notes=${i.notes} run=${run} scope=${i.kind === "ticket" ? "ticket" : "patch"} target=${i.kind === "ticket" ? i.key : i.patches[0]?.id} onDone=${reload} />`;
+  }}<//>`;
+}
+
 function ClusterTable({ run, clusters, limit }) {
   const shown = limit ? clusters.slice(0, limit) : clusters;
   return html`<div class="table-wrap"><table>
@@ -616,7 +697,7 @@ function RunsPage({ runs }) {
   </table></div>`;
 }
 
-const TABS = [["", "Overview"], ["review", "Review"], ["patches", "Patches"], ["clusters", "Clusters"], ["notes", "Notes"], ["knowledge", "Knowledge"], ["agents", "Agent calls"], ["report", "Report"], ["config", "Config"]];
+const TABS = [["", "Overview"], ["backlog", "Backlog"], ["review", "Review"], ["patches", "Patches"], ["clusters", "Clusters"], ["notes", "Notes"], ["knowledge", "Knowledge"], ["agents", "Agent calls"], ["report", "Report"], ["config", "Config"]];
 const LIVE_ONLY = new Set(["notes", "report"]);
 
 // The Settings link, with a red dot while a required field is not set.
@@ -657,7 +738,7 @@ function App() {
     if (!list.length) {
       if (STATIC) return html`<main><h1>No runs yet</h1><p>Start with <code>migrate ingest</code>, then <code>migrate analyse</code>.</p></main>`;
       return html`<${ProjectShell} page="">
-        <h1>No runs yet</h1><p>Check the <a href="#/settings">settings</a> and test the connections, then start the migration on the <a href="#/run">Run page</a> (Ingest first, then Analyse).</p><//>`;
+        <h1>No runs yet</h1><p>Check the <a href="#/settings">settings</a> and test the connections, then start the migration on the <a href="#/run">Run page</a> (Import first, then Analyse).</p><//>`;
     }
     const latest = list[0].id;
     const run = parts[0] === "r" ? Number(parts[1]) : latest;
@@ -665,6 +746,8 @@ function App() {
     const id = parts[3];
     let body;
     if (page === "runs") body = html`<${RunsPage} runs=${list} />`;
+    else if (page === "backlog" && id) body = html`<${BacklogItemPage} run=${run} itemKey=${decodeURIComponent(id)} />`;
+    else if (page === "backlog") body = html`<${BacklogPage} run=${run} />`;
     else if (page === "patches" && id) body = html`<${PatchPage} run=${run} id=${id} />`;
     else if (page === "patches") body = html`<${PatchesPage} run=${run} />`;
     else if (page === "clusters" && id) body = html`<${ClusterPage} run=${run} id=${id} />`;

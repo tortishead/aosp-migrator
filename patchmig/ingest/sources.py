@@ -302,17 +302,71 @@ def from_jira_query(src: JiraQuerySource, ctx: SourceContext) -> list[RawPatch]:
         return []
     patches: list[RawPatch] = []
     for ticket in ctx.jira.search(src.jql):
-        ctx.tickets[ticket.key] = ticket
-        found = _jira_commits(ctx, ticket.key, "jira_query")
-        if src.attachments:
-            found += _attachment_patches(ctx, ticket, src.max_attachment_kb * 1024)
-        if src.linked_tickets:
-            found += _linked_patches(ctx, ticket)
-        if not found:
-            ctx.warn(f"jira_query: no patch found for {ticket.key} (commits, attachments, "
-                     "links); the ticket is kept without one")  # fmt: skip
-        patches += found
+        patches += _ticket_patches(ctx, ticket, src)
     return patches
+
+
+def _ticket_patches(ctx: SourceContext, ticket: Ticket, src: JiraQuerySource) -> list[RawPatch]:
+    ctx.tickets[ticket.key] = ticket
+    found = _jira_commits(ctx, ticket.key, "jira_query")
+    if src.attachments:
+        found += _attachment_patches(ctx, ticket, src.max_attachment_kb * 1024)
+    if src.linked_tickets:
+        found += _linked_patches(ctx, ticket)
+    if not found:
+        ctx.warn(f"jira_query: no patch found for {ticket.key} (commits, attachments, "
+                 "links); the ticket is kept without one")  # fmt: skip
+    return found
+
+
+def from_ticket(ctx: SourceContext, key: str) -> list[RawPatch]:
+    """One ticket, read again (or for the first time) as a JQL source reads its tickets.
+
+    The options are those of the first jira_query source, else the defaults. Without a Jira
+    connection only the commits that mention the key are found.
+    """
+    if ctx.jira is None:
+        return _jira_commits(ctx, key, "jira_query")
+    try:
+        ticket = ctx.jira.get(key)
+    except JiraError as e:
+        ctx.warn(f"jira: {key}: {e}")
+        return _jira_commits(ctx, key, "jira_query")
+    if ticket is None:
+        ctx.warn(f"jira: {key} not found")
+        return _jira_commits(ctx, key, "jira_query")
+    src = next((s for s in ctx.config.patch_sources if isinstance(s, JiraQuerySource)), None)
+    return _ticket_patches(ctx, ticket, src or JiraQuerySource(type="jira_query", jql=""))
+
+
+def from_additions(ctx: SourceContext, key: str, added: list[dict]) -> list[RawPatch]:
+    """Patches in what an engineer added to a ticket: commit and PR links, .diff/.patch files.
+
+    Other links and files are context for the analysis only.
+    """
+    found: list[RawPatch] = []
+    for a in added:
+        if a.get("removed_at"):
+            continue
+        if a["kind"] == "link":
+            for ref in find_refs(a["url"], ctx.config.hosts()):
+                found += _ref_patches(ctx, ref, [key])
+        elif a["kind"] == "file" and a["filename"].endswith((".diff", ".patch")):
+            path = Path(a["path"])
+            if not path.is_file():
+                ctx.warn(f"added to {key}: {a['filename']} is gone from {path.parent}")
+                continue
+            subject, message, author, diff = _parse_patch_file(path)
+            if subject == path.stem and (ticket := ctx.tickets.get(key)):
+                subject, message = ticket.summary, f"{ticket.summary}\n\n{ticket.description}"
+            raw = _diff_patch(ctx, diff, f"{key}/added/{path.name}", subject, message.strip(),
+                              "added", [key])  # fmt: skip
+            if raw:
+                raw.author = author
+                found.append(raw)
+    for raw in found:
+        raw.source = "added"
+    return found
 
 
 def _in_range(ctx: SourceContext, project: str, sha: str) -> bool:

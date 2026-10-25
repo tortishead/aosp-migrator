@@ -16,11 +16,25 @@ from patchmig import notes as engineer_notes
 from patchmig.analysis.patches import load_diff
 from patchmig.config import ProjectConfig
 from patchmig.config.schema import ThresholdsConfig
-from patchmig.ledger import Cluster, KnowledgeItem, LedgerStore, Patch, Run, State, Transition
+from patchmig.ledger import (
+    BacklogItem,
+    Cluster,
+    KnowledgeItem,
+    LedgerStore,
+    Patch,
+    Run,
+    State,
+    Ticket,
+    Transition,
+)
 from patchmig.ledger.models import AgentCall
 from patchmig.review import queue_of, queues
 
 MAX_DIFF_CHARS = 200_000
+MAX_PREVIEW_CHARS = 20_000  # of a text attachment or added file, on the item page
+TEXT_FILES = (".txt", ".log", ".md", ".xml", ".json", ".yaml", ".yml", ".java", ".kt", ".c",
+              ".cpp", ".h", ".py", ".sh", ".diff", ".patch", ".csv", ".bp", ".mk", ".aidl",
+              ".rc", ".properties", ".html")  # fmt: skip
 
 
 class NotFound(LookupError):
@@ -361,4 +375,120 @@ def lessons(config: ProjectConfig | None) -> dict:
         "configured": True, "path": str(mem.path),
         "proposed": [as_dict(x) for x in mem.lessons("proposed")],
         "approved": [as_dict(x) for x in mem.lessons("approved")],
+    }  # fmt: skip
+
+
+# ---- backlog ----------------------------------------------------------------------------
+
+
+def _item_patches(patches: list[Patch], item: BacklogItem) -> list[Patch]:
+    if item.kind == "patch":
+        return [p for p in patches if f"patch:{p.id}" == item.key]
+    return [p for p in patches if item.key in (p.jira_keys or [])]
+
+
+def _item_status(item: BacklogItem, members: list[Patch]) -> str:
+    if item.analysis is None:
+        return "imported" if members else "imported, no patch"
+    return "analysed"
+
+
+def backlog(store: LedgerStore, run_id: int) -> list[dict]:
+    _run(store, run_id)
+    with store.session() as s:
+        rows = s.scalars(
+            select(BacklogItem).where(BacklogItem.run_id == run_id).order_by(BacklogItem.id)
+        ).all()
+        patches = s.scalars(select(Patch).where(Patch.run_id == run_id).order_by(Patch.seq)).all()
+        tickets = {t.key: t for t in s.scalars(select(Ticket).where(
+            Ticket.key.in_([i.key for i in rows if i.kind == "ticket"])))}  # fmt: skip
+    out = []
+    for i in rows:
+        members = _item_patches(patches, i)
+        t = tickets.get(i.key)
+        out.append({
+            "key": i.key, "kind": i.kind, "title": i.title, "status": _item_status(i, members),
+            "jira_status": t.status if t else None, "sources": i.sources,
+            "patches": len(members),
+            "states": {st.value: n for st, n in Counter(p.state for p in members).items()},
+            "clusters": sorted({p.cluster_id for p in members if p.cluster_id}),
+            "attachments": len(t.attachments or []) if t else 0,
+            "comments": len(t.comments or []) if t else 0,
+            "added": len([a for a in i.added or [] if not a.get("removed_at")]),
+            "imported_at": _iso(i.imported_at), "refreshed_at": _iso(i.refreshed_at),
+            "analysed_at": _iso(i.analysed_at),
+        })  # fmt: skip
+    return out
+
+
+def _preview(path: str | None, name: str) -> str | None:
+    if not path or not name.lower().endswith(TEXT_FILES):
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(MAX_PREVIEW_CHARS + 1)
+    except OSError:
+        return None
+    return text if len(text) <= MAX_PREVIEW_CHARS else text[:MAX_PREVIEW_CHARS] + "\n[...]"
+
+
+def _ticket_view(t: Ticket | None, linked: dict[str, Ticket]) -> dict | None:
+    if t is None:
+        return None
+    return {
+        "key": t.key, "summary": t.summary, "description": t.description, "status": t.status,
+        "comments": t.comments or [], "remote_links": t.remote_links or [],
+        "attachments": [
+            {**{k: v for k, v in a.items() if k != "url"},
+             "preview": _preview(a.get("path"), a.get("filename", ""))}
+            for a in t.attachments or []
+        ],
+        "linked": [
+            {"key": k, "summary": linked[k].summary if k in linked else None,
+             "status": linked[k].status if k in linked else None}
+            for k in t.issue_links or []
+        ],
+        "fetched_at": _iso(t.fetched_at),
+    }  # fmt: skip
+
+
+def backlog_item(store: LedgerStore, run_id: int, key: str) -> dict:
+    _run(store, run_id)
+    with store.session() as s:
+        item = s.scalars(
+            select(BacklogItem).where(BacklogItem.run_id == run_id, BacklogItem.key == key)
+        ).first()
+        if item is None:
+            raise NotFound(f"{key} is not in the backlog of run {run_id}")
+        patches = s.scalars(select(Patch).where(Patch.run_id == run_id).order_by(Patch.seq)).all()
+        t = s.get(Ticket, key) if item.kind == "ticket" else None
+        linked = {x.key: x for x in s.scalars(select(Ticket).where(
+            Ticket.key.in_(t.issue_links or [])))} if t else {}  # fmt: skip
+    members = _item_patches(patches, item)
+    notes = engineer_notes.active(store)
+    if item.kind == "ticket":
+        mine = [n for n in notes if n.scope == "ticket" and n.target == key]
+    else:
+        mine = [n for n in notes if members and engineer_notes.applies_to_patch(n, members[0])
+                and n.scope == "patch"]  # fmt: skip
+    return {
+        "key": item.key, "kind": item.kind, "title": item.title,
+        "status": _item_status(item, members), "sources": item.sources,
+        "ticket": _ticket_view(t, linked),
+        "patches": [
+            {"id": p.id, "seq": p.seq, "project": p.project, "subject": p.subject,
+             "commit": p.commit_sha, "state": p.state.value, "cluster_id": p.cluster_id,
+             "rung": (p.verdict or {}).get("rung"), "sources": p.sources}
+            for p in members
+        ],
+        "added": [
+            {**{k: v for k, v in a.items() if k != "path"},
+             "preview": _preview(a.get("path"), a.get("filename", "")) if a["kind"] == "file"
+             else None}
+            for a in item.added or []
+        ],
+        "notes": [_note(n) for n in mine],
+        "analysis": item.analysis, "earlier_analyses": len(item.analyses or []),
+        "imported_at": _iso(item.imported_at), "refreshed_at": _iso(item.refreshed_at),
+        "analysed_at": _iso(item.analysed_at),
     }  # fmt: skip

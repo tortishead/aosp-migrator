@@ -127,23 +127,60 @@ def _patch_projects(store: LedgerStore, run_id: int | None) -> list[str]:
         return sorted(set(s.scalars(select(Patch.project).where(Patch.run_id == run_id))))
 
 
+def item_keys(items: list[str] | str | None) -> list[str] | None:
+    """Backlog item keys from a list or from text ("OEM-1, OEM-2"); None when none given."""
+    if items is None:
+        return None
+    if isinstance(items, str):
+        items = items.replace(",", " ").split()
+    return [k.strip() for k in items if k.strip()] or None
+
+
 # ---- the steps --------------------------------------------------------------------------
 
 
-def ingest(ctx: Context, use_jira: bool = True, note: str | None = None) -> int:
-    """Read the patch list into a new run; returns the run id."""
+def ingest(
+    ctx: Context,
+    run_id: int | None = None,
+    use_jira: bool = True,
+    note: str | None = None,
+    new_run: bool = False,
+    items: list[str] | str | None = None,
+) -> int:
+    """Import tickets and patches into the run's backlog; returns the run id.
+
+    The first import (or `new_run`) starts a run; after that the latest run's backlog is
+    refreshed. `items` imports only these tickets again, or a new ticket by its key.
+    """
     from patchmig.ingest import IngestError
     from patchmig.ingest import ingest as do_ingest
 
     cfg, store = ctx.config, ctx.store
+    keys = item_keys(items)
     jira = ctx.jira_client() if use_jira and cfg.jira is not None else None
-    run = store.create_run(cfg, note=note or "ingest")
+    run = None
+    if not new_run and (run_id is not None or store.latest_run() is not None):
+        run = ctx.run(run_id)
+    created = run is None
+    if created:
+        if keys:
+            raise StepFailed(
+                "No backlog yet to import single tickets into: import everything first."
+            )
+        run = store.create_run(cfg, note=note or "ingest")
     try:
-        report = do_ingest(cfg, store, run, jira)
+        report = do_ingest(cfg, store, run, jira, items=keys)
     except IngestError as e:
-        store.discard_run(run)  # else the empty run would become "the latest run"
+        if created:
+            store.discard_run(run)  # else the empty run would become "the latest run"
         raise StepFailed(f"Ingest failed: {e}") from e
-    ctx.info(f"Run {run.id}: {report.total} patches")
+    what = "new backlog" if created else "backlog refreshed" if keys is None else "items"
+    ctx.info(f"Run {run.id} ({what}): {report.new_patches} new patches, "
+             f"{report.known_patches} already there")  # fmt: skip
+    if report.items_new:
+        ctx.info(f"  new backlog items: {', '.join(report.items_new)}")
+    if report.items_refreshed:
+        ctx.info(f"  backlog items refreshed: {report.items_refreshed}")
     for source, n in report.found_per_source.items():
         ctx.info(f"  from {source:<12} {n}")
     if report.duplicates_merged:
@@ -465,16 +502,20 @@ class Step:
     options: tuple[Option, ...] = ()
     run_scoped: bool = True  # takes run_id
     in_pipeline: bool = False
+    needs_run: bool = True  # False: can start the first run
 
 
 CLUSTERS = Option("clusters", "ints", "Only these clusters", "cluster ids, comma-separated")
 LIMIT = Option("limit", "int", "At most N")
 
 STEPS: dict[str, Step] = {s.name: s for s in (
-    Step("ingest", "Ingest patches", "Read the patch list from all sources into a new run.",
-         ingest, "none", (Option("use_jira", "bool", "Fetch Jira tickets", default=True),
-                          Option("note", "text", "Note for the run")),
-         run_scoped=False, in_pipeline=True),
+    Step("ingest", "Import", "Read the Jira tickets (with their comments, attachments and "
+         "linked tickets) and the patches into the backlog. Again: refreshes it.", ingest,
+         "none", (Option("use_jira", "bool", "Fetch Jira tickets", default=True),
+                  Option("items", "text", "Only these tickets", "Jira keys, comma-separated"),
+                  Option("new_run", "bool", "Start a new backlog (new run)"),
+                  Option("note", "text", "Note for a new run")),
+         in_pipeline=True, needs_run=False),
     Step("history", "Deepen shallow checkouts", "Fetch the history the upstream checks need "
          "(repo sync --depth=1 trees). Before ingest for a git range, and after it.", history,
          "none", (Option("dry_run", "bool", "Only report"),), in_pipeline=True),
@@ -517,7 +558,7 @@ PIPELINE = [s.name for s in STEPS.values() if s.in_pipeline]
 def catalogue() -> list[dict]:
     return [
         {"name": s.name, "title": s.title, "help": s.help, "credits": s.credits,
-         "run_scoped": s.run_scoped, "in_pipeline": s.in_pipeline,
+         "run_scoped": s.run_scoped, "in_pipeline": s.in_pipeline, "needs_run": s.needs_run,
          "options": [{"name": o.name, "kind": o.kind, "label": o.label, "help": o.help,
                       "default": o.default} for o in s.options]}
         for s in STEPS.values()

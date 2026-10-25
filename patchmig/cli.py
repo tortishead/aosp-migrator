@@ -23,11 +23,13 @@ run_app = typer.Typer(help="Manage migration runs.")
 review_app = typer.Typer(help="Review queues and human decisions on clusters.")
 memory_app = typer.Typer(help="The migration memory: facts and lessons from earlier migrations.")
 notes_app = typer.Typer(help="Engineer notes: extra knowledge for the agents, per scope and step.")
+backlog_app = typer.Typer(help="The backlog: one item per Jira ticket (or patch without one).")
 app.add_typer(config_app, name="config")
 app.add_typer(run_app, name="run")
 app.add_typer(review_app, name="review")
 app.add_typer(memory_app, name="memory")
 app.add_typer(notes_app, name="notes")
+app.add_typer(backlog_app, name="backlog")
 
 ConfigOption = Annotated[
     Path, typer.Option("--config", "-c", help="Project config file", envvar="PATCHMIG_CONFIG")
@@ -147,10 +149,22 @@ def _jira(cfg: ProjectConfig, enabled: bool) -> JiraClient | None:
 def ingest_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
     use_jira: Annotated[bool, typer.Option("--jira/--no-jira", help="Fetch Jira tickets")] = True,
-    note: Annotated[str | None, typer.Option(help="Free text shown with the run")] = None,
+    note: Annotated[str | None, typer.Option(help="Free text shown with a new run")] = None,
+    item: Annotated[
+        list[str] | None,
+        typer.Option("--item", help="Import only this ticket again, or a new one (repeatable)"),
+    ] = None,
+    new_run: Annotated[
+        bool, typer.Option("--new-run", help="Start a new backlog instead of refreshing it")
+    ] = False,
+    run_id: RunOption = None,
 ) -> None:
-    """Read the patch list from all configured sources into a new run."""
-    _step(config, steps.ingest, use_jira=use_jira, note=note)
+    """Import Jira tickets and patches into the backlog (the first time: a new run).
+
+    Again: refreshes the backlog; patches already there keep their analysis.
+    """
+    _step(config, steps.ingest, run_id=run_id, use_jira=use_jira, note=note, new_run=new_run,
+          items=item)  # fmt: skip
 
 
 @app.command("patches")
@@ -725,6 +739,105 @@ def notes_stale(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None)
             typer.echo(f"  [{x.id}] {x.state:<14} {x.name}: {x.why}")
     if intents and clusters:
         typer.echo("Rewrite the intents first: the clusters' briefs include them.")
+
+
+@backlog_app.command("list")
+def backlog_list(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
+    """The backlog items in import order, with their patches and status."""
+    from patchmig.web import data
+
+    _, store, run = _open_run(config, run_id)
+    rows = data.backlog(store, run.id)
+    if not rows:
+        typer.echo(f"Run {run.id}: the backlog is empty. Fill it with: migrate ingest")
+    for i in rows:
+        states = ", ".join(f"{k} {v}" for k, v in sorted(i["states"].items())) or "no patch"
+        added = f", {i['added']} added" if i["added"] else ""
+        typer.echo(f"{i['key']:<14} {i['status']:<20} {states}{added}  {i['title']}")
+
+
+@backlog_app.command("show")
+def backlog_show(
+    key: Annotated[str, typer.Argument(help="Jira key, or patch:<id>")],
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+) -> None:
+    """Everything the item holds: ticket, comments, attachments, patches, additions, analysis."""
+    from patchmig.web import data
+
+    _, store, run = _open_run(config, run_id)
+    try:
+        i = data.backlog_item(store, run.id, key)
+    except data.NotFound as e:
+        raise _note_error(e) from e
+    typer.echo(f"{i['key']}: {i['title']} ({i['status']})")
+    if t := i["ticket"]:
+        typer.echo(f"  Jira status: {t['status']}; linked: "
+                   f"{', '.join(x['key'] for x in t['linked']) or '-'}")  # fmt: skip
+        for c in t["comments"]:
+            typer.echo(f"  comment: {c[:200]}")
+        for a in t["attachments"]:
+            typer.echo(f"  attachment: {a['filename']} "
+                       f"({a.get('path') and 'kept' or a.get('note') or 'listed'})")  # fmt: skip
+        for r in t["remote_links"]:
+            typer.echo(f"  link: {r['url']} {r.get('title') or ''}".rstrip())
+    for p in i["patches"]:
+        typer.echo(f"  patch #{p['id']} {p['state']:<10} {p['project']}: {p['subject']}")
+    for a in i["added"]:
+        what = a.get("url") or a.get("filename")
+        gone = " (removed)" if a.get("removed_at") else ""
+        typer.echo(f"  added [{a['id']}] {a['kind']}: {what} by {a['by']}{gone}")
+    for n in i["notes"]:
+        typer.echo(f"  note [{n['id']}] {n['author']}: {n['text']}")
+    if i["analysis"]:
+        typer.echo(f"  analysed {i['analysed_at']} ({i['earlier_analyses']} earlier)")
+
+
+@backlog_app.command("add")
+def backlog_add(
+    key: Annotated[str, typer.Argument(help="Jira key, or patch:<id>")],
+    by: ByOption,
+    text: Annotated[str | None, typer.Option(help="Text: becomes a note for the agents")] = None,
+    link: Annotated[str | None, typer.Option(help="A commit/PR link, or any other link")] = None,
+    file: Annotated[Path | None, typer.Option(help="A .diff/.patch, a log, a document")] = None,
+    stage: StageOption = None,
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+) -> None:
+    """Add information to a backlog item; then import and analyse it again."""
+    from patchmig import backlog as bl
+    from patchmig.notes import NoteError
+
+    cfg, store, run = _open_run(config, run_id)
+    try:
+        content = file.read_bytes() if file else None
+        done = bl.add_info(cfg, store, run, key, by, text=text, link=link,
+                           filename=file.name if file else None, content=content,
+                           stages=stage)  # fmt: skip
+    except (bl.BacklogError, NoteError, OSError) as e:
+        raise _note_error(e) from e
+    typer.echo(f"Added to {key}: " + (f"note {done['note']}" if "note" in done
+                                      else f"[{done['id']}] {done['kind']}"))  # fmt: skip
+    typer.echo(f"Rerun it with: migrate ingest --item {key} && migrate analyse --item {key}")
+
+
+@backlog_app.command("remove")
+def backlog_remove(
+    key: Annotated[str, typer.Argument(help="Jira key, or patch:<id>")],
+    addition: Annotated[int, typer.Argument(help="Id of the addition (see backlog show)")],
+    by: ByOption,
+    config: ConfigOption = DEFAULT_CONFIG,
+    run_id: RunOption = None,
+) -> None:
+    """Mark a link or file added to an item as removed (it stays in the history)."""
+    from patchmig import backlog as bl
+
+    _, store, run = _open_run(config, run_id)
+    try:
+        bl.remove_info(store, run, key, addition, by)
+    except bl.BacklogError as e:
+        raise _note_error(e) from e
+    typer.echo(f"Removed addition {addition} from {key}.")
 
 
 @app.command("serve")

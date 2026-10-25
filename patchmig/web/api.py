@@ -120,6 +120,18 @@ class ByOnly(BaseModel):
     by: str = Name
 
 
+class InfoNew(BaseModel):
+    """One piece of information for a backlog item: text, a link, or a file (text or base64)."""
+
+    by: str = Name
+    text: str | None = None
+    link: str | None = None
+    filename: str | None = None
+    content: str | None = None
+    base64: bool = False  # content is base64 (binary files)
+    stages: list[str] | None = None
+
+
 # Review actions wait while a job that moves clusters runs, so the two cannot cross.
 CLUSTER_STEPS = frozenset({"analyse", "apply", "verify", "publish", "review_sync"})
 
@@ -268,6 +280,14 @@ def create_app(
     def config_view(run_id: int) -> dict:
         return get(data.config_snapshot, run_id)
 
+    @app.get("/api/runs/{run_id}/backlog")
+    def backlog(run_id: int) -> list[dict]:
+        return get(data.backlog, run_id)
+
+    @app.get("/api/runs/{run_id}/backlog/{key}")
+    def backlog_item(run_id: int, key: str) -> dict:
+        return get(data.backlog_item, run_id, key)
+
     # ---- actions: jobs, review decisions, notes, lessons (admin token) -----------------
 
     def configured() -> tuple[ProjectConfig, LedgerStore]:
@@ -344,6 +364,41 @@ def create_app(
         except ReviewError as e:
             raise HTTPException(409, str(e)) from e
         return data.cluster(ws.store, run_id, cluster_id)
+
+    @app.post("/api/runs/{run_id}/backlog/{key}/info", dependencies=[Depends(admin)])
+    def backlog_add(run_id: int, key: str, body: InfoNew) -> dict:
+        import base64
+        import binascii
+
+        from patchmig import backlog as bl
+        from patchmig.notes import NoteError
+
+        cfg, store = configured()
+        content: bytes | str | None = body.content
+        if body.base64 and body.content is not None:
+            try:
+                content = base64.b64decode(body.content, validate=True)
+            except binascii.Error as e:
+                raise HTTPException(422, "content is not valid base64") from e
+        try:
+            bl.add_info(cfg, store, the_run(run_id), key, body.by.strip(), text=body.text,
+                        link=body.link, filename=body.filename, content=content,
+                        stages=body.stages)  # fmt: skip
+        except (bl.BacklogError, NoteError) as e:
+            raise HTTPException(404 if "not in the backlog" in str(e) else 422, str(e)) from e
+        return data.backlog_item(store, run_id, key)
+
+    @app.post("/api/runs/{run_id}/backlog/{key}/info/{addition}/remove",
+              dependencies=[Depends(admin)])  # fmt: skip
+    def backlog_remove(run_id: int, key: str, addition: int, body: ByOnly) -> dict:
+        from patchmig import backlog as bl
+
+        _, store = configured()
+        try:
+            bl.remove_info(store, the_run(run_id), key, addition, body.by.strip())
+        except bl.BacklogError as e:
+            raise HTTPException(404, str(e)) from e
+        return data.backlog_item(store, run_id, key)
 
     @app.get("/api/notes")
     def note_list(removed: bool = False) -> list[dict]:

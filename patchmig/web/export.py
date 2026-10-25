@@ -56,6 +56,10 @@ def export_site(
         write(f"{base}/patches", patches)
         for p in patches:
             write(f"{base}/patches/{p['id']}", data.patch(store, config, rid, p["id"]))
+        items = data.backlog(store, rid)
+        write(f"{base}/backlog", items)
+        for i in items:  # a key like patch:12 is a valid file name on the hosts that matter
+            write(f"{base}/backlog/{i['key']}", data.backlog_item(store, rid, i["key"]))
         clusters = data.clusters(store, rid)
         write(f"{base}/clusters", clusters)
         for c in clusters:

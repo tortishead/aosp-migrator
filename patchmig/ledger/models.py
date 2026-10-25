@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from patchmig.ledger.states import State
@@ -152,6 +152,33 @@ class Ticket(Base):
     attachments: Mapped[list[Any] | None] = mapped_column(default=list)
     remote_links: Mapped[list[Any] | None] = mapped_column(default=list)  # url, title
     fetched_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class BacklogItem(Base):
+    """One item of a run's backlog: a Jira ticket, or a patch that has no ticket.
+
+    The backlog lasts: importing again refreshes the items and adds new ones, it never
+    starts over. Engineers add what the ticket leaves out at any time: text as notes (see
+    patchmig.notes), links and files here, in `added`. The item's analysis is kept with the
+    ones before it, so a rerun after new information can be compared with the last one.
+    """
+
+    __tablename__ = "backlog"
+    __table_args__ = (UniqueConstraint("run_id", "key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), index=True)
+    key: Mapped[str] = mapped_column(String(200))  # Jira key, or "patch:<patch id>"
+    kind: Mapped[str] = mapped_column(String(16))  # ticket, patch
+    title: Mapped[str] = mapped_column(Text, default="")
+    sources: Mapped[list[Any]] = mapped_column(default=list)  # how it came in
+    # Engineer additions: {id, kind: link|file, url | filename+path, by, at, removed_at}
+    added: Mapped[list[Any]] = mapped_column(default=list)
+    imported_at: Mapped[datetime] = mapped_column(default=utcnow)
+    refreshed_at: Mapped[datetime] = mapped_column(default=utcnow)
+    analysis: Mapped[dict[str, Any] | None] = mapped_column(JSON)  # the latest
+    analyses: Mapped[list[Any]] = mapped_column(default=list)  # earlier ones, oldest first
+    analysed_at: Mapped[datetime | None]
 
 
 class AgentCall(Base):

@@ -25,7 +25,7 @@ migrate init myproject                       # writes myproject/project.yaml
 migrate config validate -c myproject/project.yaml
 migrate jira-check -c myproject/project.yaml     # Jira sign-in, project, JQL (Server/DC or Cloud)
 migrate history -c myproject/project.yaml    # shallow (depth 1) trees: fetch the OEM range
-migrate ingest -c myproject/project.yaml     # new run: read all patch sources (+ Jira tickets)
+migrate ingest -c myproject/project.yaml     # import tickets + patches into the backlog
 migrate history -c myproject/project.yaml    # shallow trees: fetch target history for the checks
 migrate patches -c myproject/project.yaml    # list the run's patches in order
 migrate doctor -c myproject/project.yaml --mcp   # check Copilot CLI headless + MCP tools
@@ -52,7 +52,8 @@ migrate status -c myproject/project.yaml
 | --- | --- |
 | `patchmig/config/` | Project config schema (Pydantic), YAML loading, validation, hashing |
 | `patchmig/ledger/` | Ledger database: runs, patches, clusters, state machine and audit history |
-| `patchmig/ingest/` | Patch-source adapters, manifest parsing, diff footprints, normalisation and linking |
+| `patchmig/ingest/` | Patch-source adapters, manifest parsing, diff footprints, normalisation and linking; import into the lasting backlog |
+| `patchmig/backlog.py` | Backlog items (one per ticket, or per patch without one) and what engineers add to them |
 | `patchmig/gitutil.py` | Thin helpers over the git CLI |
 | `patchmig/jira_client.py` | Jira REST client for Server/Data Center and Cloud (reads and export writes) |
 | `patchmig/agents/` | LLM adapter (Copilot CLI, fake), runner with budgets and retries, intent writer, briefs |
@@ -87,9 +88,13 @@ snapshot and hash of the config it used. See `patchmig/templates/project.example
 **[docs/settings.md](docs/settings.md) explains every field**: what it is, what to put in it
 and what it is used for, section by section as on the Settings page.
 
-## Ingest
+## Import and backlog
 
-`migrate ingest` reads every configured patch source into a new run:
+`migrate ingest` (Import on the Run page) reads every configured source into the run's
+backlog. The first import starts a run; every later one refreshes the same backlog: tickets are
+read again, new patches and tickets are added, and patches already there keep their analysis
+and state. `--new-run` starts a new backlog instead; `--item OEM-12` imports only that ticket
+again, or adds a new ticket by its key.
 
 | Source | What it reads |
 | --- | --- |
@@ -102,8 +107,27 @@ Each patch gets its Change-Id, `git patch-id` fingerprint, Jira keys (from ticke
 the subject only), a footprint (files with add/modify/delete/rename, line counts, declared and
 touched symbols), and links: reverts, `Fixes:` references and cherry-pick origins. Chain roles
 are `base`, `fix` or `revert`. The same patch listed by several sources is merged (by commit,
-or by patch-id for diff files). Referenced Jira tickets are cached in the ledger with their
-latest comments, together with the tickets they link to; the intent writer sees all of it.
+or by patch-id for diff files). Every ticket is kept, with or without a patch: description,
+status, all comments, remote links, the tickets it links to (one level) and every attachment,
+downloaded up to `jira.attachment_max_kb` (larger ones are listed). The analysis sees all of it.
+
+The backlog has one item per Jira ticket, and one per patch without a ticket. At any time an
+engineer adds what the ticket leaves out, then imports and analyses the item again:
+
+```
+migrate backlog list
+migrate backlog show OEM-12
+migrate backlog add OEM-12 --by xuan --text "Only for the China variant"    # a note for the agents
+migrate backlog add OEM-12 --by xuan --link https://github.com/oem/fw/pull/7 # becomes a patch
+migrate backlog add OEM-12 --by xuan --file crash.log                       # context for the analysis
+migrate backlog remove OEM-12 2 --by xuan                                   # kept in the history
+migrate ingest --item OEM-12
+```
+
+Commit and PR links and `.diff`/`.patch` files added to a ticket become its patches at the next
+import; other links and files are context for the analysis. The Backlog page of the web front
+end shows each item with its ticket, comments, attachments, patches and additions, and has the
+same form.
 
 ## Agents
 
