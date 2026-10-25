@@ -8,10 +8,11 @@ import pytest
 from typer.testing import CliRunner
 
 from patchmig import backlog as bl
+from patchmig import steps
 from patchmig.cli import app
 from patchmig.config import load_config
-from patchmig.ingest import IngestError, ingest
-from patchmig.jira_client import Ticket
+from patchmig.ingest import IngestError, incomplete, ingest
+from patchmig.jira_client import JiraError, Ticket
 from patchmig.ledger import LedgerStore, Note
 from tests.fixtures.scenario import FRAMEWORKS
 from tests.test_ingest import (
@@ -79,6 +80,42 @@ def test_a_ticket_without_patch_is_an_item_and_gets_one_from_an_added_file(
     added = bl.get(store, run, "OEM-950").added
     assert added[1]["removed_by"] == "ana" and len(bl.active_additions(bl.get(
         store, run, "OEM-950"))) == 1  # fmt: skip
+
+
+def test_tickets_jira_refused_are_imported_again_on_their_own(make_config, jira):  # noqa: F811
+    refused = {"OEM-950"}
+
+    class RateLimited(FakeJira):
+        def get(self, key):
+            if key in refused:
+                raise JiraError(f"Jira issue/{key} failed: HTTP 429 (Jira rate limit)")
+            return super().get(key)
+
+    limited = RateLimited(jira.tickets, jira.search_results)
+    path = make_config([{"type": "jira_query", "jql": "x"}], jira=JIRA)
+    cfg = load_config(path)
+    store = LedgerStore.in_memory()
+    lines: list[str] = []
+    ctx = steps.Context(path, cfg, store, lambda text, level: lines.append(text),
+                        jira=lambda cfg: limited)  # fmt: skip
+    steps.ingest(ctx)
+    run = store.latest_run()
+    assert list(incomplete(store, run)) == ["OEM-950"]
+    assert "429" in bl.get(store, run, "OEM-950").import_problems[0]
+    assert any("ingest --incomplete" in x for x in lines)
+
+    # Jira answers again: only the incomplete ticket is read, and then it is complete.
+    refused.clear()
+    before = bl.get(store, run, "OEM-101").refreshed_at
+    lines.clear()
+    steps.ingest(ctx, incomplete=True)
+    assert any("Importing 1 incomplete tickets again: OEM-950" in x for x in lines)
+    assert incomplete(store, run) == {}
+    assert bl.get(store, run, "OEM-950").title == "BT reconnect logging"
+    assert bl.get(store, run, "OEM-101").refreshed_at == before  # left as it was
+    lines.clear()
+    steps.ingest(ctx, incomplete=True)
+    assert any("nothing to import again" in x for x in lines)
 
 
 def test_a_new_ticket_by_key_and_wrong_input(make_config, jira):  # noqa: F811

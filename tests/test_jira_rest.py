@@ -53,6 +53,22 @@ def test_search_pages_through_all_results_on_server_and_cloud(jira):
     assert client.get("OEM-99") is None
 
 
+def test_rate_limit_429_is_waited_out_and_retried(jira):
+    fake, _, cfg = jira
+    waits: list[float] = []
+    client = HttpJiraClient(cfg, sleep=waits.append)
+    fake.throttle, fake.retry_after = 3, "7"
+    assert [t.key for t in client.search("project = OEM")] == [f"OEM-{n}" for n in range(1, 6)]
+    assert waits == [7.0, 7.0, 7.0]  # as Retry-After asks
+    fake.throttle, fake.retry_after = 2, "soon"  # not a number or a date: 1 s, then 2 s
+    assert client.get("OEM-2").summary == "Ticket 2"
+    assert waits[3:] == [1.0, 2.0]
+    fake.throttle, fake.retry_after = HttpJiraClient.RETRIES + 1, "0"  # still limited: fail
+    with pytest.raises(JiraError, match="HTTP 429.*rate limit"):
+        client.get("OEM-3")
+    fake.throttle = 0
+
+
 def test_export_writes_through_rest(jira):
     """The writes the Jira export uses, on both deployments."""
     fake, client, _ = jira

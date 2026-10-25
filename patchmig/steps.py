@@ -146,17 +146,30 @@ def ingest(
     note: str | None = None,
     new_run: bool = False,
     items: list[str] | str | None = None,
+    incomplete: bool = False,
 ) -> int:
     """Import tickets and patches into the run's backlog; returns the run id.
 
     The first import (or `new_run`) starts a run; after that the latest run's backlog is
-    refreshed. `items` imports only these tickets again, or a new ticket by its key.
+    refreshed. `items` imports only these tickets again, or a new ticket by its key;
+    `incomplete` only the tickets the last import could not read completely (say, Jira
+    answered 429 Too Many Requests).
     """
     from patchmig.ingest import IngestError
+    from patchmig.ingest import incomplete as incomplete_items
     from patchmig.ingest import ingest as do_ingest
 
     cfg, store = ctx.config, ctx.store
     keys = item_keys(items)
+    if incomplete:
+        if new_run or store.latest_run() is None:
+            raise StepFailed("No backlog yet to import incomplete tickets into: import first.")
+        todo = incomplete_items(store, ctx.run(run_id))
+        if not todo:
+            ctx.info("Every ticket was imported completely: nothing to import again.")
+            return ctx.run(run_id).id
+        ctx.info(f"Importing {len(todo)} incomplete tickets again: {', '.join(todo)}")
+        keys = list(dict.fromkeys([*(keys or []), *todo]))
     jira = ctx.jira_client() if use_jira and cfg.jira is not None else None
     run = None
     if not new_run and (run_id is not None or store.latest_run() is not None):
@@ -196,6 +209,9 @@ def ingest(
             ctx.info(f"  tickets without a patch (kept): {', '.join(report.tickets_without_patch)}")
         if report.tickets_missing:
             ctx.info(f"  Jira tickets not found: {', '.join(report.tickets_missing)}")
+        if report.items_incomplete:
+            ctx.warn(f"  not imported completely: {', '.join(report.items_incomplete)}; "
+                     "import them again with: migrate ingest --incomplete")  # fmt: skip
     for w in report.warnings:
         ctx.warn(f"  warning: {w}")
     return run.id
@@ -517,6 +533,7 @@ STEPS: dict[str, Step] = {s.name: s for s in (
          "linked tickets) and the patches into the backlog. Again: refreshes it.", ingest,
          "none", (Option("use_jira", "bool", "Fetch Jira tickets", default=True),
                   Option("items", "text", "Only these tickets", "Jira keys, comma-separated"),
+                  Option("incomplete", "bool", "Only the tickets not imported completely"),
                   Option("new_run", "bool", "Start a new backlog (new run)"),
                   Option("note", "text", "Note for a new run")),
          in_pipeline=True, needs_run=False),

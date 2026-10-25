@@ -6,12 +6,18 @@ Jira Server/Data Center and Jira Cloud both serve REST v2 with plain-text bodies
 what we use. The one difference that matters: Cloud removed `/rest/api/2/search` (it answers
 410 Gone), so on Cloud JQL goes to `/rest/api/3/search/jql`, paged by `nextPageToken`, and
 its descriptions come back as Atlassian Document Format, which we flatten to text.
+
+Jira rate-limits (HTTP 429, on Cloud often within one large import): 429 answers (and 503 to
+reads) are retried after the Retry-After the server asks for, else after a growing wait.
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
+import email.utils
 import json
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -117,8 +123,21 @@ def _hint(code: int) -> str:
     return {
         401: " (check the token; on Cloud set jira.user to your account email)",
         403: " (the account lacks permission for this)",
+        429: " (Jira rate limit, still after retrying: import the failed tickets again later)",
         410: " (endpoint removed: set jira.deployment: cloud)",
     }.get(code, "")
+
+
+def _retry_after(header: str | None, attempt: int, cap: float) -> float:
+    """Seconds to wait: the Retry-After header (seconds or an HTTP date), else 2**attempt."""
+    wait = float(2**attempt)
+    if header:
+        try:
+            wait = float(header)
+        except ValueError:
+            with contextlib.suppress(TypeError, ValueError):
+                wait = email.utils.parsedate_to_datetime(header).timestamp() - time.time()
+    return min(max(wait, 0.0), cap)
 
 
 def is_cloud(config: JiraConfig) -> bool:
@@ -135,8 +154,10 @@ class HttpJiraClient:
     """
 
     FIELDS = "summary,description,status,issuelinks,comment,attachment"
+    RETRIES = 6  # on 429/503: waits 1, 2, 4, 8, 16, 32 s unless Retry-After says otherwise
+    MAX_WAIT = 60.0
 
-    def __init__(self, config: JiraConfig, timeout: float = 30):
+    def __init__(self, config: JiraConfig, timeout: float = 30, sleep=time.sleep):
         self.base = config.url.rstrip("/")
         self.cloud = is_cloud(config)
         token = resolve_secret(config.token)
@@ -146,6 +167,21 @@ class HttpJiraClient:
         else:
             self.auth = f"Bearer {token}"
         self.timeout = timeout
+        self.sleep = sleep
+
+    def _open(self, req: urllib.request.Request, read=lambda resp: resp.read()):
+        """Send the request; a 429 (and, for a read, a 503) is sent again after the wait the
+        server asks for. A write is not retried on 503: Jira may have done it already."""
+        retry = (429, 503) if req.get_method() == "GET" else (429,)
+        for attempt in range(self.RETRIES + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    return read(resp)
+            except urllib.error.HTTPError as e:
+                if e.code not in retry or attempt == self.RETRIES:
+                    raise
+                self.sleep(_retry_after(e.headers.get("Retry-After"), attempt, self.MAX_WAIT))
+        raise AssertionError("unreachable")
 
     def _get(self, path: str, params: dict, version: int = 2) -> dict | None:
         url = f"{self.base}/rest/api/{version}/{path}?{urllib.parse.urlencode(params)}"
@@ -153,8 +189,7 @@ class HttpJiraClient:
             url, headers={"Authorization": self.auth, "Accept": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.load(resp)
+            return self._open(req, json.load)
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return None
@@ -227,9 +262,8 @@ class HttpJiraClient:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read()
-                return json.loads(raw) if raw else None
+            raw = self._open(req)
+            return json.loads(raw) if raw else None
         except urllib.error.HTTPError as e:
             raise JiraError(f"Jira {method} {path} failed: HTTP {e.code}{_hint(e.code)}") from e
         except urllib.error.URLError as e:
@@ -274,10 +308,9 @@ class HttpJiraClient:
             raise JiraError(f"refusing to send Jira credentials to {url}")
         req = urllib.request.Request(url, headers={"Authorization": self.auth})
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = resp.read(max_bytes + 1)
+            data = self._open(req, lambda resp: resp.read(max_bytes + 1))
         except urllib.error.HTTPError as e:
-            raise JiraError(f"Jira attachment download failed: HTTP {e.code}") from e
+            raise JiraError(f"Jira attachment download failed: HTTP {e.code}{_hint(e.code)}") from e
         except urllib.error.URLError as e:
             raise JiraError(f"Jira not reachable at {self.base}: {e.reason}") from e
         if len(data) > max_bytes:

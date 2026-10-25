@@ -179,6 +179,9 @@ class BacklogItem(Base):
     analysis: Mapped[dict[str, Any] | None] = mapped_column(JSON)  # the latest
     analyses: Mapped[list[Any]] = mapped_column(default=list)  # earlier ones, oldest first
     analysed_at: Mapped[datetime | None]
+    # What failed at the item's last import (Jira refused, a download failed): empty when it
+    # was read completely. `migrate ingest --incomplete` imports these items again.
+    import_problems: Mapped[list[Any] | None] = mapped_column(JSON)
 
 
 class AgentCall(Base):

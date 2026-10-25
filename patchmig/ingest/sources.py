@@ -53,6 +53,8 @@ class SourceContext:
     warnings: list[str] = field(default_factory=list)
     # Every ticket a JQL source found, with or without a patch: each one is kept (ingest).
     tickets: dict[str, Ticket] = field(default_factory=dict)
+    # What failed while reading a ticket (Jira or a code host refused): by ticket key.
+    problems: dict[str, list[str]] = field(default_factory=dict)
     _range: dict[str, list[tuple[str, str]]] = field(default_factory=dict, repr=False)
     _remote: dict[str, list[dict]] = field(default_factory=dict, repr=False)
 
@@ -76,13 +78,19 @@ class SourceContext:
     def warn(self, message: str) -> None:
         self.warnings.append(message)
 
+    def problem(self, keys: str | list[str], message: str) -> None:
+        """A warning that means the ticket was not read completely: import it again later."""
+        self.warn(message)
+        for key in [keys] if isinstance(keys, str) else keys:
+            self.problems.setdefault(key, []).append(message)
+
     def remote_links(self, key: str) -> list[dict]:
         """A ticket's remote links (web links), read once; empty when Jira refuses."""
         if key not in self._remote:
             try:
                 self._remote[key] = self.jira.remote_links(key)
             except JiraError as e:
-                self.warn(f"jira_query: {key} remote links: {e}")
+                self.problem(key, f"jira_query: {key} remote links: {e}")
                 self._remote[key] = []
         return self._remote[key]
 
@@ -330,7 +338,7 @@ def from_ticket(ctx: SourceContext, key: str) -> list[RawPatch]:
     try:
         ticket = ctx.jira.get(key)
     except JiraError as e:
-        ctx.warn(f"jira: {key}: {e}")
+        ctx.problem(key, f"jira: {key}: {e}")
         return _jira_commits(ctx, key, "jira_query")
     if ticket is None:
         ctx.warn(f"jira: {key} not found")
@@ -427,7 +435,7 @@ def _attachment_patches(ctx: SourceContext, ticket: Ticket, max_bytes: int) -> l
         try:
             data = ctx.jira.download(a["url"], max_bytes).decode(errors="replace")
         except JiraError as e:
-            ctx.warn(f"jira_query: {ticket.key} attachment {a['filename']}: {e}")
+            ctx.problem(ticket.key, f"jira_query: {ticket.key} attachment {a['filename']}: {e}")
             continue
         tmp = attachment_path(ctx.downloads, ticket.key, a["filename"])
         tmp.parent.mkdir(parents=True, exist_ok=True)
@@ -461,7 +469,7 @@ def _linked_patches(ctx: SourceContext, ticket: Ticket) -> list[RawPatch]:
         try:
             linked = ctx.jira.get(key)
         except JiraError as e:
-            ctx.warn(f"jira_query: linked ticket {key}: {e}")
+            ctx.problem(ticket.key, f"jira_query: linked ticket {key}: {e}")
             continue
         if linked:
             sources.append((linked, [ticket.key, key]))
@@ -508,7 +516,7 @@ def _ref_patches(ctx: SourceContext, ref: CodeRef, keys: list[str]) -> list[RawP
                                   pr.title or ref.url, text, "jira_link", keys, hint)  # fmt: skip
                 found += [raw] if raw else []
     except (CodeHostError, KeyError, OSError) as e:
-        ctx.warn(f"jira_query: {ref.url}: {e}")
+        ctx.problem(keys, f"jira_query: {ref.url}: {e}")
     for raw in found:
         raw.jira_keys = list(dict.fromkeys([*raw.jira_keys, *keys]))
     return found

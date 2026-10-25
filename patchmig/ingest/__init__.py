@@ -4,6 +4,10 @@ A run's backlog lasts. The first import fills it; every later one refreshes it: 
 read again, patches not seen before are added (patches already there keep their analysis and
 state), and backlog items are added for new tickets. `items` imports only some tickets again
 (or a new one by its key), with what engineers added to them (links and files).
+
+What fails for one ticket (Jira refuses it, rate-limits too long, a download breaks) does not
+stop the import: it is kept with the item (`import_problems`), and `incomplete` lists the
+items to import again once Jira answers.
 """
 
 from __future__ import annotations
@@ -56,6 +60,8 @@ class IngestReport:
     items_new: list[str] = field(default_factory=list)
     items_refreshed: int = 0
     warnings: list[str] = field(default_factory=list)
+    problems: dict[str, list[str]] = field(default_factory=dict)  # by ticket key
+    items_incomplete: list[str] = field(default_factory=list)
 
 
 _EPOCH = datetime.min.replace(tzinfo=UTC)
@@ -166,6 +172,24 @@ def _history_order(patches: list[NormalizedPatch], ctx: SourceContext) -> None:
             patches[i] = p
 
 
+def incomplete(store: LedgerStore, run: Run) -> dict[str, list[str]]:
+    """The ticket items not imported completely, with why: what failed at their last import,
+    or (from before that was kept) that Jira never gave the ticket."""
+    with store.session() as s:
+        rows = s.scalars(select(BacklogItem).where(
+            BacklogItem.run_id == run.id, BacklogItem.kind == "ticket"
+        ).order_by(BacklogItem.id)).all()  # fmt: skip
+        read = set(s.scalars(select(Ticket.key).where(Ticket.key.in_([r.key for r in rows]))))
+    out = {}
+    for r in rows:
+        why = list(r.import_problems or [])
+        if r.key not in read and not why:
+            why = ["not read from Jira"]
+        if why:
+            out[r.key] = why
+    return out
+
+
 def _fetch_tickets(
     config: ProjectConfig, store: LedgerStore, jira: JiraClient, keys: set[str],
     report: IngestReport, ctx: SourceContext | None = None,
@@ -183,8 +207,13 @@ def _remote_links(jira: JiraClient, key: str, ctx: SourceContext | None, report)
     try:
         return jira.remote_links(key)
     except JiraError as e:
-        report.warnings.append(f"jira: {key} remote links: {e}")
+        _problem(report, key, f"jira: {key} remote links: {e}")
         return []
+
+
+def _problem(report: IngestReport, key: str, message: str) -> None:
+    report.warnings.append(message)
+    report.problems.setdefault(key, []).append(message)
 
 
 def _keep_attachments(
@@ -210,7 +239,7 @@ def _keep_attachments(
             try:
                 data = jira.download(a["url"], max_kb * 1024)
             except JiraError as e:
-                report.warnings.append(f"jira: {ticket.key} attachment {a['filename']}: {e}")
+                _problem(report, ticket.key, f"jira: {ticket.key} attachment {a['filename']}: {e}")
                 entry["note"] = f"download failed: {e}"
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,16 +256,22 @@ def _cache_tickets(
 ) -> set[str]:  # fmt: skip
     links: set[str] = set()
     failures = 0
-    for key in sorted(keys):
+    todo = sorted(keys)
+    for n, key in enumerate(todo):
         try:
             ticket = jira.get(key)
         except JiraError as e:
             # One unreadable ticket (say, a 403) must not cost the others; a run of
             # failures means Jira itself is down or the token is wrong.
-            report.warnings.append(f"jira: {key}: {e}")
+            _problem(report, key, f"jira: {key}: {e}")
             failures += 1
             if failures >= MAX_TICKET_FAILURES:
-                report.warnings.append(f"jira: stopped after {failures} failed tickets in a row")
+                report.warnings.append(f"jira: stopped after {failures} failed tickets in a row; "
+                                       f"{len(todo) - n - 1} not read")  # fmt: skip
+                for rest in todo[n + 1 :]:
+                    report.problems.setdefault(rest, []).append(
+                        "jira: not read (the import stopped after repeated failures)"
+                    )
                 return links
             continue
         failures = 0
@@ -297,6 +332,7 @@ def ingest(
         duplicates_merged=sum(found.values()) - len(patches),
         roles=dict(Counter(p.chain_role for p in patches)),
         warnings=ctx.warnings,
+        problems=ctx.problems,
     )
     _merge_into_run(store, run, patches, report)
     with_patch = {k for p in patches for k in p.jira_keys}
@@ -424,13 +460,18 @@ def _sync_backlog(
             title = cached[key].summary if key in cached else subjects.get(key, key)
             item = items.get(key)
             if item is None:
-                s.add(BacklogItem(run_id=run.id, key=key, kind=kind, title=title,
-                                  sources=sources, added=[], analyses=[]))  # fmt: skip
+                item = BacklogItem(run_id=run.id, key=key, kind=kind, title=title,
+                                   sources=sources, added=[], analyses=[])  # fmt: skip
+                s.add(item)
                 report.items_new.append(key)
             else:
                 item.title, item.refreshed_at = title or item.title, now
                 item.sources = _union(item.sources, sources)
                 report.items_refreshed += 1
+            # Each import says afresh: an item read completely this time has no problems.
+            item.import_problems = list(dict.fromkeys(report.problems.get(key, [])))
+            if item.import_problems:
+                report.items_incomplete.append(key)
         # A patch that has gained a ticket belongs to the ticket's item from now on.
         for p in patches:
             item = items.get(f"patch:{p.id}")

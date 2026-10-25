@@ -157,6 +157,14 @@ def ingest_cmd(
     new_run: Annotated[
         bool, typer.Option("--new-run", help="Start a new backlog instead of refreshing it")
     ] = False,
+    incomplete: Annotated[
+        bool,
+        typer.Option(
+            "--incomplete",
+            help="Import again only the tickets the last import could "
+            "not read completely (e.g. Jira answered 429)",
+        ),  # fmt: skip
+    ] = False,
     run_id: RunOption = None,
 ) -> None:
     """Import Jira tickets and patches into the backlog (the first time: a new run).
@@ -164,7 +172,7 @@ def ingest_cmd(
     Again: refreshes the backlog; patches already there keep their analysis.
     """
     _step(config, steps.ingest, run_id=run_id, use_jira=use_jira, note=note, new_run=new_run,
-          items=item)  # fmt: skip
+          items=item, incomplete=incomplete)  # fmt: skip
 
 
 @app.command("patches")

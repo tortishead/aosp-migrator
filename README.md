@@ -96,6 +96,12 @@ read again, new patches and tickets are added, and patches already there keep th
 and state. `--new-run` starts a new backlog instead; `--item OEM-12` imports only that ticket
 again, or adds a new ticket by its key.
 
+Jira rate limits (HTTP 429) are waited out: the client retries after the `Retry-After` Jira
+asks for. A ticket that still cannot be read (or whose attachment or linked commit fails) does
+not stop the import; it is marked *incomplete* on the Backlog page, and `migrate ingest
+--incomplete` (or **Import the incomplete tickets again** there) reads only those tickets
+again.
+
 | Source | What it reads |
 | --- | --- |
 | `git_range` | `base_ref..head_ref` of every project in the source manifest (or a listed subset) |

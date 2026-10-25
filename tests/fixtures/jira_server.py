@@ -3,7 +3,8 @@
 Cloud mode answers 410 Gone on /rest/api/2/search (as Jira Cloud does since the old search
 was removed), serves /rest/api/3/search/jql paged by nextPageToken, and returns descriptions
 as Atlassian Document Format. Server mode serves /rest/api/2/search paged by startAt.
-Every request must carry the expected Authorization header.
+Every request must carry the expected Authorization header. `throttle` answers that many
+requests (from then on) with 429 Too Many Requests and a Retry-After, as Jira's rate limit does.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ class FakeJira:
         self.page_size = page_size
         self.issues: dict[str, dict] = {}
         self.requests: list[str] = []
+        self.throttle = 0  # the next N requests get 429
+        self.retry_after = "0"
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
 
@@ -96,6 +99,15 @@ class FakeJira:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n)) if n else None
                 jira.requests.append(f"{method} {u.path}")
+                if jira.throttle > 0:
+                    jira.throttle -= 1
+                    raw = b'{"errorMessages": ["rate limit exceeded"]}'
+                    self.send_response(429)
+                    self.send_header("Retry-After", jira.retry_after)
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
                 if self.headers.get("Authorization") != jira.auth:
                     return self._reply(401, {"errorMessages": ["unauthorized"]})
                 path = urllib.parse.unquote(u.path)

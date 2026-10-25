@@ -375,13 +375,18 @@ function BacklogPage({ run }) {
   return html`<${Loading} state=${state}>${(rows) => {
     const statuses = [...new Set(rows.map((r) => r.status))];
     const q = text.toLowerCase();
-    const shown = rows.filter((r) => (!st || r.status === st) && (!q || r.key.toLowerCase().includes(q) || r.title.toLowerCase().includes(q)));
+    const incomplete = rows.filter((r) => r.import_problems.length);
+    const shown = rows.filter((r) => (!st || (st === "incomplete" ? r.import_problems.length : r.status === st)) && (!q || r.key.toLowerCase().includes(q) || r.title.toLowerCase().includes(q)));
     return html`
       <h1>Backlog <span class="muted">(${shown.length} of ${rows.length}) · one item per Jira ticket, or per patch without one</span></h1>
+      ${incomplete.length ? html`<div class="panel"><p><b>${incomplete.length} ticket${incomplete.length === 1 ? " was" : "s were"} not imported completely</b> <span class="muted">(Jira refused or rate-limited them, or a download failed): ${incomplete.map((r) => r.key).join(", ")}</span></p>
+        <div class="actions"><${JobButton} steps=${["ingest"]} options=${{ ingest: { incomplete: true } }} run=${run} label="Import the incomplete tickets again" primary=${true} />
+        <span class="muted small">Only these tickets are read again; the rest of the backlog is left as it is.</span></div></div>` : null}
       <div class="filters">
         <input placeholder="Filter by key or title" value=${text} onInput=${(e) => setText(e.target.value)} />
         <select value=${st} onChange=${(e) => setSt(e.target.value)}>
           <option value="">Any status</option>${statuses.map((s) => html`<option value=${s}>${s}</option>`)}
+          ${incomplete.length ? html`<option value="incomplete">not imported completely</option>` : null}
         </select>
       </div>
       ${rows.length ? null : html`<p class="muted">Empty: run <b>Import</b> on the <a href="#/run">Run page</a>.</p>`}
@@ -389,7 +394,7 @@ function BacklogPage({ run }) {
         <thead><tr><th>Item</th><th>Title</th><th>Status</th><th>Jira</th><th>Patches</th><th class="num">Comments</th><th class="num">Attachments</th><th class="num">Added</th><th>Refreshed</th></tr></thead>
         <tbody>${shown.map((i) => html`<tr>
           <td><a href=${`#/r/${run}/backlog/${i.key}`}>${i.key}</a></td>
-          <td class="wrap">${i.title}</td><td>${i.status}${i.stale ? html` <span class="tag tag-maybe" title="new information since the analysis">new info</span>` : null}</td><td>${i.jira_status || "–"}</td>
+          <td class="wrap">${i.title}</td><td>${i.status}${i.stale ? html` <span class="tag tag-maybe" title="new information since the analysis">new info</span>` : null}${i.import_problems.length ? html` <span class="tag tag-credits" title=${i.import_problems.join("\n")}>incomplete</span>` : null}</td><td>${i.jira_status || "–"}</td>
           <td>${i.patches ? html`<${States} states=${i.states} />` : html`<span class="muted">none</span>`}</td>
           <td class="num">${i.comments}</td><td class="num">${i.attachments}</td><td class="num">${i.added}</td>
           <td>${fmtTime(i.refreshed_at)}</td></tr>`)}</tbody>
@@ -453,6 +458,8 @@ function BacklogItemPage({ run, itemKey }) {
         ${t.description ? html`<pre class="block">${t.description}</pre>` : html`<p class="muted">No description.</p>`}`
         : i.kind === "ticket" ? html`<p class="muted">Not read from Jira (no Jira connection, or the ticket could not be read): only its key in the commits is known. Import it again with Jira, or add what it says below.</p>`
         : html`<p class="muted">Add a note, a link or a file below to tell the analysis what the patch is for.</p>`}
+        ${i.import_problems.length ? html`<p><b>Not imported completely:</b></p><ul class="plain small">${i.import_problems.map((x) => html`<li>${x}</li>`)}</ul>
+          <div class="actions"><${JobButton} steps=${["ingest"]} options=${{ ingest: { items: i.key } }} run=${run} label="Import this ticket again" primary=${true} /></div>` : null}
         <p class="muted small">Imported ${fmtTime(i.imported_at)} by ${i.sources.join(", ")}; refreshed ${fmtTime(i.refreshed_at)}.</p>
       </div>
       <div class="panel"><h2>Patches <span class="muted">(${i.patches.length})</span></h2>

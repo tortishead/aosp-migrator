@@ -421,14 +421,17 @@ def backlog(store: LedgerStore, run_id: int) -> list[dict]:
         tickets = {t.key: t for t in s.scalars(select(Ticket).where(
             Ticket.key.in_([i.key for i in rows if i.kind == "ticket"])))}  # fmt: skip
     from patchmig.agents.analyst import contexts, is_stale
+    from patchmig.ingest import incomplete
 
     stale = {c.item.key for c in contexts(store, _run(store, run_id)) if is_stale(c)}
+    problems = incomplete(store, _run(store, run_id))
     out = []
     for i in rows:
         members = _item_patches(patches, i)
         t = tickets.get(i.key)
         out.append({
             "stale": i.key in stale,
+            "import_problems": problems.get(i.key, []),
             "relevance": (i.analysis or {}).get("relevance"),
             "approach": ((i.analysis or {}).get("solution") or {}).get("approach"),
             "confidence": (i.analysis or {}).get("confidence"),
@@ -515,6 +518,7 @@ def backlog_item(store: LedgerStore, run_id: int, key: str) -> dict:
         "notes": [_note(n) for n in mine],
         "analysis": item.analysis, "earlier_analyses": item.analyses or [],
         "stale": _stale(store, item),
+        "import_problems": list(item.import_problems or []),
         "imported_at": _iso(item.imported_at), "refreshed_at": _iso(item.refreshed_at),
         "analysed_at": _iso(item.analysed_at),
     }  # fmt: skip
