@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from patchmig import confidence, steps
 from patchmig.config import ConfigError, ProjectConfig, load_config
 from patchmig.config.editor import SettingsEditor, SettingsError
+from patchmig.config.loader import load_sections
 from patchmig.ledger import LedgerStore, Run
 from patchmig.web import data
 from patchmig.web.jobs import Busy, JobManager
@@ -207,13 +208,17 @@ def create_app(
 
     @app.post("/api/settings/check/{name}", dependencies=[Depends(admin)])
     def settings_check(name: str) -> list[dict]:
-        from patchmig.checks import CHECKS, run_check
+        from patchmig.checks import CHECKS, SECTIONS, run_check
 
         if name not in CHECKS:
             raise HTTPException(404, f"unknown check {name}; known: {', '.join(CHECKS)}")
-        if ws.config is None:
-            raise HTTPException(409, "save a valid config first")
-        return [{"name": n, "ok": ok, "detail": d} for n, ok, d in run_check(name, ws.config)]
+        # The saved file, not the last valid config: an unrelated unset field must not block
+        # testing, and a test must not use values the file no longer has.
+        try:
+            config = load_sections(editor.path, SECTIONS[name])
+        except ConfigError as e:
+            raise HTTPException(409, "fix these settings first: " + "; ".join(e.problems)) from e
+        return [{"name": n, "ok": ok, "detail": d} for n, ok, d in run_check(name, config)]
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index() -> str:

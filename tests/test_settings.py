@@ -163,6 +163,16 @@ def test_settings_api_needs_the_admin_token_and_reloads(make_config):  # noqa: F
     assert res.status_code == 200 and res.json()["missing"] == ["migration"]
     assert res.json()["reload_error"]  # the server keeps running on the last valid config
     assert client.get("/api/settings/missing").json() == ["migration"]
+    # connection tests read the saved file and need only their own sections
+    checks = client.post("/api/settings/check/jira", headers=auth).json()
+    assert checks == [{"name": "Jira", "ok": True, "detail": "not configured"}]
+    assert [c["ok"] for c in client.post("/api/settings/check/trees", headers=auth).json()
+            ] == [True, True]  # fmt: skip
+    no_trees = {k: v for k, v in incomplete.items() if k != "trees"}
+    res = client.put("/api/settings", json={**body, "version": res.json()["version"],
+                                            "values": no_trees}, headers=auth)  # fmt: skip
+    res2 = client.post("/api/settings/check/trees", headers=auth)
+    assert res2.status_code == 409 and "trees: Field required" in res2.json()["detail"]
     body = {
         **body,
         "version": res.json()["version"],

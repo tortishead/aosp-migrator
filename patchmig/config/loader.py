@@ -8,7 +8,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import yaml
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from patchmig.config.schema import DiffFolderSource, ProjectConfig, SpreadsheetSource
 
@@ -65,6 +65,42 @@ def load_config(path: Path | str) -> ProjectConfig:
     except ValidationError as e:
         raise ConfigError(path, _format_errors(e)) from e
     return _resolve_paths(config, path.resolve().parent)
+
+
+def load_sections(path: Path | str, sections: tuple[str, ...]) -> ProjectConfig:
+    """The config, or, if it is incomplete or invalid, one with only `sections` validated.
+
+    The other fields of the partial config are left unset, so use it only for code that
+    reads `sections`, such as a connection test. Raises ConfigError listing the problems in
+    `sections` only (or why the file cannot be read at all).
+    """
+    path = Path(path)
+    try:
+        return load_config(path)
+    except ConfigError as e:
+        if e.problems[0].startswith(("cannot read", "not valid YAML", "top level must")):
+            raise
+        raw = yaml.safe_load(path.read_text())
+    values, problems = {}, []
+    for name in sections:
+        field = ProjectConfig.model_fields[name]
+        if name not in raw:
+            if field.is_required():
+                problems.append(f"{name}: Field required")
+            continue
+        try:
+            values[name] = TypeAdapter(field.annotation).validate_python(raw[name])
+        except ValidationError as e:
+            problems += [f"{name}" + (p[11:] if p.startswith("(top level)") else f".{p}")
+                         for p in _format_errors(e)]  # fmt: skip
+    if problems:
+        raise ConfigError(path, problems)
+    config = ProjectConfig.model_construct(**values)
+    if "trees" in values:
+        base = path.resolve().parent
+        config.trees.source.path = _anchor(config.trees.source.path, base)
+        config.trees.target.path = _anchor(config.trees.target.path, base)
+    return config
 
 
 def new_project(directory: Path, name: str | None = None) -> Path:

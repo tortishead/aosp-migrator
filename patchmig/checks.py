@@ -20,6 +20,9 @@ from patchmig.ingest.manifest import ManifestError, tree_projects
 
 Check = tuple[str, bool, str]
 CHECKS = ("trees", "hosts", "copilot", "jira", "build")
+# The config sections each check reads: it runs even while the rest of the config is incomplete.
+SECTIONS = {"trees": ("trees",), "hosts": ("trees", "code_hosts", "output"), "copilot": ("llm",),
+            "jira": ("jira",), "build": ("build", "trees")}  # fmt: skip
 
 
 def _secret_problem(ref: str | None) -> str | None:
