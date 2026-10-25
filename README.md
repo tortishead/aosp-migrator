@@ -84,6 +84,9 @@ One `project.yaml` per migration. Relative paths resolve against the file's fold
 always references (`env:VAR` or `file:/path`); literal values are rejected. Every run stores a
 snapshot and hash of the config it used. See `patchmig/templates/project.example.yaml`.
 
+**[docs/settings.md](docs/settings.md) explains every field**: what it is, what to put in it
+and what it is used for, section by section as on the Settings page.
+
 ## Ingest
 
 `migrate ingest` reads every configured patch source into a new run:
@@ -304,7 +307,8 @@ Run page; `--read-only` turns all actions off.
 
 ### Settings in the browser
 
-The Settings page edits the whole project config: one form per section (trees and their Git
+The Settings page edits the whole project config (every field is explained in
+[docs/settings.md](docs/settings.md)): one form per section (trees and their Git
 hosts, patch sources, Copilot, budget, Jira, build and tests, publishing, analysis), generated
 from the config schema and validated by it, plus the YAML text itself. A save is written only
 if the whole config is valid; the file it replaces is kept in `.patchmig/config-history/`

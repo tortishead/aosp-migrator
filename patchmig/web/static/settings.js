@@ -18,6 +18,11 @@ const SECTIONS = [
   ["analysis", "Analysis and agents", ["analysis", "thresholds", "path_rules", "migrate", "memory"], []],
 ];
 
+// Every field is explained in docs/settings.md; the anchor is the section's heading there.
+const GUIDE = "https://github.com/tortishead/aosp-migrator/blob/main/docs/settings.md";
+const GUIDE_ANCHORS = { general: "general", repos: "trees-and-repos", sources: "patch-sources", copilot: "copilot",
+  jira: "jira", build: "build-and-tests", output: "publishing", analysis: "analysis-and-agents" };
+
 const CHECK_NAMES = { trees: "Trees", hosts: "Git host tokens", copilot: "Copilot sign-in", jira: "Jira", build: "Build host" };
 
 function stored(storage, key) {
@@ -386,6 +391,7 @@ export function SettingsPage({ section }) {
 
   return html`<${Ctx.Provider} value=${ctx}>
     <h1>Settings <span class="muted">· ${view.path}</span></h1>
+    <p class="muted small">What each field means and what to enter: <a href=${`${GUIDE}#${(current && GUIDE_ANCHORS[current[0]]) || ""}`} target="_blank" rel="noopener">settings guide</a>.</p>
     ${view.editable ? html`<div class="panel signin">
         <label>Admin token <input type="password" autocomplete="off" value=${token} onInput=${(e) => { setToken(e.target.value); store(sessionStorage, TOKEN_KEY, e.target.value); }} /></label>
         <label>Your name <input type="text" value=${author} onInput=${(e) => { setAuthor(e.target.value); store(localStorage, AUTHOR_KEY, e.target.value); }} /></label>
