@@ -25,7 +25,7 @@ BT_ID = "I1000000000000000000000000000000000000003"
 
 
 class Remembered(Published):
-    """First migration done: published, reviewed (with feedback), approved, recorded."""
+    """First migration done: analysed, reviewed (with feedback), approved, published, recorded."""
 
     def __init__(self, root: Path):
         super().__init__(root, verify=False)
@@ -36,10 +36,17 @@ class Remembered(Published):
         self.config_path.write_text(
             yaml.safe_dump(self.config.model_dump(mode="json", exclude_none=True))
         )
+        from patchmig import notes as engineer_notes
+
+        engineer_notes.add(self.store, "BT timeout is 12 s on all head units.", "xuan", "ticket",
+                           "OEM-202", stages=["analyse"])  # fmt: skip
+        analyse_items(self.config, self.store, self.run, self.runner(analyst(by_key={
+            "OEM-202": {"solution": {"approach": "cherry_pick", "summary": "Moved file only."},
+                        "related": [{"ref": "OEM-101", "relation": "related", "why": "both"}]},
+        })))  # fmt: skip
         with self.store.session() as s, s.begin():
             for p in s.query(Patch).all():
                 p.intent = f"Intent of {p.subject}"
-                p.intent_detail = {"source": "agent"}
         self.migrate(self.runner(resolve_power))
         self.verify()
         r = self.reviewer()
@@ -88,6 +95,30 @@ def test_record_writes_approved_facts_and_commits(remembered, monkeypatch):
     again = mem.record(r.config, r.store, r.run)
     assert again.commit is None  # nothing new: no commit, however much time passed
     assert memory_git(mem, "rev-list", "--count", "HEAD").strip() == "1"
+
+
+def test_confirmed_ticket_analyses_are_remembered_and_briefed(remembered, tmp_path):
+    mem = remembered.memory
+    # Approved: power (OEM-101, OEM-606), BT (OEM-202), brightness (OEM-505, OEM-808).
+    assert remembered.report.tickets == 5
+    bt = yaml.safe_load((mem.path / "tickets/OEM-202.yaml").read_text())
+    (entry,) = bt["history"]
+    assert entry["understanding"] == "understanding of OEM-202"
+    assert (entry["relevance"], entry["approach"]) == ("needed", "cherry_pick")
+    assert entry["solution"] == "Moved file only."
+    assert entry["related"] == ["OEM-101 (related): both"]
+    assert entry["notes"] == ["BT timeout is 12 s on all head units."]
+    assert entry["outcome"] == "verified" and entry["prs"] and entry["approved_by"] == ["xuan"]
+    assert not (mem.path / "tickets/OEM-303.yaml").exists()  # dropped, not confirmed
+
+    nxt = Project(tmp_path / "next", memory={"path": str(remembered.memory_path)})
+    asked: list = []
+    analyse_items(nxt.config, nxt.store, nxt.run, nxt.runner(analyst(asked=asked)),
+                  memory=Memory.open(nxt.config))  # fmt: skip
+    (brief,) = [t.brief for t in asked if t.key == "item:OEM-202"]
+    section = brief.split("## From earlier migrations (migration memory)")[1]
+    assert "mig-A14-A15 solution (cherry_pick): Moved file only." in section
+    assert "engineer note: BT timeout is 12 s on all head units." in section
 
 
 def test_history_is_found_through_original_change_id(remembered):

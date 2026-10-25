@@ -479,8 +479,14 @@ def analyse_items(
             continue
         files_ = sorted({(p.project, f["path"]) for p in c.members
                          for f in p.footprint.get("files", [])})  # fmt: skip
-        memory_text = (memory.brief_for(c.members, files_, config.memory.brief_max_chars)
-                       if memory is not None and c.members else "")  # fmt: skip
+        memory_text = ""
+        if memory is not None:
+            limit = config.memory.brief_max_chars
+            parts = [
+                memory.brief_for_ticket(c.item.key, limit // 2) if c.item.kind == "ticket" else "",
+                memory.brief_for(c.members, files_, limit) if c.members else "",
+            ]
+            memory_text = "\n".join(x for x in parts if x)[:limit]  # fmt: skip
         task = AgentTask(
             agent=AGENT,
             key=f"item:{c.item.key}",

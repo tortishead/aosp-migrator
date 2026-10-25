@@ -510,7 +510,7 @@ export function MemoryPage({ run }) {
   if (!mem) return html`<p class="loading muted">Loading…</p>`;
   const reload = () => setVersion((v) => v + 1);
   return html`
-    <h1>Migration memory <span class="muted">· what earlier migrations taught; the cluster agent gets approved lessons where they apply</span></h1>
+    <h1>Migration memory <span class="muted">· confirmed knowledge: approved results, confirmed ticket analyses, decisions and approved lessons, for the next migration's analyst and cluster agent</span></h1>
     ${!mem.configured ? html`<p class="muted">No memory configured: set <b>memory.path</b> under <a href="#/settings/analysis">Settings</a>.</p>` : null}
     ${mem.error ? html`<p class="muted">${mem.error} It is created when this run is recorded.</p>` : null}
     <${NeedsSignIn}>${null}<//>

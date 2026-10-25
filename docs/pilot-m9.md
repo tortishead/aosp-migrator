@@ -125,13 +125,17 @@ What goes in:
 - `patches/<Change-Id>.yaml`: per patch, one entry per migration with the outcome, strategy,
   intent, the agent's summary, PRs, decisions, reviewer feedback and who approved it. Found
   again by Change-Id, or through `Original-Change-Id` when a patch was re-uploaded.
+- `tickets/<key>.yaml`: per Jira ticket whose clusters were all approved, one entry per
+  migration with the confirmed analysis (understanding, still needed, solution, related
+  tickets), the engineers' notes and additions, the outcome, the PRs and who approved it.
 - `mappings/<project>.yaml`: files that were renamed, moved to another project or deleted
   upstream.
 - `decisions/<label>.yaml`: human decisions and feedback of the migration, by run.
 - `lessons/proposed/` and `lessons/approved/`: Markdown with `title` and `applies_to` globs.
   Only approved lessons are used.
 
-How it is used next time: the analyst's and the cluster agent's briefs get each patch's
+How it is used next time: the analyst's brief gets what was confirmed about the ticket; the
+analyst's and the cluster agent's briefs get each patch's
 earlier outcomes, the mappings of the files it touches and the approved lessons whose globs
 match, at most `memory.brief_max_chars` characters. Only approved results are recorded, so the memory never
 learns from work a human did not accept.

@@ -453,11 +453,13 @@ def jira_export(
 
 
 def memory_record(ctx: Context, run_id: int | None = None) -> None:
-    """Write the run's approved results, code mappings and decisions to the memory repo."""
+    """Write the run's approved results (patches, confirmed ticket analyses), code mappings
+    and decisions to the memory repo."""
     run = ctx.run(run_id)
     mem = ctx.memory(create=True, required=True)
     r = mem.record(ctx.config, ctx.store, run)
-    ctx.info(f"Recorded {r.patches} patch(es), {r.mappings} mapping(s), {r.decisions} "
+    ctx.info(f"Recorded {r.patches} patch(es), {r.tickets} ticket(s), {r.mappings} "
+             f"mapping(s), {r.decisions} "
              f"decision(s) in {mem.path}" + (f" (commit {r.commit[:12]})" if r.commit else
                                              " (nothing new)"))  # fmt: skip
 

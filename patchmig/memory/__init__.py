@@ -5,15 +5,19 @@ Layout of the repo (config.memory.path):
     patches/<key>.yaml        one file per OEM patch (key: its Change-Id, else its patch-id):
                               subjects, Jira keys, and one history entry per migration with
                               the outcome, strategy, intent, agent summary, PRs and decisions
+    tickets/<key>.yaml        one file per Jira ticket: per migration the confirmed analysis
+                              (understanding, still needed, solution, related tickets), what
+                              engineers added (notes, links, files), the outcome and the PRs
     mappings/<project>.yaml   files that moved or disappeared upstream, per migration
     decisions/<label>.yaml    human decisions and review feedback of one migration
     lessons/proposed/*.md     lessons the memory curator suggested; not used until approved
     lessons/approved/*.md     lessons an engineer approved; given to the cluster agent
 
-Facts (patches, mappings, decisions) are written deterministically from approved results,
-by `migrate memory record`. Lessons are soft knowledge: the curator agent proposes them, and
-only an engineer's approval makes them part of the agent's briefs. Every change is a commit,
-so the memory has history and can be reviewed and shared like code.
+Facts (patches, tickets, mappings, decisions) are written deterministically from approved
+results, by `migrate memory record`: a ticket only when every cluster holding its patches was
+approved, so only confirmed knowledge is kept. Lessons are soft knowledge: the curator agent
+proposes them, and only an engineer's approval makes them part of the agent's briefs. Every
+change is a commit, so the memory has history and can be reviewed and shared like code.
 """
 
 from __future__ import annotations
@@ -61,6 +65,11 @@ def patch_key(patch: Patch) -> str | None:
     return ids[0] if ids else patch.fingerprint
 
 
+def _file_key(key: str) -> str:
+    """A Jira key as a file name (keys are letters, digits and one dash; nothing else)."""
+    return re.sub(r"[^\w.-]+", "_", key)
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "lesson"
 
@@ -101,6 +110,7 @@ class Lesson:
 @dataclass
 class RecordReport:
     patches: int = 0
+    tickets: int = 0
     mappings: int = 0
     decisions: int = 0
     commit: str | None = None
@@ -150,6 +160,24 @@ class Memory:
             if key and (data := self._read(f"patches/{key}.yaml")):
                 return data
         return None
+
+    def ticket(self, key: str) -> dict | None:
+        """The memory of a Jira ticket from earlier migrations."""
+        return self._read(f"tickets/{_file_key(key)}.yaml")
+
+    def brief_for_ticket(self, key: str, limit: int) -> str:
+        """What earlier migrations confirmed about a ticket, at most `limit` chars."""
+        lines = []
+        for h in ((self.ticket(key) or {}).get("history") or [])[-3:]:
+            mig = h["migration"]
+            lines.append(f"- {mig}: {h.get('outcome')}; still needed: {h.get('relevance')}: "
+                         f"{h.get('relevance_reason')}")  # fmt: skip
+            if h.get("solution"):
+                lines.append(f"- {mig} solution ({h.get('approach')}): {h['solution']}")
+            lines += [f"- {mig} engineer note: {n}" for n in h.get("notes", [])]
+            lines += [f"- {mig} related: {r}" for r in h.get("related", [])]
+        text = "\n".join(lines)
+        return text if len(text) <= limit else text[:limit] + "\n[... more in the memory repo]"
 
     def mappings(self, project: str) -> dict:
         return (self._read(f"mappings/{project.replace('/', '__')}.yaml") or {}).get("files", {})
@@ -215,6 +243,7 @@ class Memory:
                 continue
             self._record_patch(config, run, p, c, key, label)
             report.patches += 1
+        report.tickets = self._record_tickets(config, store, run, clusters, label)
         report.mappings = self._record_mappings(fates, label)
         report.decisions = self._record_decisions(clusters.values(), label, run)
         report.commit = self.commit(f"Record {label} run {run.id}")
@@ -252,6 +281,61 @@ class Memory:
         history = [h for h in data["history"] if h["migration"] != label]
         data["history"] = [*history, entry]
         self._write(rel, data)
+
+    def _record_tickets(self, config, store: LedgerStore, run: Run, clusters, label) -> int:
+        """Each ticket whose patches are all in approved clusters: its confirmed analysis."""
+        from patchmig import backlog as bl
+        from patchmig import notes as engineer_notes
+
+        notes = engineer_notes.active(store)
+        n = 0
+        for item in bl.items(store, run):
+            members = bl.item_patches(store, item)
+            if item.kind != "ticket" or not members:
+                continue
+            own = [clusters.get(p.cluster_id) for p in members]
+            if any(c is None or not is_approved(c) for c in own):
+                continue
+            a = item.analysis or {}
+            sol = a.get("solution") or {}
+            prs = sorted(
+                {
+                    e["url"]
+                    for c in own
+                    for e in ((c.result.get("publish") or {}).get("projects") or {}).values()
+                }
+            )
+            entry = {
+                "migration": label,
+                "from": config.migration.source_version,
+                "to": config.migration.target_version,
+                "run": run.id,
+                "title": item.title,
+                "outcome": ", ".join(sorted({p.state.value for p in members})),
+                "understanding": a.get("understanding"),
+                "relevance": a.get("relevance"),
+                "relevance_reason": a.get("relevance_reason"),
+                "approach": sol.get("approach"),
+                "solution": sol.get("summary"),
+                "related": [f"{r['ref']} ({r['relation']}): {r['why']}"
+                            for r in a.get("related") or [] if r.get("known")],
+                "notes": [x.text for x in notes if x.scope == "ticket" and x.target == item.key],
+                "added": [x.get("url") or x.get("filename") for x in bl.active_additions(item)],
+                "patches": [patch_key(p) for p in members if patch_key(p)],
+                "prs": prs,
+                "approved_by": sorted({(c.result.get("review") or {}).get("by") for c in own
+                                       if (c.result.get("review") or {}).get("by")}),
+                "recorded_at": _now(),
+            }  # fmt: skip
+            rel = f"tickets/{_file_key(item.key)}.yaml"
+            data = self._read(rel) or {"key": item.key, "history": []}
+            old = next((h for h in data["history"] if h["migration"] == label), None)
+            if old is not None and {**old, "recorded_at": None} == {**entry, "recorded_at": None}:
+                entry["recorded_at"] = old["recorded_at"]  # unchanged: no new commit
+            data["history"] = [*(h for h in data["history"] if h["migration"] != label), entry]
+            self._write(rel, data)
+            n += 1
+        return n
 
     def _record_mappings(self, fates, label: str) -> int:
         n = 0

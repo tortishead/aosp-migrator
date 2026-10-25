@@ -319,11 +319,14 @@ create tracking tickets for untracked patches. See `docs/review-m8.md`.
 The migration memory is a git repo (`memory.path`) that carries knowledge from one migration
 to the next. `migrate memory record` writes the approved results of a run: per patch (keyed
 by Change-Id, also found through `Original-Change-Id`) its outcome, strategy, intent, summary,
-PRs, decisions and reviewer feedback; the files that moved or disappeared upstream; and the
-human decisions. `migrate memory curate` makes one agent call that turns the run's feedback,
+PRs, decisions and reviewer feedback; per Jira ticket whose clusters were all approved, the
+confirmed analysis (understanding, still needed, solution, related tickets), the engineers'
+notes and additions, the outcome and the PRs; the files that moved or disappeared upstream;
+and the human decisions. `migrate memory curate` makes one agent call that turns the run's feedback,
 decisions and build fixes into proposed lessons, which reach the cluster agent only after
-`migrate memory approve`. In the next migration the analyst's and the cluster agent's briefs
-get the patch history, mappings and the approved lessons for the paths they touch (capped by
+`migrate memory approve`. In the next migration the analyst's brief gets what was confirmed
+about the ticket, and the analyst's and the cluster agent's briefs get the patch history,
+mappings and the approved lessons for the paths they touch (capped by
 `memory.brief_max_chars`).
 
 `migrate report` writes a Markdown summary of a run: outcomes, deciding rungs, strategies,
