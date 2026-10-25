@@ -5,6 +5,9 @@ from aosp_migrator.jira.base import JiraClient, JiraError
 from aosp_migrator.jira.datacenter import DataCenterClient
 
 
+__all__ = ["JiraClient", "JiraNotConfiguredError", "client_from_config"]
+
+
 class JiraNotConfiguredError(JiraError):
     pass
 

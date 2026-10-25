@@ -79,6 +79,8 @@ class SearchPage:
 
 
 class JiraClient(Protocol):
+    base_url: str
+
     def myself(self) -> str:
         """Display name of the authenticated user. Used as a connection check."""
         ...

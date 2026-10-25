@@ -36,8 +36,10 @@ def create_fake_jira(store: FakeJiraStore) -> FastAPI:
     async def auth_and_faults(request: Request, call_next):  # noqa: ANN001, ANN202
         store = current()
         store.requests.append(f"{request.method} {request.url.path}" + (f"?{request.url.query}" if request.url.query else ""))
-        if store.fail_next:
+        status = store.fail_paths.get(request.url.path)
+        if status is None and store.fail_next:
             status = store.fail_next.pop(0)
+        if status is not None:
             headers = {"Retry-After": "0"} if status == 429 else {}
             return JSONResponse({"errorMessages": [f"Injected failure {status}"]}, status_code=status, headers=headers)
         if request.headers.get("authorization") != f"Bearer {store.pat}":

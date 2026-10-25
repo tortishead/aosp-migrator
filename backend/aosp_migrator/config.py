@@ -50,6 +50,12 @@ class Config:
         self.data_dir = data_dir
         self.path = data_dir / CONFIG_FILENAME
 
+    def attachments_dir(self, workspace_id: int) -> Path:
+        return self.workspace_dir(workspace_id) / "attachments"
+
+    def workspace_dir(self, workspace_id: int) -> Path:
+        return self.data_dir / "workspaces" / str(workspace_id)
+
     def _read_file(self) -> dict[str, dict[str, str]]:
         if not self.path.is_file():
             return {}

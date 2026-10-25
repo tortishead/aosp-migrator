@@ -1,14 +1,17 @@
+import shutil
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
+from aosp_migrator.config import Config
 from aosp_migrator.db.models import Workspace
+from aosp_migrator.importer.runner import running_job
 from aosp_migrator.trees import TreePathError, detect_tree_type, validate_tree_path
 
 router = APIRouter(prefix="/workspaces")
@@ -108,7 +111,13 @@ def update_workspace(workspace_id: int, body: WorkspaceIn, session: SessionDep) 
 
 
 @router.delete("/{workspace_id}", status_code=204)
-def delete_workspace(workspace_id: int, session: SessionDep) -> Response:
-    session.delete(_get(session, workspace_id))
+def delete_workspace(workspace_id: int, request: Request, session: SessionDep) -> Response:
+    workspace = _get(session, workspace_id)
+    if running_job(session, workspace_id) is not None:
+        raise HTTPException(status_code=409, detail="An import is running for this workspace; cancel it first")
+    # Items, issues, jobs etc. go with it via ON DELETE CASCADE.
+    session.delete(workspace)
     session.commit()
+    config: Config = request.app.state.config
+    shutil.rmtree(config.workspace_dir(workspace_id), ignore_errors=True)
     return Response(status_code=204)

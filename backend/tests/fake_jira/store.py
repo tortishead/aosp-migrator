@@ -74,6 +74,8 @@ class FakeJiraStore:
     max_page_size: int = 50
     # Statuses to answer the next requests with, one per request, before normal handling.
     fail_next: list[int] = field(default_factory=list)
+    # Request path -> status, answered on every request to that path (a ticket that keeps failing).
+    fail_paths: dict[str, int] = field(default_factory=dict)
     # "METHOD path?query" of every request, for assertions.
     requests: list[str] = field(default_factory=list)
     _next_id: int = 20000
