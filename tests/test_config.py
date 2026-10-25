@@ -75,6 +75,19 @@ def test_module_build_cmd_needs_placeholder(write_config):
         load_config(write_config({"build": build}))
 
 
+def test_build_transport_defaults_to_local(write_config):
+    cfg = load_config(write_config({"build": {"lunch_target": "t", "slots": ["/w"]}}))
+    assert cfg.build.transport == "local"
+
+
+def test_ssh_section_without_transport_means_ssh(write_config):
+    build = {"lunch_target": "t", "ssh": {"host": "b", "user": "u", "workdir": "/w"}}
+    cfg = load_config(write_config({"build": build}))
+    assert cfg.build.transport == "ssh"
+    cfg = load_config(write_config({"build": {**build, "transport": "local", "slots": ["/w"]}}))
+    assert cfg.build.transport == "local"
+
+
 def test_source_tree_needs_head_ref(write_config):
     trees = {
         "source": {"path": "src", "base_ref": "a"},

@@ -145,12 +145,25 @@ function Field({ schema, path, value, set, name, required }) {
     <input type="text" value=${value ?? ""} placeholder=${showDefault(schema.default)} onInput=${(e) => set(e.target.value === "" ? undefined : e.target.value)} /><//>`;
 }
 
+// Fields that only apply to some values of their siblings. Mirrors the server: with no transport
+// set, an ssh section means ssh.
+const buildTransport = (build) => build?.transport ?? (build?.ssh ? "ssh" : "local");
+const SHOWN_IF = { "build.ssh": (build) => buildTransport(build) === "ssh" };
+// Choosing "default" (local) must not let a hidden ssh section turn it back into ssh.
+const ON_SET = {
+  "build.transport": (build, v) => setIn(build || {}, ["transport"], v === undefined && build?.ssh ? "local" : v),
+};
+
 function Props({ schema, path, value, set, skip = [] }) {
   const req = new Set(schema.required || []);
   return Object.entries(schema.properties)
     .filter(([key, prop]) => !skip.includes(key) && !prop.deprecated)
-    .map(([key, prop]) => html`<${Field} key=${key} name=${key} schema=${prop} path=${[...path, key]} value=${value?.[key]}
-      required=${req.has(key)} set=${(v) => set(setIn(value || {}, [key], v))} />`);
+    .filter(([key]) => !SHOWN_IF[dotted([...path, key])] || SHOWN_IF[dotted([...path, key])](value))
+    .map(([key, prop]) => {
+      const onSet = ON_SET[dotted([...path, key])];
+      return html`<${Field} key=${key} name=${key} schema=${prop} path=${[...path, key]} value=${value?.[key]}
+        required=${req.has(key)} set=${(v) => set(onSet ? onSet(value, v) : setIn(value || {}, [key], v))} />`;
+    });
 }
 
 function Group({ schema, path, value, set, title }) {

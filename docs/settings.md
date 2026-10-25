@@ -176,7 +176,7 @@ tree.
 
 | Field | What it is | Example | Used for |
 |---|---|---|---|
-| `transport` | How builds are run | `ssh` (default) to a build server, or `local` when the tool runs on the build host | |
+| `transport` | How builds are run | `local` (default) when the tool runs on the build host, or `ssh` to a build server | Left out but an `ssh` section given: `ssh`. The `ssh` fields apply only to `ssh` |
 | `ssh.host` * | Build server name | `build01.oem.com` | SSH connection |
 | `ssh.user` * | SSH user | `builder` | |
 | `ssh.port` | SSH port | `22` (default) | |
