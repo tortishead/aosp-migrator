@@ -153,6 +153,39 @@ def test_jira_query_reads_attachments_links_and_linked_tickets(
     assert imp.comments == [f"Dev: Follow-up: {github.url}/oem/fw/pull/7"]
 
 
+def test_every_ticket_is_kept_with_all_it_carries(make_config, monkeypatch):  # noqa: F811
+    """A ticket without any patch is kept, with its comments, links and every attachment."""
+    monkeypatch.setenv("JIRA_TOKEN", "t0ken")
+    with FakeJira(cloud=False, auth=AUTH) as jira:
+        jira.add("MIG-3", "Car crashes on resume", "See the log", links=["IMP-3"])
+        jira.comment("MIG-3", "QA", "Happens after 3 cycles")
+        jira.attach("MIG-3", "../resume.log", "E/CarPower: resume failed")
+        jira.attach("MIG-3", "dump.bin", "x" * 3000)
+        jira.issues["MIG-3"]["remotelinks"]["1"] = {"url": "https://wiki/x", "title": "Spec"}
+        jira.add("IMP-3", "Resume handling")
+        jira.attach("IMP-3", "notes.txt", "linked")
+        cfg = load_config(make_config(
+            [{"type": "jira_query", "jql": "key in (MIG-3)"}],
+            jira={"url": jira.url, "project": "MIG", "token": "env:JIRA_TOKEN",
+                  "attachment_max_kb": 2},
+        ))  # fmt: skip
+        store = LedgerStore.in_memory()
+        report = ingest(cfg, store, store.create_run(cfg), jira=HttpJiraClient(cfg.jira))
+    assert report.total == 0 and report.tickets_without_patch == ["MIG-3"]
+    assert report.attachments_kept == 1
+    with store.session() as s:
+        t, linked = s.get(TicketRow, "MIG-3"), s.get(TicketRow, "IMP-3")
+    assert t.comments == ["QA: Happens after 3 cycles"]
+    assert t.issue_links == ["IMP-3"] and linked.summary == "Resume handling"
+    assert t.remote_links == [{"url": "https://wiki/x", "title": "Spec"}]
+    log, dump = t.attachments
+    path = Path(log["path"])  # the name is made safe: no way out of the ticket's folder
+    assert path.name == "resume.log" and path.parent.name == "MIG-3"
+    assert path.read_text() == "E/CarPower: resume failed"
+    assert dump["path"] is None and "larger than 2 kB" in dump["note"]
+    assert linked.attachments[0]["path"] is None and "linked" in linked.attachments[0]["note"]
+
+
 def test_links_to_unconfigured_hosts_are_not_fetched(make_config, github, monkeypatch):  # noqa: F811
     """Ticket text must not make the tool call arbitrary servers (here: an internal one)."""
     monkeypatch.setenv("JIRA_TOKEN", "t0ken")

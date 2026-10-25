@@ -17,8 +17,9 @@ from patchmig.ingest.normalize import (
     merge_duplicates,
     normalize,
 )
-from patchmig.ingest.sources import ADAPTERS, SourceContext
+from patchmig.ingest.sources import ADAPTERS, SourceContext, attachment_path
 from patchmig.jira_client import JiraClient, JiraError
+from patchmig.jira_client import Ticket as JiraTicket
 from patchmig.ledger import LedgerStore, Patch, Run, Ticket
 
 
@@ -36,6 +37,8 @@ class IngestReport:
     tickets_fetched: int = 0
     linked_tickets_fetched: int = 0
     tickets_missing: list[str] = field(default_factory=list)
+    tickets_without_patch: list[str] = field(default_factory=list)
+    attachments_kept: int = 0
     warnings: list[str] = field(default_factory=list)
 
 
@@ -128,39 +131,93 @@ def _history_order(patches: list[NormalizedPatch], ctx: SourceContext) -> None:
             patches[i] = p
 
 
-def _fetch_tickets(store: LedgerStore, jira: JiraClient, keys: set[str], report: IngestReport):
-    """Cache the patches' tickets and, one level deep, the tickets they link to."""
-    linked = _cache_tickets(store, jira, keys, report)
-    _cache_tickets(store, jira, linked - keys, report, linked_only=True)
+def _fetch_tickets(
+    config: ProjectConfig, store: LedgerStore, jira: JiraClient, keys: set[str],
+    report: IngestReport, ctx: SourceContext | None = None,
+) -> None:  # fmt: skip
+    """Cache the tickets and, one level deep, the tickets they link to."""
+    linked = _cache_tickets(config, store, jira, keys, report, ctx)
+    _cache_tickets(config, store, jira, linked - keys, report, ctx, linked_only=True)
+
+
+def _remote_links(jira: JiraClient, key: str, ctx: SourceContext | None, report) -> list[dict]:
+    if ctx is not None and ctx.jira is jira:
+        return ctx.remote_links(key)
+    if not hasattr(jira, "remote_links"):
+        return []
+    try:
+        return jira.remote_links(key)
+    except JiraError as e:
+        report.warnings.append(f"jira: {key} remote links: {e}")
+        return []
+
+
+def _keep_attachments(
+    config: ProjectConfig, jira: JiraClient, ticket: JiraTicket, report: IngestReport
+) -> list[dict]:
+    """Download every attachment of the ticket up to jira.attachment_max_kb, for the analysis.
+
+    A copy already there (same size) is not fetched again. Larger attachments and those that
+    fail are listed with the reason, so the analysis knows they exist.
+    """
+    max_kb = config.jira.attachment_max_kb if config.jira else 2048
+    kept = []
+    for a in ticket.attachments:
+        entry = {**a, "path": None, "note": ""}
+        path = attachment_path(config.workdir / "downloads", ticket.key, a["filename"])
+        if (a.get("size") or 0) > max_kb * 1024:
+            entry["note"] = f"larger than {max_kb} kB: listed only"
+        elif path.is_file() and (not a.get("size") or path.stat().st_size == a["size"]):
+            entry["path"] = str(path)
+        elif not hasattr(jira, "download"):
+            entry["note"] = "not downloaded: this Jira connection cannot download"
+        else:
+            try:
+                data = jira.download(a["url"], max_kb * 1024)
+            except JiraError as e:
+                report.warnings.append(f"jira: {ticket.key} attachment {a['filename']}: {e}")
+                entry["note"] = f"download failed: {e}"
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                entry["path"] = str(path)
+        report.attachments_kept += entry["path"] is not None
+        kept.append(entry)
+    return kept
 
 
 def _cache_tickets(
-    store: LedgerStore, jira: JiraClient, keys: set[str], report: IngestReport,
-    linked_only: bool = False,
+    config: ProjectConfig, store: LedgerStore, jira: JiraClient, keys: set[str],
+    report: IngestReport, ctx: SourceContext | None = None, linked_only: bool = False,
 ) -> set[str]:  # fmt: skip
     links: set[str] = set()
     failures = 0
-    with store.session() as s, s.begin():
-        for key in sorted(keys):
-            try:
-                ticket = jira.get(key)
-            except JiraError as e:
-                # One unreadable ticket (say, a 403) must not cost the others; a run of
-                # failures means Jira itself is down or the token is wrong.
-                report.warnings.append(f"jira: {key}: {e}")
-                failures += 1
-                if failures >= MAX_TICKET_FAILURES:
-                    report.warnings.append(
-                        f"jira: stopped after {failures} failed tickets in a row"
-                    )
-                    return links
-                continue
-            failures = 0
-            if ticket is None:
-                if not linked_only:
-                    report.tickets_missing.append(key)
-                continue
-            links |= set(ticket.issue_links)
+    for key in sorted(keys):
+        try:
+            ticket = jira.get(key)
+        except JiraError as e:
+            # One unreadable ticket (say, a 403) must not cost the others; a run of
+            # failures means Jira itself is down or the token is wrong.
+            report.warnings.append(f"jira: {key}: {e}")
+            failures += 1
+            if failures >= MAX_TICKET_FAILURES:
+                report.warnings.append(f"jira: stopped after {failures} failed tickets in a row")
+                return links
+            continue
+        failures = 0
+        if ticket is None:
+            if not linked_only:
+                report.tickets_missing.append(key)
+            continue
+        links |= set(ticket.issue_links)
+        if linked_only:  # context for the analysis: listed, not downloaded
+            attachments = [{**a, "path": None, "note": "linked ticket: listed only"}
+                           for a in ticket.attachments]  # fmt: skip
+            remote: list[dict] = []
+        else:
+            attachments = _keep_attachments(config, jira, ticket, report)
+            remote = _remote_links(jira, key, ctx, report)
+        with store.session() as s, s.begin():
             s.merge(
                 Ticket(
                     key=ticket.key,
@@ -169,13 +226,15 @@ def _cache_tickets(
                     status=ticket.status,
                     issue_links=ticket.issue_links,
                     comments=ticket.comments,
+                    attachments=attachments,
+                    remote_links=remote,
                     fetched_at=datetime.now(UTC),
                 )
             )
-            if linked_only:
-                report.linked_tickets_fetched += 1
-            else:
-                report.tickets_fetched += 1
+        if linked_only:
+            report.linked_tickets_fetched += 1
+        else:
+            report.tickets_fetched += 1
     return links
 
 
@@ -219,5 +278,7 @@ def ingest(
                 )
             )
     if jira is not None:
-        _fetch_tickets(store, jira, {k for p in patches for k in p.jira_keys}, report)
+        with_patch = {k for p in patches for k in p.jira_keys}
+        report.tickets_without_patch = sorted(set(ctx.tickets) - with_patch)
+        _fetch_tickets(config, store, jira, with_patch | set(ctx.tickets), report, ctx)
     return report

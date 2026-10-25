@@ -51,7 +51,10 @@ class SourceContext:
     jira: JiraReader | None = None
     has_tree: bool = True  # False: jira_query without a source checkout
     warnings: list[str] = field(default_factory=list)
+    # Every ticket a JQL source found, with or without a patch: each one is kept (ingest).
+    tickets: dict[str, Ticket] = field(default_factory=dict)
     _range: dict[str, list[tuple[str, str]]] = field(default_factory=dict, repr=False)
+    _remote: dict[str, list[dict]] = field(default_factory=dict, repr=False)
 
     @property
     def tree(self) -> Path:
@@ -72,6 +75,16 @@ class SourceContext:
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
+
+    def remote_links(self, key: str) -> list[dict]:
+        """A ticket's remote links (web links), read once; empty when Jira refuses."""
+        if key not in self._remote:
+            try:
+                self._remote[key] = self.jira.remote_links(key)
+            except JiraError as e:
+                self.warn(f"jira_query: {key} remote links: {e}")
+                self._remote[key] = []
+        return self._remote[key]
 
     def range_log(self, project: str) -> list[tuple[str, str]]:
         """(sha, message) of the project's OEM-range commits, oldest first; read once.
@@ -289,13 +302,15 @@ def from_jira_query(src: JiraQuerySource, ctx: SourceContext) -> list[RawPatch]:
         return []
     patches: list[RawPatch] = []
     for ticket in ctx.jira.search(src.jql):
+        ctx.tickets[ticket.key] = ticket
         found = _jira_commits(ctx, ticket.key, "jira_query")
         if src.attachments:
             found += _attachment_patches(ctx, ticket, src.max_attachment_kb * 1024)
         if src.linked_tickets:
             found += _linked_patches(ctx, ticket)
         if not found:
-            ctx.warn(f"jira_query: no patch found for {ticket.key} (commits, attachments, links)")
+            ctx.warn(f"jira_query: no patch found for {ticket.key} (commits, attachments, "
+                     "links); the ticket is kept without one")  # fmt: skip
         patches += found
     return patches
 
@@ -360,7 +375,7 @@ def _attachment_patches(ctx: SourceContext, ticket: Ticket, max_bytes: int) -> l
         except JiraError as e:
             ctx.warn(f"jira_query: {ticket.key} attachment {a['filename']}: {e}")
             continue
-        tmp = ctx.downloads / ticket.key / a["filename"]
+        tmp = attachment_path(ctx.downloads, ticket.key, a["filename"])
         tmp.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(data)
         subject, message, author, diff = _parse_patch_file(tmp)
@@ -374,12 +389,14 @@ def _attachment_patches(ctx: SourceContext, ticket: Ticket, max_bytes: int) -> l
     return found
 
 
+def attachment_path(downloads: Path, key: str, filename: str) -> Path:
+    """Where a ticket's attachment is kept: its name made safe, inside the ticket's folder."""
+    name = re.sub(r"[^\w.-]+", "_", Path(filename).name).lstrip(".") or "attachment"
+    return downloads / re.sub(r"[^\w.-]+", "_", key) / name
+
+
 def _ticket_text(ctx: SourceContext, ticket: Ticket) -> str:
-    try:
-        remote = ctx.jira.remote_links(ticket.key)
-    except JiraError as e:
-        ctx.warn(f"jira_query: {ticket.key} remote links: {e}")
-        remote = []
+    remote = ctx.remote_links(ticket.key)
     return "\n".join([ticket.description, *ticket.comments, *(r["url"] for r in remote)])
 
 

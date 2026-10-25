@@ -148,7 +148,8 @@ class JiraQuerySource(Model):
     type: Literal["jira_query"]
     jql: str
     attachments: bool = Field(
-        default=True, description="Import .diff/.patch attachments of the matching tickets"
+        default=True,
+        description="Import .diff/.patch attachments of the matching tickets as patches",
     )
     linked_tickets: bool = Field(
         default=True,
@@ -199,6 +200,12 @@ class JiraConfig(Model):
     close_not_needed: JiraCloseConfig | None = Field(
         default=None,
         description="Close tickets whose patches a human confirmed are not needed; off if unset",
+    )
+    attachment_max_kb: int = Field(
+        default=2048,
+        ge=1,
+        description="Attachments of imported tickets up to this size are downloaded for the "
+        "analysis; larger ones are only listed",
     )
 
 

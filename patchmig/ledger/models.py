@@ -133,7 +133,12 @@ class KnowledgeItem(Base):
 
 
 class Ticket(Base):
-    """Cached Jira ticket text, shared across runs; refreshed on every ingest."""
+    """Cached Jira ticket, shared across runs; refreshed on every ingest.
+
+    Everything the ticket carries is kept, for the analysis: text, comments, linked tickets,
+    remote links and every attachment (downloaded up to jira.attachment_max_kb; the path is
+    the local copy, None when it was only listed).
+    """
 
     __tablename__ = "tickets"
 
@@ -143,6 +148,9 @@ class Ticket(Base):
     status: Mapped[str] = mapped_column(String(100), default="")
     issue_links: Mapped[list[Any]] = mapped_column(default=list)
     comments: Mapped[list[Any] | None] = mapped_column(default=list)  # "author: text"
+    # filename, url, size, mime, path (local copy or None), note (why not downloaded)
+    attachments: Mapped[list[Any] | None] = mapped_column(default=list)
+    remote_links: Mapped[list[Any] | None] = mapped_column(default=list)  # url, title
     fetched_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

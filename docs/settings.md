@@ -100,10 +100,10 @@ Pick the `type` first, the other fields depend on it.
 | `git_range` | `projects`: `all` (default) or a list of project paths | `[frameworks/base, packages/services/Car]` | Every commit between `base_ref` and `head_ref` in the source tree |
 | `diff_folder` | `path` * : a folder | `diffs/` | Every `.diff` / `.patch` file in it. Put each file in a subfolder named after the project path (`diffs/frameworks/base/0001.patch`), unless its paths start with the project path |
 | `spreadsheet` | `path` * : an `.xlsx` or `.csv` file (first row = column names); `sheet`: sheet name (default: the first); `columns`: your column names | `columns: {commit: "Commit", project: "Repo", jira: "Ticket", subject: "Title"}` | One patch per row. `commit` is looked up in the source tree; `jira` keys are read from Jira. Columns you don't map are expected under their own names (`commit`, `project`, `jira`, `subject`) |
-| `jira_query` | `jql` * : a Jira search | `project = OEM AND labels = migrate-a15` | The matching tickets. Needs the [Jira](#jira) section; the only source that works before the source tree is checked out |
-|  | `attachments` | `true` (default) | Imports `.diff` / `.patch` files attached to the tickets |
+| `jira_query` | `jql` * : a Jira search | `project = OEM AND labels = migrate-a15` | The matching tickets, all kept, with or without a patch. Needs the [Jira](#jira) section; the only source that works before the source tree is checked out |
+|  | `attachments` | `true` (default) | Imports `.diff` / `.patch` files attached to the tickets as patches (every attachment is kept for the analysis anyway, see `jira.attachment_max_kb`) |
 |  | `linked_tickets` | `true` (default) | Also follows linked tickets for commit and PR links |
-|  | `max_attachment_kb` | `2048` (default) | Larger attachments are skipped |
+|  | `max_attachment_kb` | `2048` (default) | Larger `.diff` / `.patch` attachments are not imported as patches |
 
 ---
 
@@ -162,6 +162,7 @@ export. Leave the section off if you don't use Jira.
 | `close_not_needed.transition` * | Name of the workflow transition | `Close` or `Done` | |
 | `close_not_needed.resolution` | Resolution, if the transition screen asks for one | `Won't Do` | |
 | `close_not_needed.outcomes` | Which outcomes close a ticket | `[upstream, obsolete, reverted]` (default) | |
+| `attachment_max_kb` | Attachments of imported tickets up to this size are downloaded; larger ones are only listed | `2048` (default) | Import: logs, documents and patches attached to a ticket are kept for the analysis |
 
 The tool never needs custom fields: it writes labels, links and one comment.
 

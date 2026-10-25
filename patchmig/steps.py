@@ -152,8 +152,11 @@ def ingest(ctx: Context, use_jira: bool = True, note: str | None = None) -> int:
     if jira is not None:
         ctx.info(
             f"  Jira tickets fetched: {report.tickets_fetched} "
-            f"(+{report.linked_tickets_fetched} linked)"
+            f"(+{report.linked_tickets_fetched} linked), "
+            f"attachments kept: {report.attachments_kept}"
         )
+        if report.tickets_without_patch:
+            ctx.info(f"  tickets without a patch (kept): {', '.join(report.tickets_without_patch)}")
         if report.tickets_missing:
             ctx.info(f"  Jira tickets not found: {', '.join(report.tickets_missing)}")
     for w in report.warnings:
