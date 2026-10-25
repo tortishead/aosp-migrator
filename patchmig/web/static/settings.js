@@ -6,6 +6,7 @@ import { createContext, html, useContext, useEffect, useState } from "./htm-prea
 const Ctx = createContext(null);
 const TOKEN_KEY = "patchmig-admin-token";
 const AUTHOR_KEY = "patchmig-author";
+const NO_TOKEN = document.body.dataset.token === "off"; // started without --admin-token
 
 const SECTIONS = [
   ["general", "General", ["name", "workdir", "migration"], []],
@@ -368,7 +369,7 @@ export function SettingsPage({ section }) {
   };
 
   const save = async (kind) => {
-    if (!token) { setMessage({ error: true, text: "Enter the admin token first (printed by migrate serve, or PATCHMIG_ADMIN_TOKEN)." }); return; }
+    if (!token && !NO_TOKEN) { setMessage({ error: true, text: "Enter the admin token first (printed by migrate serve, or PATCHMIG_ADMIN_TOKEN)." }); return; }
     if (!author.trim()) { setMessage({ error: true, text: "Enter your name: it is recorded with the change." }); return; }
     setBusy(true); setMessage(null);
     const body = kind === "yaml" ? { version: view.version, author, yaml: yamlText } : { version: view.version, author, values, secrets: pending };
@@ -393,7 +394,7 @@ export function SettingsPage({ section }) {
     <h1>Settings <span class="muted">· ${view.path}</span></h1>
     <p class="muted small">What each field means and what to enter: <a href=${`${GUIDE}#${(current && GUIDE_ANCHORS[current[0]]) || ""}`} target="_blank" rel="noopener">settings guide</a>.</p>
     ${view.editable ? html`<div class="panel signin">
-        <label>Admin token <input type="password" autocomplete="off" value=${token} onInput=${(e) => { setToken(e.target.value); store(sessionStorage, TOKEN_KEY, e.target.value); }} /></label>
+        ${NO_TOKEN ? null : html`<label>Admin token <input type="password" autocomplete="off" value=${token} onInput=${(e) => { setToken(e.target.value); store(sessionStorage, TOKEN_KEY, e.target.value); }} /></label>`}
         <label>Your name <input type="text" value=${author} onInput=${(e) => { setAuthor(e.target.value); store(localStorage, AUTHOR_KEY, e.target.value); }} /></label>
         <span class="muted small">Saving rewrites ${view.exists ? "the file without its comments (the YAML tab keeps them)" : "a new file"}; the previous version is kept in .patchmig/config-history. Tokens go to ${view.secrets_dir}.</span>
       </div>` : html`<p class="muted">Read-only: this server was started with <code>--read-only</code>.</p>`}

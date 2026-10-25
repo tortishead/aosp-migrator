@@ -5,6 +5,7 @@
 import { html, render, useEffect, useState } from "./htm-preact.js";
 import { SettingsPage } from "./settings.js";
 import { JobButton, MemoryPage, NotesPage, NotesPanel, ReportPage, ReviewActions, RunPage, STATIC, useActions } from "./actions.js";
+import { ProjectSwitcher, WORKSPACE, WorkspacePage } from "./workspace.js";
 
 async function load(path) {
   const url = STATIC ? `data/${path}.json` : `api/${path}`;
@@ -622,7 +623,7 @@ const LIVE_ONLY = new Set(["notes", "report"]);
 function ProjectShell({ page, run, children }) {
   return html`
     <header>
-      <span class="title">Patch migration</span>
+      <span class="title">Patch migration</span><${ProjectSwitcher} />
       <nav>${run ? html`<a href=${`#/r/${run}`}>Overview</a>` : null}
         <a class=${page === "run" ? "active" : ""} href="#/run">Run</a>
         <a class=${page === "memory" ? "active" : ""} href="#/memory">Memory</a>
@@ -664,7 +665,7 @@ function App() {
     else body = html`<${Dashboard} run=${run} />`;
     return html`
       <header>
-        <span class="title">Patch migration${STATIC ? html` <span class="badge-static">static snapshot</span>` : null}</span>
+        <span class="title">Patch migration${STATIC ? html` <span class="badge-static">static snapshot</span>` : null}</span><${ProjectSwitcher} />
         <nav>${TABS.filter(([p]) => !STATIC || !LIVE_ONLY.has(p)).map(([p, name]) => html`<a class=${page === p ? "active" : ""} href=${`#/r/${run}${p ? `/${p}` : ""}`}>${name}</a>`)}
           <a class=${page === "runs" ? "active" : ""} href="#/runs">Runs</a>
           ${STATIC ? null : html`<span class="nav-sep"></span><a href="#/run">Run</a><a href="#/memory">Memory</a><a href="#/settings">Settings</a>`}</nav>
@@ -676,4 +677,6 @@ function App() {
   }}<//>`;
 }
 
-render(html`<${App} />`, document.getElementById("app"));
+const root = document.getElementById("app");
+root.textContent = ""; // the page's own "Loading…", which Preact would leave beside the list
+render(WORKSPACE === "" ? html`<${WorkspacePage} />` : html`<${App} />`, root);

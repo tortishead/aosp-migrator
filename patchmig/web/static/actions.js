@@ -1,9 +1,11 @@
 // Everything a person does from the browser besides settings: run steps as background jobs,
 // review clusters, edit engineer notes, decide on memory lessons. Every write needs the admin
-// token (the same one as for Settings) and a name, which is recorded with the change.
+// token (the same one as for Settings) and a name, which is recorded with the change. A server
+// started without --admin-token (data-token="off") asks only for the name.
 import { html, useEffect, useRef, useState } from "./htm-preact.js";
 
 export const STATIC = document.body.dataset.mode === "static";
+export const NO_TOKEN = document.body.dataset.token === "off";
 const TOKEN_KEY = "patchmig-admin-token";
 const AUTHOR_KEY = "patchmig-author";
 
@@ -32,7 +34,7 @@ export function useAuth() {
     if (t !== auth.token || a !== auth.author) setAuth(t, a);
     return () => auth.listeners.delete(f);
   }, []);
-  return { token: auth.token, author: auth.author, ready: Boolean(auth.token && auth.author.trim()) };
+  return { token: auth.token, author: auth.author, ready: Boolean((NO_TOKEN || auth.token) && auth.author.trim()) };
 }
 
 export async function call(method, path, body) {
@@ -67,15 +69,16 @@ export function SignIn() {
   const [msg, setMsg] = useState(null);
   const save = async () => {
     setAuth(t, a);
-    if (!t || !a.trim()) { setMsg({ error: true, text: "Enter both the admin token and your name." }); return; }
+    if (NO_TOKEN && !a.trim()) { setMsg({ error: true, text: "Enter your name." }); return; }
+    if (!NO_TOKEN && (!t || !a.trim())) { setMsg({ error: true, text: "Enter both the admin token and your name." }); return; }
     try { await call("GET", "settings/auth"); setMsg({ text: "Signed in." }); } catch (e) { setMsg({ error: true, text: e.message }); }
   };
   return html`<div class="panel signin">
-    <label>Admin token <input type="password" autocomplete="off" value=${t} onInput=${(e) => setT(e.target.value)} /></label>
+    ${NO_TOKEN ? null : html`<label>Admin token <input type="password" autocomplete="off" value=${t} onInput=${(e) => setT(e.target.value)} /></label>`}
     <label>Your name <input type="text" value=${a} onInput=${(e) => setA(e.target.value)} /></label>
     <button type="button" class="primary" onClick=${save}>Sign in</button>
     ${msg ? html`<span class=${msg.error ? "field-error inline" : "ok"}>${msg.text}</span>` : null}
-    <span class="muted small">The token is printed by <code>migrate serve</code> (or set in PATCHMIG_ADMIN_TOKEN). Your name is recorded with every action.</span>
+    <span class="muted small">${NO_TOKEN ? "" : html`The token is printed by <code>migrate serve</code> (or set in PATCHMIG_ADMIN_TOKEN). `}Your name is recorded with every action.</span>
   </div>`;
 }
 

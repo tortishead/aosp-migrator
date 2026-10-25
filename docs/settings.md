@@ -18,7 +18,9 @@ How to read it:
   tokens, Copilot, Jira and the build host. They cost no Copilot credits.
 
 The admin token you type at the top of the page is not part of the config: it is
-`PATCHMIG_ADMIN_TOKEN`, or the one-time token `migrate serve` prints when it starts.
+`PATCHMIG_ADMIN_TOKEN`, or the one-time token `migrate serve` prints when it starts. It is
+asked for only when the token is on (`migrate serve --admin-token`, or `PATCHMIG_ADMIN_TOKEN`
+set); by default saving needs only your name.
 
 Contents: [General](#general) · [Trees and repos](#trees-and-repos) ·
 [Patch sources](#patch-sources) · [Copilot](#copilot) · [Jira](#jira) ·

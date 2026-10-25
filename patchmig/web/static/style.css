@@ -86,6 +86,7 @@ header nav { display: flex; flex-wrap: wrap; gap: 4px; }
 header nav a { padding: 4px 10px; border-radius: 6px; color: var(--text); }
 header nav a.active { background: var(--bg); font-weight: 600; }
 header select { margin-left: auto; }
+header select.project-switch { margin-left: 0; font-weight: 600; }
 .badge-static { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; }
 
 main { max-width: 1200px; margin: 0 auto; padding: 16px; }
@@ -295,3 +296,6 @@ h1 .conf { vertical-align: 2px; }
 details.conf-scale { margin: 0 0 12px; }
 details.conf-scale table { width: auto; }
 details.conf-scale td { border-bottom: 0; padding: 2px 10px 2px 0; }
+
+/* workspace: project list and switcher */
+a.button-link { align-self: flex-start; margin-top: auto; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }

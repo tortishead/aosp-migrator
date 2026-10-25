@@ -4,13 +4,15 @@
 command line does can be done here: run the steps (as background jobs, see jobs.py, with
 the same code as `migrate <step>`), take review decisions, edit the engineer notes, approve
 memory lessons and edit the settings. Reading needs nothing; every write (and every
-connection test, which uses the stored credentials) needs the admin token as a Bearer token.
+connection test, which uses the stored credentials) needs the admin token as a Bearer token,
+unless the server was started without one (`token_required=False`).
 """
 
 from __future__ import annotations
 
 import hmac
 import json
+import threading
 from dataclasses import dataclass
 from html import escape
 from importlib.resources import files
@@ -31,12 +33,19 @@ from patchmig.web.jobs import Busy, JobManager
 STATIC = Path(str(files("patchmig.web").joinpath("static")))
 
 
-def index_html(static: bool) -> str:
-    """The page, with the mode and the confidence scale (shared with the agents' briefs)."""
+def index_html(static: bool, workspace: str | None = None, token: bool = True) -> str:
+    """The page, with the mode and the confidence scale (shared with the agents' briefs).
+
+    `workspace` is the project's folder when a workspace server serves it (the header then
+    switches projects), or "" for the workspace's own page, which lists them. `token` is
+    False when actions need no admin token: the sign-in then asks only for a name.
+    """
     html = (STATIC / "index.html").read_text()
     mode = "static" if static else "live"
     levels = escape(json.dumps(confidence.scale()), quote=True)
-    return html.replace('data-mode="live"', f'data-mode="{mode}" data-confidence="{levels}"')
+    extra = "" if workspace is None else f' data-workspace="{escape(workspace, quote=True)}"'
+    extra += "" if token else ' data-token="off"'
+    return html.replace('data-mode="live"', f'data-mode="{mode}" data-confidence="{levels}"{extra}')
 
 
 @dataclass
@@ -120,16 +129,25 @@ def create_app(
     editor: SettingsEditor | None = None,
     admin_token: str | None = None,
     hooks: dict | None = None,
+    folder: str | None = None,
+    gate: threading.Lock | None = None,
+    token_required: bool = True,
 ) -> FastAPI:
-    """`hooks` replaces the step context's factories (adapter, jira, review_host): for tests."""
+    """`hooks` replaces the step context's factories (adapter, jira, review_host): for tests.
+
+    `folder` and `gate` are set by a workspace server (workspace.py): the project's folder
+    there, and the lock its projects share so that only one job runs at a time.
+    With `token_required` False, writes need no admin token (and `admin_token` is ignored).
+    """
     app = FastAPI(title="patchmig", docs_url="/api/docs", openapi_url="/api/openapi.json")
     ws = Workspace(config, store)
+    app.state.ws = ws
 
     def make_context(log: steps.Log) -> steps.Context:
         return steps.Context(editor.path, ws.config, ws.store, log, **(hooks or {}))
 
-    folder = editor.path.parent / ".patchmig" / "jobs" if editor else None
-    jobs = JobManager(folder, make_context)
+    jobs_folder = editor.path.parent / ".patchmig" / "jobs" if editor else None
+    jobs = JobManager(jobs_folder, make_context, gate)
     app.state.jobs = jobs
 
     def get(fn, *args):
@@ -140,15 +158,19 @@ def create_app(
         except data.NotFound as e:
             raise HTTPException(404, str(e)) from e
 
+    actions = editor is not None and (bool(admin_token) or not token_required)
+
     def admin(authorization: str | None = Header(default=None)) -> None:
-        if editor is None or not admin_token:
+        if not actions:
             raise HTTPException(403, "this server is read-only (started with --read-only)")
+        if not token_required:
+            return
         given = (authorization or "").removeprefix("Bearer ").strip()
         if not hmac.compare_digest(given.encode(), admin_token.encode()):
             raise HTTPException(401, "admin token missing or wrong")
 
     def settings_view(view: dict) -> dict:
-        return {**view, "editable": bool(editor and admin_token)}
+        return {**view, "editable": actions}
 
     def saved(view: dict) -> dict:
         problem = ws.reload(editor.path)
@@ -190,7 +212,7 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index() -> str:
-        return index_html(static=False)
+        return index_html(static=False, workspace=folder, token=token_required)
 
     @app.get("/api/runs")
     def runs() -> list[dict]:
@@ -260,7 +282,7 @@ def create_app(
     @app.get("/api/steps")
     def step_list() -> dict:
         return {"steps": steps.catalogue(), "pipeline": steps.PIPELINE,
-                "actions": bool(editor and admin_token)}  # fmt: skip
+                "actions": actions}  # fmt: skip
 
     @app.get("/api/jobs")
     def job_list() -> list[dict]:

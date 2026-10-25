@@ -2,9 +2,10 @@
 
 A job is one step or a pipeline of steps (patchmig.steps, the same code the command line
 runs). The server runs at most one job at a time, so two people cannot spend credits twice
-or move the same clusters at once. Each job is kept as JSON in the jobs folder next to the
-config, so the history survives a restart; a job that was running when the server stopped
-is marked interrupted.
+or move the same clusters at once; a workspace server (workspace.py) shares one gate between
+its projects, so that holds across projects too. Each job is kept as JSON in the jobs folder
+next to the config, so the history survives a restart; a job that was running when the server
+stopped is marked interrupted.
 """
 
 from __future__ import annotations
@@ -61,11 +62,20 @@ class Job:
 
 
 class JobManager:
-    """Starts jobs and keeps them. `make_context(log)` gives a step context for a new job."""
+    """Starts jobs and keeps them. `make_context(log)` gives a step context for a new job.
 
-    def __init__(self, folder: Path | None, make_context: Callable[[steps.Log], steps.Context]):
+    `gate`, when given, is held while a job runs: managers that share it run one job between them.
+    """
+
+    def __init__(
+        self,
+        folder: Path | None,
+        make_context: Callable[[steps.Log], steps.Context],
+        gate: threading.Lock | None = None,
+    ):
         self.folder = folder
         self.make_context = make_context
+        self.gate = gate
         self.jobs: dict[int, Job] = {}
         self.lock = threading.Lock()
         self.active: tuple[Job, steps.Context] | None = None
@@ -137,6 +147,8 @@ class JobManager:
         with self.lock:
             if self.active is not None:
                 raise Busy(f"job {self.active[0].id} is still running")
+            if self.gate is not None and not self.gate.acquire(blocking=False):
+                raise Busy("a job of another project is running; try again when it has finished")
             job = Job(
                 id=max(self.jobs, default=0) + 1,
                 steps=list(names),
@@ -202,3 +214,5 @@ class JobManager:
             job.finished_at = _now().isoformat(timespec="seconds")
             self.active = None
             self._save(job)
+        if self.gate is not None:
+            self.gate.release()
