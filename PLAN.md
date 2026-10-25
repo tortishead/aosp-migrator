@@ -8,6 +8,7 @@ Source of requirements: [spec.md](spec.md).
 - Each milestone starts with a grilling session for its open questions, then this file gets a detailed step list for it.
 - Each step inside a milestone ends with passing tests. No step starts while the previous one is red.
 - `make test` runs all backend and frontend tests. It must be green at the end of every step.
+- Each finished step is committed and marked "— done" below, so a fresh session can resume from this file and `git log`.
 
 ## Milestones
 
@@ -98,14 +99,15 @@ Makefile            # dev, build, test
 
 Each step lists what is built and what proves it works.
 
-**1.1 Scaffold**
+**1.1 Scaffold** — done
 - Python package (uv), FastAPI app with `/api/health`, `aosp-migrator serve` serving the built frontend, Vite React app with routing shell, Makefile (`dev`, `build`, `test`).
 - Test: pytest hits `/api/health`; `serve` returns `index.html` for `/` and for a deep link; `make test` green.
 
-**1.2 Config, settings, access**
+**1.2 Config, settings, access** — done
 - Data dir resolution, `config.toml` read/write with `0600`, env override, settings API (secrets as set/not set), `--lan` flag with token login.
 - Settings page: Jira base URL, Jira PAT, test connection (`GET /rest/api/2/myself`).
 - Test: file permissions, env override precedence, secret never in API responses, token required with `--lan` and not without.
+- As built: env vars `AOSP_MIGRATOR_JIRA_BASE_URL`, `AOSP_MIGRATOR_JIRA_PAT`, `AOSP_MIGRATOR_GITHUB_PAT`, `AOSP_MIGRATOR_LAN_TOKEN`. LAN token is auto-generated into `[server] lan_token` on first `--lan` start; login sets an HttpOnly cookie, `Authorization: Bearer` also accepted. Cookie is not `Secure` (plain HTTP on LAN). Test connection accepts unsaved form values. Outgoing HTTP uses an injectable `httpx2` transport (`create_app(http_transport=...)`) for tests.
 
 **1.3 Database and workspaces**
 - SQLAlchemy models + first Alembic migration, workspace CRUD API with path validation.

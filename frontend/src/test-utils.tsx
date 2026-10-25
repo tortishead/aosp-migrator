@@ -1,0 +1,51 @@
+import { QueryClientProvider } from "@tanstack/react-query";
+import { render } from "@testing-library/react";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import { vi } from "vitest";
+
+import { createQueryClient } from "./queryClient";
+import { routes } from "./routes";
+
+type Reply = unknown | { status: number; body: unknown };
+type Handler = (body: unknown) => Reply;
+
+export interface ApiCall {
+  method: string;
+  path: string;
+  body: unknown;
+}
+
+/** Stub fetch for `/api/*`. Keys look like "GET /settings". Returns the recorded calls. */
+export function mockApi(handlers: Record<string, Handler>): ApiCall[] {
+  const calls: ApiCall[] = [];
+  const merged: Record<string, Handler> = {
+    "GET /auth/status": () => ({ required: false, authenticated: true }),
+    ...handlers,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = init.method ?? "GET";
+      const path = url.replace(/^\/api/, "");
+      const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+      calls.push({ method, path, body });
+      const handler = merged[`${method} ${path}`];
+      if (!handler) return new Response(JSON.stringify({ detail: "Not mocked" }), { status: 404 });
+      const reply = handler(body);
+      const isWrapped = typeof reply === "object" && reply !== null && "status" in reply && "body" in reply;
+      const status = isWrapped ? (reply as { status: number }).status : 200;
+      const payload = isWrapped ? (reply as { body: unknown }).body : reply;
+      return new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+  return calls;
+}
+
+export function renderRoute(path: string) {
+  const router = createMemoryRouter(routes, { initialEntries: [path] });
+  return render(
+    <QueryClientProvider client={createQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+}

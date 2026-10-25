@@ -37,3 +37,51 @@ body {
 .app-main {
   padding: 16px;
 }
+
+.app-logout {
+  margin-left: auto;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 480px;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 500;
+}
+
+.form input {
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.hint {
+  margin: 0;
+  color: #59636e;
+  font-size: 0.9em;
+}
+
+.error {
+  color: #d1242f;
+}
+
+.success {
+  color: #1a7f37;
+}
+
+.login {
+  max-width: 480px;
+  margin: 64px auto;
+  padding: 0 16px;
+}

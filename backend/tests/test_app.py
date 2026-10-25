@@ -4,19 +4,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aosp_migrator.app import create_app
+from aosp_migrator.config import Config
 
 
 @pytest.fixture
-def static_dir(tmp_path: Path) -> Path:
-    (tmp_path / "index.html").write_text("<html>app</html>")
-    (tmp_path / "assets").mkdir()
-    (tmp_path / "assets" / "main.js").write_text("console.log(1)")
-    return tmp_path
-
-
-@pytest.fixture
-def client(static_dir: Path) -> TestClient:
-    return TestClient(create_app(static_dir=static_dir))
+def client(config: Config, static_dir: Path) -> TestClient:
+    return TestClient(create_app(config, static_dir=static_dir))
 
 
 def test_health(client: TestClient) -> None:
@@ -52,6 +45,8 @@ def test_path_traversal_falls_back_to_index(client: TestClient, static_dir: Path
     assert "secret" not in response.text
 
 
-def test_missing_bundle_is_404(tmp_path: Path) -> None:
-    client = TestClient(create_app(static_dir=tmp_path))
+def test_missing_bundle_is_404(config: Config, tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    client = TestClient(create_app(config, static_dir=empty))
     assert client.get("/").status_code == 404
