@@ -619,6 +619,19 @@ function RunsPage({ runs }) {
 const TABS = [["", "Overview"], ["review", "Review"], ["patches", "Patches"], ["clusters", "Clusters"], ["notes", "Notes"], ["knowledge", "Knowledge"], ["agents", "Agent calls"], ["report", "Report"], ["config", "Config"]];
 const LIVE_ONLY = new Set(["notes", "report"]);
 
+// The Settings link, with a red dot while a required field is not set.
+function SettingsLink({ active }) {
+  const [missing, setMissing] = useState([]);
+  useEffect(() => {
+    const load = () => fetch("api/settings/missing").then((r) => (r.ok ? r.json() : [])).then(setMissing, () => {});
+    load();
+    window.addEventListener("patchmig-settings-saved", load);
+    return () => window.removeEventListener("patchmig-settings-saved", load);
+  }, []);
+  return html`<a class=${active ? "active" : ""} href="#/settings">Settings${missing.length
+    ? html`<span class="dot" title=${`required fields not set: ${missing.join(", ")}`}></span>` : null}</a>`;
+}
+
 // Pages for the whole project, not one run: Run, Memory, Settings.
 function ProjectShell({ page, run, children }) {
   return html`
@@ -627,7 +640,7 @@ function ProjectShell({ page, run, children }) {
       <nav>${run ? html`<a href=${`#/r/${run}`}>Overview</a>` : null}
         <a class=${page === "run" ? "active" : ""} href="#/run">Run</a>
         <a class=${page === "memory" ? "active" : ""} href="#/memory">Memory</a>
-        <a class=${page === "settings" ? "active" : ""} href="#/settings">Settings</a></nav>
+        <${SettingsLink} active=${page === "settings"} /></nav>
     </header>
     <main>${children}</main>`;
 }
@@ -638,7 +651,7 @@ function App() {
   const parts = useRoute();
   useEffect(() => { if (parts[0] === "run" || parts[0] === "r") reload(); }, [parts.join("/")]);
   return html`<${Loading} state=${runs}>${(list) => {
-    if (!STATIC && parts[0] === "settings") return html`<${ProjectShell} page="settings" run=${list[0]?.id}><${SettingsPage} key=${`settings/${parts[1] || ""}`} section=${parts[1]} /><//>`;
+    if (!STATIC && parts[0] === "settings") return html`<${ProjectShell} page="settings" run=${list[0]?.id}><${SettingsPage} section=${parts[1]} /><//>`;
     if (!STATIC && parts[0] === "run") return html`<${ProjectShell} page="run" run=${list[0]?.id}><${RunPage} runs=${list} jobId=${parts[1]} onRunsChanged=${reload} /><//>`;
     if (!STATIC && parts[0] === "memory") return html`<${ProjectShell} page="memory" run=${list[0]?.id}><${MemoryPage} run=${list[0]?.id} /><//>`;
     if (!list.length) {
@@ -668,7 +681,7 @@ function App() {
         <span class="title">Patch migration${STATIC ? html` <span class="badge-static">static snapshot</span>` : null}</span><${ProjectSwitcher} />
         <nav>${TABS.filter(([p]) => !STATIC || !LIVE_ONLY.has(p)).map(([p, name]) => html`<a class=${page === p ? "active" : ""} href=${`#/r/${run}${p ? `/${p}` : ""}`}>${name}</a>`)}
           <a class=${page === "runs" ? "active" : ""} href="#/runs">Runs</a>
-          ${STATIC ? null : html`<span class="nav-sep"></span><a href="#/run">Run</a><a href="#/memory">Memory</a><a href="#/settings">Settings</a>`}</nav>
+          ${STATIC ? null : html`<span class="nav-sep"></span><a href="#/run">Run</a><a href="#/memory">Memory</a><${SettingsLink} />`}</nav>
         <select aria-label="Run" value=${run} onChange=${(e) => { location.hash = `#/r/${e.target.value}${page && page !== "runs" ? `/${page}` : ""}`; }}>
           ${list.map((r) => html`<option value=${r.id}>Run ${r.id}${r.note ? ` · ${r.note}` : ""}</option>`)}
         </select>
