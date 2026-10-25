@@ -171,6 +171,47 @@ def test_without_a_valid_config_the_server_starts_with_settings_only(tmp_path: P
     assert path.exists() and client.get("/api/runs").json() == []  # ledger opened
 
 
+def test_without_the_admin_token_writes_need_only_a_name(make_config):  # noqa: F811
+    path = make_config([{"type": "git_range"}])
+    cfg = load_config(path)
+    store = LedgerStore.open(cfg.ledger_path)
+    client = TestClient(create_app(cfg, store, SettingsEditor(path), None, token_required=False))
+    assert 'data-token="off"' in client.get("/").text
+    view = client.get("/api/settings").json()
+    assert view["editable"] and client.get("/api/steps").json()["actions"]
+    assert client.get("/api/settings/auth").status_code == 200
+    body = {"version": view["version"], "author": "x", "values": view["values"]}
+    assert client.put("/api/settings", json=body).status_code == 200
+    guarded = TestClient(create_app(cfg, store, SettingsEditor(path), "t"))
+    assert "data-token" not in guarded.get("/").text
+    assert guarded.get("/api/settings/auth").status_code == 401
+
+
+def test_serve_needs_the_admin_token_only_when_asked(monkeypatch, make_config):  # noqa: F811
+    import uvicorn
+
+    path = make_config([{"type": "git_range"}])
+    served = []
+    monkeypatch.setattr(uvicorn, "run", lambda web, **kw: served.append(TestClient(web)))
+    monkeypatch.delenv("PATCHMIG_ADMIN_TOKEN", raising=False)
+
+    def serve(*args: str) -> TestClient:
+        result = CliRunner().invoke(cli, ["serve", "-c", str(path), *args])
+        assert result.exit_code == 0, result.output
+        return served.pop()
+
+    assert serve().get("/api/settings/auth").status_code == 200
+    assert serve("--admin-token").get("/api/settings/auth").status_code == 401
+    assert serve("--host", "0.0.0.0").get("/api/settings/auth").status_code == 200
+    monkeypatch.setenv("PATCHMIG_ADMIN_TOKEN", "env-token")
+    client = serve()
+    assert client.get("/api/settings/auth").status_code == 401
+    ok = client.get("/api/settings/auth", headers={"Authorization": "Bearer env-token"})
+    assert ok.status_code == 200
+    assert serve("--no-admin-token").get("/api/settings/auth").status_code == 200
+    assert serve("--read-only").get("/api/settings/auth").status_code == 403
+
+
 def test_git_token_reaches_git_only_for_its_host(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("BB_TOKEN", "bbtok")
     cases = [

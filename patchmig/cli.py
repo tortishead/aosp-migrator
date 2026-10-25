@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from importlib.resources import files
 from pathlib import Path
 from typing import Annotated
 
@@ -13,7 +12,7 @@ from patchmig import steps
 from patchmig.agents.adapter import AgentRuntimeError, AgentTask, ToolPolicy, extract_json
 from patchmig.agents.copilot import CopilotCliAdapter
 from patchmig.confidence import describe
-from patchmig.config import ConfigError, ProjectConfig, dump_config, load_config
+from patchmig.config import ConfigError, ProjectConfig, dump_config, load_config, new_project
 from patchmig.jira_client import HttpJiraClient, JiraClient
 from patchmig.ledger import Cluster, LedgerStore, Patch, Run, State
 from patchmig.verify import VerifyError, check_host
@@ -34,6 +33,10 @@ ConfigOption = Annotated[
     Path, typer.Option("--config", "-c", help="Project config file", envvar="PATCHMIG_CONFIG")
 ]
 DEFAULT_CONFIG = Path("project.yaml")
+WorkspaceOption = Annotated[
+    Path | None,
+    typer.Option(help="Serve every <folder>/project.yaml in this folder (instead of --config)"),
+]
 RunOption = Annotated[int | None, typer.Option("--run", help="Run id (default: latest)")]
 ByOption = Annotated[str, typer.Option("--by", help="Who decides (recorded as human:<name>)")]
 
@@ -70,13 +73,11 @@ def init(
     directory: Annotated[Path, typer.Argument(help="Project folder")] = Path("."),
 ) -> None:
     """Create a project folder with an example config to edit."""
-    target = directory / "project.yaml"
-    if target.exists():
-        typer.secho(f"{target} already exists; not overwriting it.", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
-    directory.mkdir(parents=True, exist_ok=True)
-    template = files("patchmig.templates").joinpath("project.example.yaml").read_text()
-    target.write_text(template)
+    try:
+        target = new_project(directory)
+    except FileExistsError as e:
+        typer.secho(f"{e} already exists; not overwriting it.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from e
     typer.echo(f"Created {target}. Edit it, then run: migrate config validate -c {target}")
 
 
@@ -734,6 +735,14 @@ def serve_cmd(
     read_only: Annotated[
         bool, typer.Option("--read-only", help="Only show results: no actions, no settings edits")
     ] = False,
+    admin_token: Annotated[
+        bool | None,
+        typer.Option(
+            "--admin-token/--no-admin-token",
+            help="Require the admin token for actions and settings edits "
+            "(default: off, unless PATCHMIG_ADMIN_TOKEN is set)",
+        ),
+    ] = None,
     secrets_dir: Annotated[
         Path | None,
         typer.Option(
@@ -741,12 +750,17 @@ def serve_cmd(
             "(default: .patchmig/secrets next to the config)"
         ),
     ] = None,  # fmt: skip
+    workspace: WorkspaceOption = None,
 ) -> None:
     """Serve the web front end: run every step, review, notes, lessons and settings there.
 
-    Actions need the admin token: set PATCHMIG_ADMIN_TOKEN, or use the one printed at start.
+    Actions need no admin token by default: anyone who can reach the server can run steps
+    and edit the settings. With --admin-token (or PATCHMIG_ADMIN_TOKEN set) they need it:
+    the one in PATCHMIG_ADMIN_TOKEN, or the one printed at start.
     To start it at boot, see `migrate service-file`.
     Without a valid config the server starts with only the settings, to create one.
+    With --workspace it serves every <folder>/project.yaml in that folder instead of one
+    config: switch between them in the header, and create new ones in the browser.
     """
     import os
     import secrets
@@ -756,30 +770,49 @@ def serve_cmd(
     from patchmig.config.editor import SettingsEditor
     from patchmig.web.api import create_app
 
-    try:
-        cfg = load_config(config)
-        store = LedgerStore.open(cfg.ledger_path)
-        name = cfg.name
-    except ConfigError as e:
-        if read_only:
-            typer.secho(str(e), fg=typer.colors.RED, err=True)
-            raise typer.Exit(1) from e
-        cfg, store, name = None, None, str(config)
-        typer.secho(f"{e}\nStarting with the settings only: fix the config in the browser.",
-                    fg=typer.colors.YELLOW)  # fmt: skip
-    editor = SettingsEditor(config, secrets_dir)
+    if admin_token is None:
+        admin_token = "PATCHMIG_ADMIN_TOKEN" in os.environ
     token = None
-    if not read_only:
+    if not read_only and admin_token:
         token = os.environ.get("PATCHMIG_ADMIN_TOKEN") or secrets.token_urlsafe(18)
+    if workspace is not None:
+        from patchmig.web.workspace import create_workspace_app
+
+        if secrets_dir is not None:
+            message = ("--secrets-dir needs one config: in a workspace each project keeps its own "
+                       "(.patchmig/secrets in its folder).")  # fmt: skip
+            typer.secho(message, fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
+        workspace.mkdir(parents=True, exist_ok=True)
+        web = create_workspace_app(workspace, token, read_only, token_required=admin_token)
+        name = f"workspace {workspace.resolve()}"
+    else:
+        try:
+            cfg = load_config(config)
+            store = LedgerStore.open(cfg.ledger_path)
+            name = cfg.name
+        except ConfigError as e:
+            if read_only:
+                typer.secho(str(e), fg=typer.colors.RED, err=True)
+                raise typer.Exit(1) from e
+            cfg, store, name = None, None, str(config)
+            typer.secho(f"{e}\nStarting with the settings only: fix the config in the browser.",
+                        fg=typer.colors.YELLOW)  # fmt: skip
+        web = create_app(cfg, store, SettingsEditor(config, secrets_dir), token,
+                         token_required=admin_token)  # fmt: skip
     typer.echo(f"Serving {name} on http://{host}:{port}/ (Ctrl+C to stop)")
     if read_only:
         typer.echo("Read-only: results only, no actions and no settings edits.")
+    elif not admin_token:
+        typer.echo("Actions and settings: no admin token needed (--admin-token to require one).")
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            typer.secho(f"Warning: anyone who can reach {host}:{port} can run steps and edit "
+                        "the settings.", fg=typer.colors.YELLOW)  # fmt: skip
     elif "PATCHMIG_ADMIN_TOKEN" in os.environ:
         typer.echo("Actions and settings: admin token from PATCHMIG_ADMIN_TOKEN.")
     else:
         typer.echo(f"Actions and settings: admin token for this session: {token}")
-    uvicorn.run(create_app(cfg, store, editor, token), host=host, port=port,
-                log_level="warning")  # fmt: skip
+    uvicorn.run(web, host=host, port=port, log_level="warning")
 
 
 @app.command("service-file")
@@ -788,6 +821,7 @@ def service_file_cmd(
     host: Annotated[str, typer.Option(help="Interface to listen on")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port")] = 8765,
     user: Annotated[str | None, typer.Option(help="Run as this user (default: you)")] = None,
+    workspace: WorkspaceOption = None,
 ) -> None:
     """Print a systemd unit that starts `migrate serve` at boot and restarts it if it stops.
 
@@ -799,11 +833,16 @@ def service_file_cmd(
     import shutil
     import sys
 
-    path = config.resolve()
-    env_file = path.parent / ".patchmig" / "serve.env"
+    if workspace is not None:
+        path, folder = workspace.resolve(), workspace.resolve()
+        served = ["--workspace", str(path)]
+    else:
+        path = config.resolve()
+        folder, served = path.parent, ["--config", str(path)]
+    env_file = folder / ".patchmig" / "serve.env"
     exe = shutil.which("migrate")
     start = [exe, "serve"] if exe else [sys.executable, "-m", "patchmig.cli", "serve"]
-    start += ["--config", str(path), "--host", host, "--port", str(port)]
+    start += [*served, "--host", host, "--port", str(port), "--admin-token"]
     typer.echo(f"""# patchmig web front end for {path}
 # 1. Save as /etc/systemd/system/patchmig.service
 # 2. Put PATCHMIG_ADMIN_TOKEN=<a long random string> in {env_file}, with any tokens the
@@ -811,14 +850,14 @@ def service_file_cmd(
 #    stored in .patchmig/secrets and need nothing here).
 # 3. sudo systemctl daemon-reload && sudo systemctl enable --now patchmig
 [Unit]
-Description=Patch migration front end ({path.parent.name})
+Description=Patch migration front end ({folder.name})
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User={user or getpass.getuser()}
-WorkingDirectory={path.parent}
+WorkingDirectory={folder}
 EnvironmentFile=-{env_file}
 ExecStart={shlex.join(start)}
 Restart=on-failure

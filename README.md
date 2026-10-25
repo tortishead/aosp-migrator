@@ -275,9 +275,9 @@ export. It listens on 127.0.0.1 by default.
 
 ### Doing the work in the browser
 
-Every action needs the admin token (the same one as for Settings) and your name, which is
-recorded with it (transitions show `human:<name>`, reviews `source: web`). Sign in once on the
-Run page; `--read-only` turns all actions off.
+Every action needs your name, which is recorded with it (transitions show `human:<name>`,
+reviews `source: web`), and, when the admin token is on, the token (the same one as for
+Settings). Sign in once on the Run page; `--read-only` turns all actions off.
 
 - **Run page.** Each step has a card with the same options as its command: ingest, history,
   analyse, intents, apply (migrate clusters), verify (build and test), publish, PR review sync,
@@ -316,8 +316,11 @@ if the whole config is valid; the file it replaces is kept in `.patchmig/config-
 saving on the YAML tab keeps them. Without a valid config, `migrate serve` starts with only
 the settings, so a new project can be set up in the browser.
 
-- **Admin token.** Saving and the connection tests need it: set `PATCHMIG_ADMIN_TOKEN` before
-  `migrate serve`, or use the one-time token it prints. `--read-only` turns editing off.
+- **Admin token.** Off by default: anyone who can reach the server can act and save. With
+  `migrate serve --admin-token`, or with `PATCHMIG_ADMIN_TOKEN` set, actions, saving and the
+  connection tests need it: the one in `PATCHMIG_ADMIN_TOKEN`, or the one-time token it prints
+  (`--no-admin-token` turns it off even with the variable set). The unit from
+  `migrate service-file` always turns it on. `--read-only` turns editing off.
 - **Tokens.** A secret field takes either an `env:`/`file:` reference or a token pasted into
   the page. A pasted token is written to its own file (mode 0600) in `.patchmig/secrets/` next
   to the config (`--secrets-dir` to change), which has its own `.gitignore`, and the config
@@ -338,6 +341,20 @@ the settings, so a new project can be set up in the browser.
 - **Connection tests** (`migrate check` on the command line): the trees and their base refs,
   each Git host token, Copilot CLI and its token (a sign-in check against the GitHub API, no
   credits), Jira, and the build host. They use the saved settings.
+
+### Several projects (workspace)
+
+`migrate serve --workspace ~/migrations` serves every `<folder>/project.yaml` in that folder
+from one server (say `pilot/` and `a14-to-a15/`). The page at `/` lists the projects: their
+migration, latest run and any running job. A signed-in person can create a new one there,
+which writes `<folder>/project.yaml` from the example config (as `migrate init`) and opens its
+settings. Each project's pages are at `/p/<folder>/`, and the header of every page has a
+project switcher. Each project keeps its ledger, jobs, settings and secrets in its own folder,
+so switching saves nothing and loses nothing: come back and carry on. The command line works on
+the same folders (`-c ~/migrations/pilot/project.yaml`). One admin token covers the whole
+workspace, and one job runs at a time across all projects, because they spend the same credits
+and may share a target tree. `migrate service-file --workspace <folder>` starts a workspace at
+boot.
 
 The UI is plain JavaScript with Preact and htm vendored as one file (`static/htm-preact.js`), so
 it needs no Node.js, no build step and no CDN. `migrate export-site <folder>` writes the same UI

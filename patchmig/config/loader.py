@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from importlib.resources import files
 from pathlib import Path
 
 import yaml
@@ -64,6 +65,19 @@ def load_config(path: Path | str) -> ProjectConfig:
     except ValidationError as e:
         raise ConfigError(path, _format_errors(e)) from e
     return _resolve_paths(config, path.resolve().parent)
+
+
+def new_project(directory: Path, name: str | None = None) -> Path:
+    """Create a project folder with the example config; FileExistsError if it has a config."""
+    target = directory / "project.yaml"
+    if target.exists():
+        raise FileExistsError(target)
+    directory.mkdir(parents=True, exist_ok=True)
+    template = files("patchmig.templates").joinpath("project.example.yaml").read_text()
+    if name:
+        template = template.replace("name: example-a14-to-a15", f"name: {name}", 1)
+    target.write_text(template)
+    return target
 
 
 def config_to_dict(config: ProjectConfig) -> dict:

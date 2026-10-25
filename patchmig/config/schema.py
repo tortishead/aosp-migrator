@@ -212,8 +212,9 @@ class SshConfig(Model):
 
 class BuildConfig(Model):
     transport: Literal["ssh", "local"] = Field(
-        default="ssh",
-        description="'ssh' to a build server; 'local' when the orchestrator runs on the build host",
+        default="local",
+        description="'local' when the orchestrator runs on the build host; 'ssh' to a build "
+        "server. Unset with an ssh section: ssh",
     )
     ssh: SshConfig | None = None
     slots: list[str] = Field(
@@ -246,6 +247,14 @@ class BuildConfig(Model):
         if "{modules}" not in value:
             raise ValueError("module_build_cmd must contain the '{modules}' placeholder")
         return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ssh_section_implies_ssh(cls, data: object) -> object:
+        # Configs written while ssh was the default name only the ssh section.
+        if isinstance(data, dict) and "transport" not in data and data.get("ssh") is not None:
+            return {**data, "transport": "ssh"}
+        return data
 
     @model_validator(mode="after")
     def _transport_configured(self) -> BuildConfig:
