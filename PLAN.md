@@ -46,10 +46,10 @@ Parked questions (from the MS1 grilling), to settle when their milestone starts:
 - **Data dir:** `~/.aosp-migrator/` (overridable by `--data-dir` / `AOSP_MIGRATOR_DATA_DIR`). Holds `config.toml`, `db.sqlite`, `workspaces/<id>/attachments/`.
 - **Secrets:** global Jira PAT (GitHub PAT field reserved for later) stored in `config.toml` with `0600` permissions. Env vars override the file. The API never returns secret values, only "set / not set". Settings has a test-connection button.
 - **Jira:** Data Center, REST API v2, PAT as `Authorization: Bearer`. Read-only. Client sits behind an interface so a Cloud adapter can be added later.
-- **Workspaces:** many per instance. Each has name, JQL, target tree path (required), source tree path (optional). All editable. Path check: must exist and be a directory. `repo` is optional: tree type is detected and stored (`repo` if `.repo/` exists, `git` if `.git` exists, otherwise `plain`) for later milestones.
+- **Workspaces:** many per instance. Each has name, JQL, target tree path (required), source tree path (optional), relevant link types (optional). All editable. Path check: must exist and be a directory. `repo` is optional: tree type is detected and stored (`repo` if `.repo/` exists, `git` if `.git` exists, otherwise `plain`) for later milestones.
 - **Imported per ticket:** key, summary, description (raw + `renderedFields` HTML), Jira status, labels, components, fix versions, issue links, updated, comments (rendered HTML).
 - **Custom fields:** not imported. Standard fields only.
-- **Linked tickets:** Jira issue links only (no remote links / web links). Followed one level deep. Stored with the same fields and attachments, shown inside the item, not added to the backlog. One `jira_issue` row per key per workspace: if a linked ticket is also a backlog item, both share that row.
+- **Linked tickets:** Jira issue links only (no remote links / web links). Followed one level deep. A workspace can limit which link types are followed: each entry matches the link type name (`Relates`) or direction (`relates to`, `is blocked by`), case-insensitive; empty follows all. Others are not fetched or linked (still listed in `jira_issue.issue_links`); a change applies on the next import. Stored with the same fields and attachments, shown inside the item, not added to the backlog. One `jira_issue` row per key per workspace: if a linked ticket is also a backlog item, both share that row.
 - **Attachments:**
   - Diffs come from attachments only. Diffs pasted into description or comments are not detected.
   - Downloaded: diff/patch files (extension `.diff`/`.patch`, or content sniff: first lines match `diff --git`, `---`/`+++`, or `From <sha>`), and images embedded in description/comments.
@@ -66,7 +66,7 @@ Parked questions (from the MS1 grilling), to settle when their milestone starts:
 
 ### Data model (initial)
 
-- `workspace` — id, name, jql, target_tree, target_tree_type, source_tree, source_tree_type, created_at, updated_at
+- `workspace` — id, name, jql, target_tree, target_tree_type, source_tree, source_tree_type, link_types (JSON list), created_at, updated_at
 - `jira_issue` — id, workspace_id, key (unique per workspace), summary, description_raw, description_html, status, labels, components, fix_versions, issue_links, jira_updated, fetched_at
 - `item` — id, workspace_id, issue_id, local_state, dropped, last_import_error, created_at (backlog wrapper with local state)
 - `item_link` — item_id, issue_id (linked ticket), link_type

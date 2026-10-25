@@ -20,12 +20,20 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from aosp_migrator.db.models import HistoryEvent, ImportJob, Item, ItemLink, JiraIssue, Workspace, utcnow
 from aosp_migrator.importer.store import FetchedIssue, fetch_issue, find_issue, issue_fields, store_issue
-from aosp_migrator.jira.base import AttachmentMeta, Issue, JiraAuthError, JiraClient, JiraConnectionError, JiraError
+from aosp_migrator.jira.base import AttachmentMeta, Issue, IssueLink, JiraAuthError, JiraClient, JiraConnectionError, JiraError
 
 log = logging.getLogger(__name__)
 
 # Errors that would fail every ticket the same way: stop instead of grinding through them.
 FATAL_ERRORS = (JiraAuthError, JiraConnectionError)
+
+
+def link_is_relevant(link: IssueLink, link_types: list[str]) -> bool:
+    """Whether the workspace follows this link: its type name or direction is listed, or nothing is."""
+    if not link_types:
+        return True
+    wanted = {t.casefold() for t in link_types}
+    return link.link_type.casefold() in wanted or link.description.casefold() in wanted
 
 
 class JobConflictError(Exception):
@@ -128,6 +136,7 @@ class _Job:
     attachments_dir: Path
     # Keys stored during this job, so a ticket linked from several items is fetched once.
     stored: set[str] = field(default_factory=set)
+    link_types: list[str] = field(default_factory=list)
 
     @property
     def workspace_id(self) -> int:
@@ -136,6 +145,7 @@ class _Job:
     def run(self) -> None:
         workspace = self.session.get(Workspace, self.workspace_id)
         assert workspace is not None
+        self.link_types = list(workspace.link_types)
         if self.job.scope == "keys":
             for key in self.job.issue_keys:
                 self._check_cancel()
@@ -189,7 +199,7 @@ class _Job:
     def _fetch_linked(self, issue: Issue) -> dict[str, FetchedIssue]:
         """Linked tickets not yet stored by this job. One that fails is reported but keeps its last import."""
         linked: dict[str, FetchedIssue] = {}
-        for link in issue.issue_links:
+        for link in self._relevant_links(issue):
             if link.key in self.stored or link.key in linked or link.key == issue.key:
                 continue
             try:
@@ -199,6 +209,9 @@ class _Job:
             except JiraError as exc:
                 self._add_error(link.key, f"Linked from {issue.key}: {exc}")
         return linked
+
+    def _relevant_links(self, issue: Issue) -> list[IssueLink]:
+        return [link for link in issue.issue_links if link_is_relevant(link, self.link_types)]
 
     def _store(self, fetched: FetchedIssue, linked: dict[str, FetchedIssue], in_jql: bool | None) -> None:
         session = self.session
@@ -222,7 +235,7 @@ class _Job:
 
         for link in session.scalars(select(ItemLink).where(ItemLink.item_id == item.id)):
             session.delete(link)
-        for link in fetched.issue.issue_links:
+        for link in self._relevant_links(fetched.issue):
             target = find_issue(session, self.workspace_id, link.key)
             if target is not None and target.id != row.id:
                 session.add(ItemLink(item_id=item.id, issue_id=target.id, link_type=link.link_type, direction=link.direction, description=link.description))

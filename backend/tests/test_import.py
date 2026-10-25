@@ -244,6 +244,26 @@ def test_failing_ticket_is_recorded_and_job_completes(app: FastAPI, client: Test
         assert set(attachments(s, "PROJ-103")) == {"fix.txt", "notes.txt"}
 
 
+def test_only_listed_link_types_are_followed(app: FastAPI, client: TestClient, workspace_id: int) -> None:
+    workspace = client.get(f"/api/workspaces/{workspace_id}").json()
+    client.put(f"/api/workspaces/{workspace_id}", json={**workspace, "link_types": ["is blocked by", "BLOCKS"]})
+    assert run_import(client, workspace_id)["status"] == "done"
+    with session(app) as s:
+        # The "relates to" ticket is neither fetched nor linked; the Jira links stay as reported.
+        assert s.scalar(select(JiraIssue).where(JiraIssue.key == "PROJ-201")) is None
+        assert len(issue(s, "PROJ-101").issue_links) == 2
+        links = s.scalars(select(ItemLink.description).where(ItemLink.item_id == item(s, "PROJ-101").id)).all()
+        assert links == ["blocks"]
+
+    client.put(f"/api/workspaces/{workspace_id}", json={**workspace, "link_types": ["relates to"]})
+    run_import(client, workspace_id)
+    with session(app) as s:
+        links = s.execute(
+            select(JiraIssue.key, ItemLink.description).join(ItemLink, ItemLink.issue_id == JiraIssue.id).where(ItemLink.item_id == item(s, "PROJ-101").id)
+        ).all()
+        assert links == [("PROJ-201", "relates to")]
+
+
 def test_failing_linked_ticket_does_not_fail_the_item(app: FastAPI, client: TestClient, workspace_id: int, fake_jira: FakeJiraStore) -> None:
     fake_jira.fail_paths["/rest/api/2/issue/PROJ-201"] = 404
     job = run_import(client, workspace_id)

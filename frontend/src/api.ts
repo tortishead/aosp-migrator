@@ -52,6 +52,8 @@ export interface Workspace {
   target_tree_type: TreeType;
   source_tree: string | null;
   source_tree_type: TreeType | null;
+  // Followed link types (type name or direction); empty means all.
+  link_types: string[];
   created_at: string;
   updated_at: string;
 }
@@ -61,6 +63,7 @@ export interface WorkspaceInput {
   jql: string;
   target_tree: string;
   source_tree: string;
+  link_types: string[];
 }
 
 export interface AuthStatus {

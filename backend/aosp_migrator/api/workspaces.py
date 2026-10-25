@@ -24,6 +24,8 @@ class WorkspaceIn(BaseModel):
     jql: str
     target_tree: str
     source_tree: str | None = None
+    # Empty: follow every link type.
+    link_types: list[str] = []
 
 
 class WorkspaceOut(BaseModel):
@@ -36,8 +38,18 @@ class WorkspaceOut(BaseModel):
     target_tree_type: str
     source_tree: str | None
     source_tree_type: str | None
+    link_types: list[str]
     created_at: datetime
     updated_at: datetime
+
+
+def _normalize_link_types(values: list[str]) -> list[str]:
+    """Stripped, without empties or case-insensitive duplicates, in the given order."""
+    result: list[str] = []
+    for value in (v.strip() for v in values):
+        if value and value.casefold() not in {r.casefold() for r in result}:
+            result.append(value)
+    return result
 
 
 def _apply(workspace: Workspace, body: WorkspaceIn) -> None:
@@ -65,6 +77,7 @@ def _apply(workspace: Workspace, body: WorkspaceIn) -> None:
     workspace.target_tree_type = detect_tree_type(target)
     workspace.source_tree = str(source) if source else None
     workspace.source_tree_type = detect_tree_type(source) if source else None
+    workspace.link_types = _normalize_link_types(body.link_types)
 
 
 def _commit(session: Session, workspace: Workspace) -> None:

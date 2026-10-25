@@ -14,6 +14,7 @@ const workspace = {
   target_tree_type: "repo",
   source_tree: null,
   source_tree_type: null,
+  link_types: [],
   created_at: "2026-10-25T19:00:00Z",
   updated_at: "2026-10-25T19:00:00Z",
 };

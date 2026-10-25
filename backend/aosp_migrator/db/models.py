@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, TypeDecorator, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, TypeDecorator, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 TreeType = Literal["repo", "git", "plain"]
@@ -42,6 +42,9 @@ class Workspace(Base):
     target_tree_type: Mapped[str] = mapped_column(String)
     source_tree: Mapped[str | None] = mapped_column(String)
     source_tree_type: Mapped[str | None] = mapped_column(String)
+    # Link types whose tickets are followed, matched against the type name ("Relates") or
+    # the direction ("relates to", "is blocked by"), case-insensitive. Empty means all.
+    link_types: Mapped[list[Any]] = mapped_column(default=list, server_default=text("'[]'"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 

@@ -46,6 +46,7 @@ def test_crud(client: TestClient, trees: dict[str, Path]) -> None:
     workspace = created.json()
     assert workspace["target_tree_type"] == "repo"
     assert workspace["source_tree_type"] == "git"
+    assert workspace["link_types"] == []
 
     workspace_id = workspace["id"]
     assert client.get(f"/api/workspaces/{workspace_id}").json() == workspace
@@ -65,6 +66,13 @@ def test_crud(client: TestClient, trees: dict[str, Path]) -> None:
     assert client.delete(f"/api/workspaces/{workspace_id}").status_code == 204
     assert client.get(f"/api/workspaces/{workspace_id}").status_code == 404
     assert client.get("/api/workspaces").json() == []
+
+
+def test_link_types_normalized(client: TestClient, trees: dict[str, Path]) -> None:
+    body = client.post("/api/workspaces", json=payload(trees["repo"], link_types=[" relates to ", "", "Blocks", "RELATES TO"])).json()
+    assert body["link_types"] == ["relates to", "Blocks"]
+    updated = client.put(f"/api/workspaces/{body['id']}", json=payload(trees["repo"])).json()
+    assert updated["link_types"] == []
 
 
 def test_list_sorted_by_name(client: TestClient, trees: dict[str, Path]) -> None:

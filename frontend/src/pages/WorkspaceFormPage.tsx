@@ -24,12 +24,13 @@ export function WorkspaceFormPage() {
 function WorkspaceForm({ workspace }: { workspace?: Workspace }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [values, setValues] = useState<WorkspaceInput>({
+  const [values, setValues] = useState<Omit<WorkspaceInput, "link_types">>({
     name: workspace?.name ?? "",
     jql: workspace?.jql ?? "",
     target_tree: workspace?.target_tree ?? "",
     source_tree: workspace?.source_tree ?? "",
   });
+  const [linkTypes, setLinkTypes] = useState(workspace?.link_types.join(", ") ?? "");
 
   const save = useMutation({
     mutationFn: (input: WorkspaceInput) =>
@@ -49,14 +50,14 @@ function WorkspaceForm({ workspace }: { workspace?: Workspace }) {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    save.mutate(values);
+    save.mutate({ ...values, link_types: linkTypes.split(",").map((t) => t.trim()).filter(Boolean) });
   }
 
   function confirmDelete() {
     if (window.confirm(`Delete workspace "${workspace!.name}"?`)) remove.mutate();
   }
 
-  const field = (key: keyof WorkspaceInput) => ({
+  const field = (key: keyof typeof values) => ({
     value: values[key],
     onChange: (e: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: e.target.value })),
   });
@@ -82,6 +83,14 @@ function WorkspaceForm({ workspace }: { workspace?: Workspace }) {
           Source tree path (optional)
           <input placeholder="/home/me/aosp-14" {...field("source_tree")} />
         </label>
+        <label>
+          Relevant link types
+          <input placeholder="All" value={linkTypes} onChange={(e) => setLinkTypes(e.target.value)} />
+        </label>
+        <p className="hint">
+          Comma-separated link type names or directions, e.g. "Relates, is blocked by". Only these linked tickets are
+          imported and shown. Empty means all. Applies on the next import.
+        </p>
 
         <div className="actions">
           <button type="submit" disabled={save.isPending}>

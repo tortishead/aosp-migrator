@@ -14,6 +14,7 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     target_tree_type: "repo",
     source_tree: null,
     source_tree_type: null,
+    link_types: [],
     created_at: "2026-10-25T19:00:00Z",
     updated_at: "2026-10-25T19:00:00Z",
     ...overrides,
@@ -64,6 +65,7 @@ describe("WorkspacesPage", () => {
       jql: "project = OEM",
       target_tree: "/src/aosp15",
       source_tree: "",
+      link_types: [],
     });
   });
 
@@ -83,7 +85,7 @@ describe("WorkspacesPage", () => {
   it("edits an existing workspace", async () => {
     const calls = mockApi({
       "GET /workspaces": () => [workspace()],
-      "GET /workspaces/1": () => workspace(),
+      "GET /workspaces/1": () => workspace({ link_types: ["Relates"] }),
       "PUT /workspaces/1": (body) => workspace(body as Partial<Workspace>),
     });
     renderRoute("/");
@@ -92,6 +94,9 @@ describe("WorkspacesPage", () => {
     expect(jql).toHaveValue("project = OEM");
     await userEvent.clear(jql);
     await userEvent.type(jql, "project = NEW");
+    const linkTypes = screen.getByLabelText("Relevant link types");
+    expect(linkTypes).toHaveValue("Relates");
+    await userEvent.type(linkTypes, ", is blocked by");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
@@ -100,6 +105,7 @@ describe("WorkspacesPage", () => {
       jql: "project = NEW",
       target_tree: "/src/aosp15",
       source_tree: "",
+      link_types: ["Relates", "is blocked by"],
     });
   });
 
