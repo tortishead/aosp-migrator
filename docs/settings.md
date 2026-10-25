@@ -100,7 +100,7 @@ Pick the `type` first, the other fields depend on it.
 | `git_range` | `projects`: `all` (default) or a list of project paths | `[frameworks/base, packages/services/Car]` | Every commit between `base_ref` and `head_ref` in the source tree |
 | `diff_folder` | `path` * : a folder | `diffs/` | Every `.diff` / `.patch` file in it. Put each file in a subfolder named after the project path (`diffs/frameworks/base/0001.patch`), unless its paths start with the project path |
 | `spreadsheet` | `path` * : an `.xlsx` or `.csv` file (first row = column names); `sheet`: sheet name (default: the first); `columns`: your column names | `columns: {commit: "Commit", project: "Repo", jira: "Ticket", subject: "Title"}` | One patch per row. `commit` is looked up in the source tree; `jira` keys are read from Jira. Columns you don't map are expected under their own names (`commit`, `project`, `jira`, `subject`) |
-| `jira_query` | `jql` * : a Jira search | `project = OEM AND labels = migrate-a15` | The matching tickets. Needs the [Jira](#jira) section |
+| `jira_query` | `jql` * : a Jira search | `project = OEM AND labels = migrate-a15` | The matching tickets. Needs the [Jira](#jira) section; the only source that works before the source tree is checked out |
 |  | `attachments` | `true` (default) | Imports `.diff` / `.patch` files attached to the tickets |
 |  | `linked_tickets` | `true` (default) | Also follows linked tickets for commit and PR links |
 |  | `max_attachment_kb` | `2048` (default) | Larger attachments are skipped |

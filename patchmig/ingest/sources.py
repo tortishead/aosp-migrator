@@ -49,6 +49,7 @@ class SourceContext:
     config: ProjectConfig
     projects: list[str]  # project paths in the source tree
     jira: JiraReader | None = None
+    has_tree: bool = True  # False: jira_query without a source checkout
     warnings: list[str] = field(default_factory=list)
     _range: dict[str, list[tuple[str, str]]] = field(default_factory=dict, repr=False)
 
@@ -306,7 +307,7 @@ def _in_range(ctx: SourceContext, project: str, sha: str) -> bool:
 
 def _project_for_diff(ctx: SourceContext, diff: str, hint: str | None) -> tuple[str, str] | None:
     """(project, project-relative diff): from a repo mapping, tree paths, or existing files."""
-    if hint in ctx.projects:
+    if hint in ctx.projects or (hint and not ctx.has_tree):
         return hint, diff
     files = parse_diff(diff).files
     if not files:
@@ -315,6 +316,8 @@ def _project_for_diff(ctx: SourceContext, diff: str, hint: str | None) -> tuple[
     if len(owners) == 1 and None not in owners:
         project = owners.pop()
         return project, strip_project_prefix(diff, project)
+    if not ctx.has_tree:
+        return None
     existing = [f.old_path or f.path for f in files if f.status != "A"] or [f.path for f in files]
     matches = [
         p for p in ctx.projects
@@ -398,6 +401,8 @@ def _linked_patches(ctx: SourceContext, ticket: Ticket) -> list[RawPatch]:
 
 
 def _local_commit(ctx: SourceContext, sha: str, project: str | None) -> RawPatch | None:
+    if not ctx.has_tree:
+        return None
     hit = _find_commit(ctx, sha, project)
     if hit is None or not _in_range(ctx, *hit):
         return None

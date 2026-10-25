@@ -96,7 +96,7 @@ and what it is used for, section by section as on the Settings page.
 | `git_range` | `base_ref..head_ref` of every project in the source manifest (or a listed subset) |
 | `diff_folder` | `.patch`/`.diff` files; `git format-patch` mails or plain diffs. A subfolder named after a project path assigns the project; otherwise tree-relative paths are mapped to the owning project |
 | `spreadsheet` | CSV or Excel rows with a commit and/or Jira key (column names configurable) |
-| `jira_query` | For each ticket a JQL query returns: commits in the source range that mention it, its `.diff`/`.patch` attachments, and commit or PR links (GitHub, GitLab, Bitbucket Cloud/Server) in it and in the tickets it links to (description, comments, remote links). Linked commits are taken from the source tree; a PR's commits too, or its diff from the host's API when they are not there (squash merge) |
+| `jira_query` | For each ticket a JQL query returns: commits in the source range that mention it, its `.diff`/`.patch` attachments, and commit or PR links (GitHub, GitLab, Bitbucket Cloud/Server) in it and in the tickets it links to (description, comments, remote links). Linked commits are taken from the source tree; a PR's commits too, or its diff from the host's API when they are not there (squash merge). It works without a source checkout: commits that mention the ticket are then not searched, linked commits come from the host, and diffs are placed by the manifest (when it is readable, e.g. an absolute `manifest` path) and `repo_map` |
 
 Each patch gets its Change-Id, `git patch-id` fingerprint, Jira keys (from ticket trailers and
 the subject only), a footprint (files with add/modify/delete/rename, line counts, declared and

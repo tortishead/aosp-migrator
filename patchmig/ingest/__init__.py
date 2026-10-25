@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -9,7 +10,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 
 from patchmig.config import ProjectConfig
-from patchmig.ingest.manifest import ManifestError, tree_projects
+from patchmig.ingest.manifest import ManifestError, manifest_projects, tree_projects
 from patchmig.ingest.normalize import (
     NormalizedPatch,
     link_patches,
@@ -47,13 +48,22 @@ def collect(
 ) -> tuple[list[NormalizedPatch], dict[str, int], SourceContext]:
     """Read and normalise all sources; return the merged, linked, ordered patch set."""
     source = config.trees.source
-    try:
-        projects = tree_projects(source.path, source.manifest)
-    except ManifestError as e:
-        raise IngestError(str(e)) from e
-    if not projects:
-        raise IngestError(f"no projects found in the source tree {source.path}")
-    ctx = SourceContext(config=config, projects=projects, jira=jira)
+    if source.path.is_dir():
+        try:
+            projects = tree_projects(source.path, source.manifest)
+        except ManifestError as e:
+            raise IngestError(str(e)) from e
+        # A manifest can list projects the checkout leaves out (groups, partial syncs).
+        absent = [p for p in projects if not (source.path / p).is_dir()]
+        projects = [p for p in projects if p not in absent]
+        if not projects:
+            raise IngestError(f"no projects found in the source tree {source.path}")
+        ctx = SourceContext(config=config, projects=projects, jira=jira)
+        if absent:
+            ctx.warn(f"{len(absent)} manifest projects are not checked out in the source tree "
+                     f"and were skipped, e.g. {absent[0]}")  # fmt: skip
+    else:
+        ctx = _without_tree(config, jira)
     jira_projects = {config.jira.project} if config.jira else None
 
     found: Counter[str] = Counter()
@@ -72,6 +82,29 @@ def collect(
     _history_order(patches, ctx)
     link_patches(patches)
     return patches, dict(found), ctx
+
+
+def _without_tree(config: ProjectConfig, jira: JiraClient | None) -> SourceContext:
+    """Jira tickets need no source checkout: their patches come from attachments and links.
+
+    Diffs are placed in projects by the manifest (if it can be read without the tree) and
+    the hosts' repo_map. Every other source reads the tree.
+    """
+    source = config.trees.source
+    if needs := sorted({s.type for s in config.patch_sources if s.type != "jira_query"}):
+        raise IngestError(f"the source tree {source.path} is not a folder (trees.source.path; "
+                          "a relative path is relative to the config file's folder); "
+                          f"{', '.join(needs)} needs it, only jira_query works without "
+                          "it")  # fmt: skip
+    projects: list[str] = []
+    if source.manifest:
+        with contextlib.suppress(ManifestError):
+            projects = manifest_projects(source.path / source.manifest)
+    ctx = SourceContext(config=config, projects=projects, jira=jira, has_tree=False)
+    ctx.warn(f"jira_query: no source tree at {source.path}: commits that mention a ticket are "
+             "not searched, linked commits come from the code host, and diffs are placed by "
+             + ("the manifest and " if projects else "") + "the hosts' repo_map")  # fmt: skip
+    return ctx
 
 
 def _history_order(patches: list[NormalizedPatch], ctx: SourceContext) -> None:

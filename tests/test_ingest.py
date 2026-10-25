@@ -365,3 +365,54 @@ def test_cli_failed_ingest_leaves_no_empty_run_and_unknown_runs_are_refused(make
 
     result = runner.invoke(app, ["analyse", "-c", str(path), "--run", "7"])
     assert result.exit_code == 1 and "There is no run 7" in result.output
+
+
+def test_missing_source_tree_is_reported(make_config, tmp_path):
+    path = make_config([{"type": "git_range"}])
+    raw = yaml.safe_load(path.read_text())
+    raw["trees"]["source"]["path"] = str(tmp_path / "test")
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(IngestError, match="test is not a folder"):
+        collect(load_config(path))
+
+
+def test_manifest_projects_not_checked_out_are_skipped(make_config, scenario, tmp_path):
+    manifest = (scenario.source / ".repo/manifests/default.xml").read_text()
+    extra = tmp_path / "extra.xml"
+    test_project = '  <project path="test" name="test" />\n</manifest>'
+    extra.write_text(manifest.replace("</manifest>", test_project))
+    path = make_config([{"type": "git_range"}])
+    raw = yaml.safe_load(path.read_text())
+    raw["trees"]["source"]["manifest"] = str(extra)
+    path.write_text(yaml.safe_dump(raw))
+    patches, _, ctx = collect(load_config(path))
+    assert patches and "test" not in ctx.projects
+    assert any("not checked out" in w and "test" in w for w in ctx.warnings)
+
+
+def test_jira_query_needs_no_source_tree(make_config, scenario, tmp_path):
+    manifest = tmp_path / "default.xml"
+    manifest.write_text((scenario.source / ".repo/manifests/default.xml").read_text())
+    diff = (f"diff --git a/{CAR}/oem/Mode.txt b/{CAR}/oem/Mode.txt\nnew file mode 100644\n"
+            f"--- /dev/null\n+++ b/{CAR}/oem/Mode.txt\n@@ -0,0 +1 @@\n+sleep\n")  # fmt: skip
+
+    class WithAttachment(FakeJira):
+        def download(self, url: str, max_bytes: int) -> bytes:
+            return diff.encode()
+
+    attachment = {"filename": "mode.diff", "url": "u", "size": len(diff), "mime": "text/x-diff"}
+    ticket = Ticket("OEM-101", "OEM power mode", attachments=[attachment])
+    fake = WithAttachment({"OEM-101": ticket}, search_results=["OEM-101"])
+    path = make_config([{"type": "jira_query", "jql": "x"}], jira=JIRA)
+    raw = yaml.safe_load(path.read_text())
+    raw["trees"]["source"].update(path=str(tmp_path / "not-synced"), manifest=str(manifest))
+    path.write_text(yaml.safe_dump(raw))
+    patches, _, ctx = collect(load_config(path), fake)
+    # with the tree, P1 and P2 would also be found through the commits mentioning OEM-101
+    assert [(p.project, p.subject) for p in patches] == [(CAR, "OEM power mode")]
+    assert any("no source tree" in w for w in ctx.warnings)
+
+    raw["patch_sources"].append({"type": "git_range"})
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(IngestError, match="git_range needs it"):
+        collect(load_config(path), fake)
