@@ -31,7 +31,7 @@ Contents: [General](#general) · [Trees and repos](#trees-and-repos) ·
 
 | Field | What it is | Example | Used for |
 |---|---|---|---|
-| `name` * | Short name of this migration project | `bmw-a14-to-a15` | Shown in the UI; part of every branch name the tool pushes |
+| `name` * | Short name of this migration project | `a14-to-a15` | Shown in the UI; part of every branch name the tool pushes |
 | `workdir` | Folder for the tool's own data | `.patchmig` (default) | Holds the ledger database, worktrees, logs and jobs |
 | `migration.source_version` * | Android version you migrate **from** | `"14"` | PR titles, labels, reports |
 | `migration.target_version` * | Android version you migrate **to** | `"15"` | Same |
