@@ -130,3 +130,19 @@ def test_the_step_runs_the_checks_then_copilot(project):
     assert any(x.startswith("Copilot analysis: 1 items analysed") for x in lines)
     with pytest.raises(steps.StepFailed, match="not in the backlog"):
         steps.analyse(ctx, items="OEM-999")
+
+
+def test_the_solution_reaches_the_agents_that_build_it(project):
+    """Workflow step 4: the cluster agent and the reviewer get the analysis of the tickets."""
+    from tests.test_migrate import resolve_power
+
+    solution = {"approach": "adapt", "summary": "Pass a reason to setMode.",
+                "steps": ["Add the reason argument"], "files": ["frameworks/base/x.java"],
+                "risks": ["Callers in Car"]}  # fmt: skip
+    _analyse(project, analyst(by_key={"OEM-101": {"solution": solution}}))
+    project.migrate(project.runner(resolve_power), cluster_ids=[project.cluster_of("P1").id])
+    briefs = {t.agent: t.brief for t, _ in project.fake.calls}
+    for agent in ("cluster_agent", "reviewer"):
+        section = briefs[agent].split("## The analysis of these tickets (before migration)")[1]
+        assert "Solution (adapt): Pass a reason to setMode." in section
+        assert "1. Add the reason argument" in section and "Risk: Callers in Car" in section

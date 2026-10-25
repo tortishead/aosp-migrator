@@ -268,6 +268,10 @@ checked out, under `<workdir>/worktrees/`. Per project it tries, cheapest first:
    `patchmig` MCP tools for reading) that resolves the conflict markers or rewrites the change
    for the same intent.
 
+The agents that implement and check the change (cluster agent, reviewer, build fixer) get the
+analyst's solution for the cluster's backlog items: approach, steps, target files, risks and
+related items, next to the patches' intents.
+
 The agent's edits must pass guardrails (no conflict markers, path rules, a size limit relative
 to the net diff, no unexpected deletions or binaries); a failure goes back to the agent once
 with the findings, then fails the cluster. The agent can also answer `upstream` (its quoted

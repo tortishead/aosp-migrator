@@ -15,7 +15,7 @@ not run shell commands.
 ## Intent
 
 {intent}
-{engineer_notes}
+{analysis}{engineer_notes}
 ## Original net diff (Android {source_version})
 
 ```diff

@@ -354,11 +354,27 @@ class Migrator:
             fates="\n".join(fate_lines) or "(no upstream information)",
             memory=self._memory_text(members, net),
             notes=self._notes_text(cluster, members),
+            analysis=self._analysis_text(members),
             review_feedback="\n".join(
                 f"- {f['by']} ({f.get('source', 'review')}): {f['text']}"
                 for f in cluster.result.get("feedback", [])
             ),
         )
+
+    def _analysis_text(self, members: list[Patch]) -> str:
+        """The analyst's solution for the backlog items the members belong to."""
+        from patchmig.agents.analyst import solution_text
+        from patchmig.ledger import BacklogItem
+
+        keys = {(m.intent_detail or {}).get("item") or f"patch:{m.id}" for m in members}
+        keys |= {k for m in members for k in m.jira_keys or []}
+        with self.store.session() as s:
+            items = s.scalars(
+                select(BacklogItem)
+                .where(BacklogItem.run_id == self.run.id, BacklogItem.key.in_(keys))
+                .order_by(BacklogItem.id)
+            ).all()
+        return solution_text(list(items))
 
     def _notes_text(self, cluster: Cluster, members: list[Patch]) -> str:
         paths = engineer_notes.cluster_paths(cluster, members)

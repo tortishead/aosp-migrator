@@ -35,7 +35,8 @@ migrate apply -c project.yaml --limit 3      # a few clusters first; check the c
 
 For a cluster the free rungs could not finish, one Copilot CLI call runs in the cluster's
 folder, with the `write` tool allowed, `shell` denied and the `patchmig` MCP tools for reading
-anything else in both trees. Its brief has the member patches and intents, what happened per
+anything else in both trees. Its brief has the member patches and intents, the analyst's
+solution for their backlog items (approach, steps, target files, risks), what happened per
 project, the upstream fate of each touched file (renames, changed signatures, upstream
 commits) and the net diff. It answers one of:
 

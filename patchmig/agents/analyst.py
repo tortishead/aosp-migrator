@@ -130,6 +130,39 @@ def render_intent(item: ItemAnalysis, p: PatchUnderstanding | None) -> str:
     return "\n".join(lines)
 
 
+def solution_text(items: list[BacklogItem]) -> str:
+    """The analyses of a cluster's backlog items, for the agents that implement and check them."""
+    parts = []
+    for item in items:
+        a = item.analysis
+        if not a:
+            continue
+        sol = a.get("solution") or {}
+        lines = [
+            f"### {item.key}: {item.title}",
+            f"Still needed: {a['relevance'].replace('_', ' ')}: {a['relevance_reason']}",
+            f"Solution ({sol.get('approach', '?').replace('_', ' ')}): {sol.get('summary')}",
+        ]
+        lines += [f"{n}. {step}" for n, step in enumerate(sol.get("steps") or [], start=1)]
+        if sol.get("files"):
+            lines.append(f"Target files: {', '.join(sol['files'])}")
+        lines += [f"Risk: {r}" for r in sol.get("risks") or []]
+        lines += [f"Related: {r['ref']} ({r['relation'].replace('_', ' ')}): {r['why']}"
+                  for r in a.get("related") or [] if r.get("known")]  # fmt: skip
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def analysis_section(text: str) -> str:
+    if not text:
+        return ""
+    return (
+        "\n## The analysis of these tickets (before migration)\n\n"
+        f"{text}\n\nThis is the solution proposed for the target. Follow it where the code "
+        "agrees; where it does not, do what the code needs and say why.\n"
+    )
+
+
 # ---- what the analyst is given --------------------------------------------------------
 
 

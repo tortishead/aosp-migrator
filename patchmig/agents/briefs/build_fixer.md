@@ -16,7 +16,7 @@ search_code, find_files, upstream_fate) to read anything else in the target tree
 ## Intent
 
 {intent}
-{engineer_notes}
+{analysis}{engineer_notes}
 ## The migrated change
 
 ```diff
