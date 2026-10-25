@@ -443,7 +443,7 @@ function BacklogItemPage({ run, itemKey }) {
     <p><a href=${`#/r/${run}/backlog`}>← Backlog</a></p>
     <h1>${i.key} · ${i.title} <span class="muted">${i.status}</span></h1>
     <div class="grid">
-      <div class="panel"><h2>${t ? "Jira ticket" : "Patch without a ticket"}</h2>
+      <div class="panel"><h2>${i.kind === "ticket" ? "Jira ticket" : "Patch without a ticket"}</h2>
         ${t ? html`<dl class="kv">
           <dt>status</dt><dd>${t.status || "–"}</dd>
           <dt>linked</dt><dd>${t.linked.length ? t.linked.map((l, n) => html`${n ? ", " : ""}${l.key}${l.summary ? html` <span class="muted">${l.summary} (${l.status})</span>` : ""}`) : "–"}</dd>
@@ -451,6 +451,7 @@ function BacklogItemPage({ run, itemKey }) {
           <dt>fetched</dt><dd>${fmtTime(t.fetched_at)}</dd>
         </dl>
         ${t.description ? html`<pre class="block">${t.description}</pre>` : html`<p class="muted">No description.</p>`}`
+        : i.kind === "ticket" ? html`<p class="muted">Not read from Jira (no Jira connection, or the ticket could not be read): only its key in the commits is known. Import it again with Jira, or add what it says below.</p>`
         : html`<p class="muted">Add a note, a link or a file below to tell the analysis what the patch is for.</p>`}
         <p class="muted small">Imported ${fmtTime(i.imported_at)} by ${i.sources.join(", ")}; refreshed ${fmtTime(i.refreshed_at)}.</p>
       </div>
@@ -471,7 +472,7 @@ function BacklogItemPage({ run, itemKey }) {
         <span class="muted">· ${a.by} · ${fmtTime(a.at)}${a.removed_at ? ` · removed by ${a.removed_by}` : ""}</span><${RemoveAddition} run=${run} item=${i} addition=${a} onDone=${reload} /><${Preview} text=${a.preview} /></li>`)}</ul>`
         : html`<p class="muted">Nothing yet.</p>`}
       <${InfoForm} run=${run} item=${i} onDone=${reload} />
-      <div class="actions"><${JobButton} steps=${["ingest", "analyse"]} options=${{ ingest: { items: i.key }, analyse: { items: i.key } }} run=${run} label="Import and analyse this item again" /></div>
+      <p class="muted small">Then use <b>Import and analyse this item again</b> in the Analysis panel.</p>
     </div>
     <${NotesPanel} notes=${i.notes} run=${run} scope=${i.kind === "ticket" ? "ticket" : "patch"} target=${i.kind === "ticket" ? i.key : i.patches[0]?.id} onDone=${reload} />`;
   }}<//>`;
