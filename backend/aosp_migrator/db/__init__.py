@@ -29,6 +29,11 @@ def create_db_engine(data_dir: Path) -> Engine:
     return engine
 
 
+def include_name(name: str | None, type_: str, parent_names: dict) -> bool:
+    """Autogenerate filter: the FTS5 table and its shadow tables are not in the models."""
+    return not (type_ == "table" and name is not None and name.startswith("issue_fts"))
+
+
 def alembic_config() -> AlembicConfig:
     config = AlembicConfig()
     config.set_main_option("script_location", str(MIGRATIONS_DIR))

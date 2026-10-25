@@ -2,7 +2,7 @@ from alembic import context
 from sqlalchemy import create_engine
 
 from aosp_migrator.config import resolve_data_dir
-from aosp_migrator.db import DB_FILENAME
+from aosp_migrator.db import DB_FILENAME, include_name
 from aosp_migrator.db.models import Base
 
 target_metadata = Base.metadata
@@ -10,7 +10,7 @@ target_metadata = Base.metadata
 
 def run_migrations(connection) -> None:
     # batch mode lets ALTER TABLE work on SQLite.
-    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
+    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True, include_name=include_name)
     with context.begin_transaction():
         context.run_migrations()
 

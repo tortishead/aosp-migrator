@@ -22,7 +22,7 @@ def test_upgrade_is_idempotent(tmp_path: Path) -> None:
     db.upgrade(engine)
     db.upgrade(engine)
     with engine.connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0002"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0003"
 
 
 def test_foreign_keys_enabled(tmp_path: Path) -> None:
@@ -40,5 +40,5 @@ def test_models_match_migrations(tmp_path: Path) -> None:
     engine = db.create_db_engine(tmp_path)
     db.upgrade(engine)
     with engine.connect() as connection:
-        diff = compare_metadata(MigrationContext.configure(connection), Base.metadata)
+        diff = compare_metadata(MigrationContext.configure(connection, opts={"include_name": db.include_name}), Base.metadata)
     assert diff == [], "models changed without a migration; run `alembic revision --autogenerate`"

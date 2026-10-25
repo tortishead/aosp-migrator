@@ -1,0 +1,147 @@
+import { useEffect, useState } from "react";
+
+import type { Facets, LocalState } from "../api";
+import { hasFilters, STATE_LABELS, type ListFilter } from "./params";
+
+export const SEARCH_DEBOUNCE_MS = 300;
+
+type Update = (change: (next: URLSearchParams) => void, options?: { replace?: boolean }) => void;
+
+interface Props {
+  search: URLSearchParams;
+  facets: Facets | undefined;
+  update: Update;
+}
+
+export function Filters({ search, facets, update }: Props) {
+  const states = Object.entries(STATE_LABELS) as [LocalState, string][];
+  return (
+    <div className="filters" role="search">
+      <SearchBox value={search.get("q") ?? ""} update={update} />
+      <MultiFilter label="State" param="state" options={states} search={search} update={update} />
+      <MultiFilter label="Jira status" param="status" options={pairs(facets?.statuses)} search={search} update={update} />
+      <MultiFilter label="Labels" param="label" options={pairs(facets?.labels)} search={search} update={update} />
+      <MultiFilter label="Components" param="component" options={pairs(facets?.components)} search={search} update={update} />
+      <MultiFilter label="Fix version" param="fix_version" options={pairs(facets?.fix_versions)} search={search} update={update} />
+      <FlagFilter label="Diff" param="has_diff" yes="With diff" no="Without diff" search={search} update={update} />
+      <FlagFilter label="Dropped" param="dropped" yes="Dropped only" no="Not dropped" search={search} update={update} />
+      {hasFilters(search) && (
+        <button
+          type="button"
+          onClick={() =>
+            update((next) => {
+              for (const name of [...next.keys()]) if (name !== "sort") next.delete(name);
+            })
+          }
+        >
+          Clear filters
+        </button>
+      )}
+    </div>
+  );
+}
+
+function pairs(values: string[] | undefined): [string, string][] {
+  return (values ?? []).map((v) => [v, v]);
+}
+
+function SearchBox({ value, update }: { value: string; update: Update }) {
+  const [text, setText] = useState(value);
+  // Follow URL changes from elsewhere (back button, "Clear filters").
+  useEffect(() => setText(value), [value]);
+
+  useEffect(() => {
+    if (text.trim() === value.trim()) return;
+    const timer = setTimeout(
+      () =>
+        update(
+          (next) => {
+            if (text.trim()) next.set("q", text.trim());
+            else next.delete("q");
+          },
+          { replace: true },
+        ),
+      SEARCH_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [text, value, update]);
+
+  return (
+    <input
+      type="search"
+      className="filter-search"
+      aria-label="Search"
+      placeholder="Key, summary, description, diff path"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+    />
+  );
+}
+
+interface MultiFilterProps {
+  label: string;
+  param: ListFilter;
+  options: [string, string][];
+  search: URLSearchParams;
+  update: Update;
+}
+
+function MultiFilter({ label, param, options, search, update }: MultiFilterProps) {
+  const selected = search.getAll(param);
+  // Keep selected values that the facets no longer list (e.g. from an old link) so they can be unchecked.
+  const all = [...options, ...selected.filter((v) => !options.some(([o]) => o === v)).map((v): [string, string] => [v, v])];
+
+  function toggle(value: string, on: boolean) {
+    update((next) => {
+      const values = next.getAll(param).filter((v) => v !== value);
+      next.delete(param);
+      for (const v of on ? [...values, value] : values) next.append(param, v);
+    });
+  }
+
+  return (
+    <details className="filter">
+      <summary>
+        {label}
+        {selected.length > 0 && ` (${selected.length})`}
+      </summary>
+      <div className="filter-options" role="group" aria-label={label}>
+        {all.length === 0 && <span className="hint">No values</span>}
+        {all.map(([value, text]) => (
+          <label key={value}>
+            <input type="checkbox" checked={selected.includes(value)} onChange={(e) => toggle(value, e.target.checked)} />
+            {text}
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+interface FlagFilterProps {
+  label: string;
+  param: string;
+  yes: string;
+  no: string;
+  search: URLSearchParams;
+  update: Update;
+}
+
+function FlagFilter({ label, param, yes, no, search, update }: FlagFilterProps) {
+  return (
+    <select
+      aria-label={label}
+      value={search.get(param) ?? ""}
+      onChange={(e) =>
+        update((next) => {
+          if (e.target.value) next.set(param, e.target.value);
+          else next.delete(param);
+        })
+      }
+    >
+      <option value="">{label}: any</option>
+      <option value="true">{yes}</option>
+      <option value="false">{no}</option>
+    </select>
+  );
+}

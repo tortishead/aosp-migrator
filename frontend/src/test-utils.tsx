@@ -15,7 +15,10 @@ export interface ApiCall {
   body: unknown;
 }
 
-/** Stub fetch for `/api/*`. Keys look like "GET /settings". Returns the recorded calls. */
+/**
+ * Stub fetch for `/api/*`. Keys look like "GET /settings"; a key without a query string
+ * also answers requests with one. Returns the recorded calls (paths include the query).
+ */
 export function mockApi(handlers: Record<string, Handler>): ApiCall[] {
   const calls: ApiCall[] = [];
   const merged: Record<string, Handler> = {
@@ -30,7 +33,7 @@ export function mockApi(handlers: Record<string, Handler>): ApiCall[] {
       const path = url.replace(/^\/api/, "");
       const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
       calls.push({ method, path, body });
-      const handler = merged[`${method} ${path}`];
+      const handler = merged[`${method} ${path}`] ?? merged[`${method} ${path.split("?")[0]}`];
       if (!handler) return new Response(JSON.stringify({ detail: "Not mocked" }), { status: 404 });
       const reply = handler(body);
       if (reply === undefined) return new Response(null, { status: 204 });
@@ -45,9 +48,10 @@ export function mockApi(handlers: Record<string, Handler>): ApiCall[] {
 
 export function renderRoute(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
-  return render(
+  const result = render(
     <QueryClientProvider client={createQueryClient()}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
+  return { ...result, router };
 }

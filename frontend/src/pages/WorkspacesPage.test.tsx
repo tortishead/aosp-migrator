@@ -130,7 +130,7 @@ describe("workspace switcher", () => {
     const switcher = await screen.findByRole("combobox", { name: "Workspace" });
     expect(switcher).toHaveValue("1");
     await userEvent.selectOptions(switcher, "Vendor");
-    expect(await screen.findByRole("heading", { name: "Backlog of workspace 2" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Vendor" })).toBeInTheDocument();
     expect(switcher).toHaveValue("2");
   });
 });
