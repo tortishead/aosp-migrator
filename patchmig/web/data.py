@@ -111,6 +111,7 @@ def patches(store: LedgerStore, run_id: int) -> list[dict]:
          "commit": p.commit_sha, "jira_keys": p.jira_keys, "role": p.chain_role,
          "state": p.state.value, "cluster_id": p.cluster_id,
          "rung": (p.verdict or {}).get("rung"), "confidence": p.confidence,
+         "intent_confidence": (p.intent_detail or {}).get("confidence"),
          "has_intent": bool(p.intent), "author": p.author,
          "files": len(p.footprint.get("files", []))}
         for p in rows
@@ -147,7 +148,7 @@ def clusters(store: LedgerStore, run_id: int) -> list[dict]:
     by_order = {c.order_index: c.id for c in rows}
     return [
         {"id": c.id, "order": c.order_index, "name": c.name, "state": c.state.value,
-         "members": c.result.get("members", []),
+         "confidence": c.confidence, "members": c.result.get("members", []),
          "projects": sorted({projects[m] for m in c.result.get("members", [])}),
          "forecast": (c.result.get("forecast") or {}).get("level"),
          "depends_on": [by_order[o] for o in c.result.get("depends_on_order", [])],
@@ -315,3 +316,49 @@ def config_snapshot(store: LedgerStore, run_id: int) -> dict:
     """The config the run used. Secrets in it are references (env:/file:), never values."""
     run = _run(store, run_id)
     return {"hash": run.config_hash, "config": run.config_snapshot}
+
+
+def notes(store: LedgerStore, removed: bool = False) -> list[dict]:
+    """Every note of the project (they carry over between runs), newest last."""
+    from patchmig.ledger import Note
+
+    with store.session() as s:
+        rows = s.scalars(select(Note).order_by(Note.id)).all()
+    return [
+        {**_note(n), "scope": n.scope, "target": n.target, "label": n.label,
+         "created_at": _iso(n.created_at), "removed_at": _iso(n.removed_at),
+         "edits": len([r for r in n.revisions if "text" in r])}
+        for n in rows
+        if removed or n.removed_at is None
+    ]  # fmt: skip
+
+
+def stale(store: LedgerStore, run_id: int) -> dict:
+    """Intents and migrations made with notes (or intents) that changed since."""
+    run = _run(store, run_id)
+    as_dict = lambda x: {"id": x.id, "name": x.name, "state": x.state, "why": x.why}  # noqa: E731
+    return {
+        "intents": [as_dict(x) for x in engineer_notes.stale_intents(store, run)],
+        "clusters": [as_dict(x) for x in engineer_notes.stale_clusters(store, run)],
+    }
+
+
+def lessons(config: ProjectConfig | None) -> dict:
+    """The migration memory's lessons: proposed ones wait for a human."""
+    from patchmig.memory import Memory, MemoryRepoError
+
+    if config is None or not config.memory.path:
+        return {"configured": False, "path": None, "proposed": [], "approved": []}
+    try:
+        mem = Memory.open(config)
+    except MemoryRepoError as e:
+        return {"configured": True, "path": str(config.memory.path), "error": str(e),
+                "proposed": [], "approved": []}  # fmt: skip
+    as_dict = lambda x: {"name": x.name, "title": x.title, "text": x.text,  # noqa: E731
+                         "applies_to": x.applies_to,
+                         "meta": {k: str(v) for k, v in x.meta.items()}}  # fmt: skip
+    return {
+        "configured": True, "path": str(mem.path),
+        "proposed": [as_dict(x) for x in mem.lessons("proposed")],
+        "approved": [as_dict(x) for x in mem.lessons("approved")],
+    }  # fmt: skip

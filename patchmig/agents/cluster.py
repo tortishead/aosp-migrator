@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from patchmig.agents.adapter import AgentTask, ToolPolicy, answer_instructions, truncate
 from patchmig.agents.intent import notes_section
 from patchmig.agents.runner import AgentOutcome, AgentRunner
+from patchmig.confidence import rubric
 from patchmig.config import ProjectConfig
 
 SERVER = "patchmig"
@@ -90,25 +91,30 @@ def cluster_brief(
             "\n## Your previous attempt was rejected by the automatic checks\n\n"
             f"{feedback}\n\nThe worktrees still hold your previous edits. Fix the problems above."
         )
-    return template.format(
-        source_version=config.migration.source_version,
-        target_version=config.migration.target_version,
-        server=SERVER,
-        name=ctx.name,
-        members=ctx.members,
-        intent=ctx.intent,
-        situation=situation,
-        review_feedback=_feedback_section(ctx),
-        notes=notes_section(ctx.notes),
-        memory=(
-            f"\n## From earlier migrations (migration memory)\n\n{ctx.memory}\n"
-            if ctx.memory
-            else ""
-        ),
-        fates=ctx.fates,
-        net_diff=truncate(ctx.net_diff, config.migrate.brief_max_diff_chars),
-        feedback=feedback,
-    ) + answer_instructions(ClusterAnswer)
+    return (
+        template.format(
+            source_version=config.migration.source_version,
+            target_version=config.migration.target_version,
+            server=SERVER,
+            name=ctx.name,
+            members=ctx.members,
+            intent=ctx.intent,
+            situation=situation,
+            review_feedback=_feedback_section(ctx),
+            notes=notes_section(ctx.notes),
+            memory=(
+                f"\n## From earlier migrations (migration memory)\n\n{ctx.memory}\n"
+                if ctx.memory
+                else ""
+            ),
+            fates=ctx.fates,
+            net_diff=truncate(ctx.net_diff, config.migrate.brief_max_diff_chars),
+            feedback=feedback,
+        )
+        + "\n"
+        + rubric("your migration meeting the intent")
+        + answer_instructions(ClusterAnswer)
+    )
 
 
 def ask_cluster_agent(
@@ -140,19 +146,24 @@ def review_brief(
 ) -> str:
     template = files("patchmig.agents.briefs").joinpath("reviewer.md").read_text()
     limit = config.migrate.brief_max_diff_chars
-    return template.format(
-        source_version=config.migration.source_version,
-        target_version=config.migration.target_version,
-        server=SERVER,
-        name=ctx.name,
-        members=ctx.members,
-        intent=ctx.intent,
-        engineer_notes=notes_section(ctx.notes),
-        net_diff=truncate(ctx.net_diff, limit),
-        migrated_diff=truncate(migrated_diff, limit),
-        agent_summary=agent_summary,
-        notes=notes or "(none)",
-    ) + answer_instructions(ReviewAnswer)
+    return (
+        template.format(
+            source_version=config.migration.source_version,
+            target_version=config.migration.target_version,
+            server=SERVER,
+            name=ctx.name,
+            members=ctx.members,
+            intent=ctx.intent,
+            engineer_notes=notes_section(ctx.notes),
+            net_diff=truncate(ctx.net_diff, limit),
+            migrated_diff=truncate(migrated_diff, limit),
+            agent_summary=agent_summary,
+            notes=notes or "(none)",
+        )
+        + "\n"
+        + rubric("the migrated change meeting the intent")
+        + answer_instructions(ReviewAnswer)
+    )
 
 
 def ask_reviewer(
@@ -200,19 +211,24 @@ def fix_brief(
         earlier = "\n## Earlier fix attempts (the build still failed after them)\n\n" + "\n".join(
             f"- {p}" for p in previous
         )
-    return template.format(
-        source_version=config.migration.source_version,
-        target_version=config.migration.target_version,
-        server=SERVER,
-        name=ctx.name,
-        members=ctx.members,
-        intent=ctx.intent,
-        engineer_notes=notes_section(ctx.notes),
-        migrated_diff=truncate(migrated_diff, config.migrate.brief_max_diff_chars),
-        command=command,
-        errors=errors,
-        previous=earlier,
-    ) + answer_instructions(FixAnswer)
+    return (
+        template.format(
+            source_version=config.migration.source_version,
+            target_version=config.migration.target_version,
+            server=SERVER,
+            name=ctx.name,
+            members=ctx.members,
+            intent=ctx.intent,
+            engineer_notes=notes_section(ctx.notes),
+            migrated_diff=truncate(migrated_diff, config.migrate.brief_max_diff_chars),
+            command=command,
+            errors=errors,
+            previous=earlier,
+        )
+        + "\n"
+        + rubric("your fix")
+        + answer_instructions(FixAnswer)
+    )
 
 
 def ask_build_fixer(

@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 
 from sqlalchemy import select
 
+from patchmig.confidence import level, scale
 from patchmig.ledger import Cluster, LedgerStore
 from patchmig.ledger.models import AgentCall
 from patchmig.web import data
@@ -57,6 +58,12 @@ def run_report(store: LedgerStore, run_id: int) -> str:
     lines += _table(["Strategy", "Clusters"], [[k, v] for k, v in sorted(strategies.items())])
     queue_rows = [[k.replace("_", " "), v] for k, v in review["counts"].items() if v]
     lines += ["", *_table(["Review queue", "Clusters"], queue_rows)]
+    rated = [c for c in clusters if c.confidence is not None]
+    if rated:
+        levels = Counter(level(c.confidence).name for c in rated)
+        conf_rows = [[f"{r['name']} ({r['from']:.2f}-{r['to']:.2f})", levels[r["name"]]]
+                     for r in scale() if levels[r["name"]]]  # fmt: skip
+        lines += ["", *_table(["Confidence", "Clusters"], conf_rows)]
 
     builds = [b for c in clusters for b in (c.result.get("verification") or {}).get("builds", [])]
     tests = [t for c in clusters if (t := (c.result.get("verification") or {}).get("tests"))]
