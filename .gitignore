@@ -9,3 +9,4 @@ backend/aosp_migrator/static/
 playwright-report/
 test-results/
 .DS_Store
+backend/dist/

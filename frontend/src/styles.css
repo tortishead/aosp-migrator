@@ -1,0 +1,39 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #1f2328;
+  background: #ffffff;
+}
+
+body {
+  margin: 0;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #d0d7de;
+}
+
+.app-title {
+  font-weight: 600;
+}
+
+.app-header nav {
+  display: flex;
+  gap: 16px;
+}
+
+.app-header nav a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-header nav a.active {
+  font-weight: 600;
+}
+
+.app-main {
+  padding: 16px;
+}

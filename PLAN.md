@@ -39,7 +39,7 @@ Parked questions (from the MS1 grilling), to settle when their milestone starts:
 
 ### Decisions
 
-- **Toolchain:** Python 3.12 (uv), Node 20 LTS (pnpm), Vitest + Testing Library. Distributed as a wheel that bundles the built frontend.
+- **Toolchain:** Python 3.12 (uv), Node >= 20 (pnpm; machine has Node 26), Vitest + Testing Library. Distributed as a wheel that bundles the built frontend.
 - **Runtime:** Python (FastAPI) backend, React + TypeScript (Vite) frontend, SQLite. Single user, runs on the build machine. One command, `aosp-migrator serve`, serves the API and the prebuilt frontend bundle. No Docker.
 - **Network:** binds `127.0.0.1` by default. Optional `--lan` flag binds `0.0.0.0` and requires a shared-token login.
 - **Data dir:** `~/.aosp-migrator/` (overridable by `--data-dir` / `AOSP_MIGRATOR_DATA_DIR`). Holds `config.toml`, `db.sqlite`, `workspaces/<id>/attachments/`.
