@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { NavLink, Outlet } from "react-router";
+import { NavLink, Outlet, useMatch, useNavigate } from "react-router";
 
 import { api } from "./api";
 import { LoginPage } from "./pages/LoginPage";
-import { authStatusKey } from "./queryClient";
+import { authStatusKey, workspacesKey } from "./queryClient";
 
 export function Layout() {
   const queryClient = useQueryClient();
@@ -27,6 +27,7 @@ export function Layout() {
           </NavLink>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
+        <WorkspaceSwitcher />
         {auth.data.required && (
           <button className="app-logout" onClick={() => logout.mutate()}>
             Log out
@@ -37,5 +38,33 @@ export function Layout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+function WorkspaceSwitcher() {
+  const navigate = useNavigate();
+  const workspaces = useQuery({ queryKey: workspacesKey, queryFn: api.workspaces });
+  const match = useMatch("/workspaces/:workspaceId/*");
+  const current = match?.params.workspaceId;
+
+  if (!workspaces.data?.length) return null;
+  const selected = workspaces.data.some((w) => String(w.id) === current) ? current : "";
+
+  return (
+    <select
+      className="workspace-switcher"
+      aria-label="Workspace"
+      value={selected}
+      onChange={(e) => e.target.value && navigate(`/workspaces/${e.target.value}`)}
+    >
+      <option value="" disabled>
+        Select workspace…
+      </option>
+      {workspaces.data.map((w) => (
+        <option key={w.id} value={w.id}>
+          {w.name}
+        </option>
+      ))}
+    </select>
   );
 }

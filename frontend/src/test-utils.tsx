@@ -20,6 +20,7 @@ export function mockApi(handlers: Record<string, Handler>): ApiCall[] {
   const calls: ApiCall[] = [];
   const merged: Record<string, Handler> = {
     "GET /auth/status": () => ({ required: false, authenticated: true }),
+    "GET /workspaces": () => [],
     ...handlers,
   };
   vi.stubGlobal(
@@ -32,6 +33,7 @@ export function mockApi(handlers: Record<string, Handler>): ApiCall[] {
       const handler = merged[`${method} ${path}`];
       if (!handler) return new Response(JSON.stringify({ detail: "Not mocked" }), { status: 404 });
       const reply = handler(body);
+      if (reply === undefined) return new Response(null, { status: 204 });
       const isWrapped = typeof reply === "object" && reply !== null && "status" in reply && "body" in reply;
       const status = isWrapped ? (reply as { status: number }).status : 200;
       const payload = isWrapped ? (reply as { body: unknown }).body : reply;

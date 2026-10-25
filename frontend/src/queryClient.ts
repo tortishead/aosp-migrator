@@ -3,6 +3,7 @@ import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { ApiError } from "./api";
 
 export const authStatusKey = ["auth", "status"];
+export const workspacesKey = ["workspaces"];
 
 export function createQueryClient(): QueryClient {
   // Any 401 means the LAN session is gone: refetch auth status so the login page shows.

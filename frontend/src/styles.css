@@ -85,3 +85,54 @@ body {
   margin: 64px auto;
   padding: 0 16px;
 }
+
+.form textarea {
+  padding: 6px 8px;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.button-link {
+  padding: 4px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.danger {
+  margin-left: auto;
+  color: #d1242f;
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.table th,
+.table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #d0d7de;
+  text-align: left;
+  vertical-align: top;
+}
+
+.mono {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+.tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #ddf4ff;
+  font-size: 0.8em;
+}

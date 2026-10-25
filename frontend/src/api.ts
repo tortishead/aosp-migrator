@@ -16,11 +16,14 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     try {
       const body = await response.json();
       if (typeof body.detail === "string") detail = body.detail;
+      // FastAPI request validation errors: [{loc, msg, ...}]
+      else if (Array.isArray(body.detail)) detail = body.detail.map((d: { msg: string }) => d.msg).join("; ");
     } catch {
       // Not JSON; keep the status text.
     }
     throw new ApiError(response.status, detail || `HTTP ${response.status}`);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -39,6 +42,27 @@ export interface JiraTestResult {
   error?: string;
 }
 
+export type TreeType = "repo" | "git" | "plain";
+
+export interface Workspace {
+  id: number;
+  name: string;
+  jql: string;
+  target_tree: string;
+  target_tree_type: TreeType;
+  source_tree: string | null;
+  source_tree_type: TreeType | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceInput {
+  name: string;
+  jql: string;
+  target_tree: string;
+  source_tree: string;
+}
+
 export interface AuthStatus {
   required: boolean;
   authenticated: boolean;
@@ -54,4 +78,11 @@ export const api = {
     apiFetch<Settings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
   testJira: (values: { base_url?: string; pat?: string }) =>
     apiFetch<JiraTestResult>("/settings/jira/test", { method: "POST", body: JSON.stringify(values) }),
+  workspaces: () => apiFetch<Workspace[]>("/workspaces"),
+  workspace: (id: number) => apiFetch<Workspace>(`/workspaces/${id}`),
+  createWorkspace: (input: WorkspaceInput) =>
+    apiFetch<Workspace>("/workspaces", { method: "POST", body: JSON.stringify(input) }),
+  updateWorkspace: (id: number, input: WorkspaceInput) =>
+    apiFetch<Workspace>(`/workspaces/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteWorkspace: (id: number) => apiFetch<void>(`/workspaces/${id}`, { method: "DELETE" }),
 };

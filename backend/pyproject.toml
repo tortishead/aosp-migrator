@@ -4,8 +4,10 @@ version = "0.1.0"
 description = "Web tool to migrate OEM AOSP patches between Android versions"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.20.1",
     "fastapi>=0.162.0",
     "httpx2>=2.16.0",
+    "sqlalchemy>=2.1.6",
     "tomli-w>=1.2.0",
     "uvicorn[standard]>=0.54.0",
 ]

@@ -109,10 +109,11 @@ Each step lists what is built and what proves it works.
 - Test: file permissions, env override precedence, secret never in API responses, token required with `--lan` and not without.
 - As built: env vars `AOSP_MIGRATOR_JIRA_BASE_URL`, `AOSP_MIGRATOR_JIRA_PAT`, `AOSP_MIGRATOR_GITHUB_PAT`, `AOSP_MIGRATOR_LAN_TOKEN`. LAN token is auto-generated into `[server] lan_token` on first `--lan` start; login sets an HttpOnly cookie, `Authorization: Bearer` also accepted. Cookie is not `Secure` (plain HTTP on LAN). Test connection accepts unsaved form values. Outgoing HTTP uses an injectable `httpx2` transport (`create_app(http_transport=...)`) for tests.
 
-**1.3 Database and workspaces**
+**1.3 Database and workspaces** — done
 - SQLAlchemy models + first Alembic migration, workspace CRUD API with path validation.
 - UI: workspace list, create/edit form, workspace switcher.
 - Test: CRUD, path validation errors, tree type detection (`repo` / `git` / `plain`), migration runs on a fresh data dir.
+- As built: migration `0001` creates only `workspace`; each later step adds its tables in its own migration. `create_app` runs `alembic upgrade head` on start; SQLite with `foreign_keys=ON` and WAL. Datetimes stored as naive UTC, returned as aware UTC (`UTCDateTime`). A test fails if models drift from migrations; new revision: `AOSP_MIGRATOR_DATA_DIR=<scratch> uv run alembic upgrade head && ... alembic revision --autogenerate` from `backend/`. Tree paths must be absolute (`~` expanded); `.git` file (worktree) counts as `git`. Workspace names unique (409). `DELETE /api/workspaces/{id}` exists (UI confirms first); cascade to items comes with 1.6. Routes `/workspaces/new` and `/workspaces/:id/edit`; header switcher navigates to the backlog.
 
 **1.4 Fake Jira and Jira client**
 - Fake Jira DC app serving fixtures: search with `startAt`/`maxResults`, `expand=renderedFields`, issue get, comments, issue links, attachment download, auth check.

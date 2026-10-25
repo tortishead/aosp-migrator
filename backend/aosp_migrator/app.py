@@ -4,7 +4,8 @@ import httpx2
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from aosp_migrator.api import auth, health, settings
+from aosp_migrator import db
+from aosp_migrator.api import auth, health, settings, workspaces
 from aosp_migrator.config import Config, resolve_data_dir
 
 DEFAULT_STATIC_DIR = Path(__file__).parent / "static"
@@ -25,10 +26,16 @@ def create_app(
     # Outgoing HTTP goes through this transport; tests swap in a mock.
     app.state.http_transport = http_transport
 
+    engine = db.create_db_engine(config.data_dir)
+    db.upgrade(engine)
+    app.state.engine = engine
+    app.state.sessionmaker = db.create_sessionmaker(engine)
+
     app.middleware("http")(auth.require_token)
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(settings.router, prefix="/api")
+    app.include_router(workspaces.router, prefix="/api")
 
     static_root = (static_dir or DEFAULT_STATIC_DIR).resolve()
 
