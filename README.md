@@ -310,8 +310,10 @@ Settings). Sign in once on the Run page; `--read-only` turns all actions off.
 The Settings page edits the whole project config (every field is explained in
 [docs/settings.md](docs/settings.md)): one form per section (trees and their Git
 hosts, patch sources, Copilot, budget, Jira, build and tests, publishing, analysis), generated
-from the config schema and validated by it, plus the YAML text itself. A save is written only
-if the whole config is valid; the file it replaces is kept in `.patchmig/config-history/`
+from the config schema, plus the YAML text itself. A save is always written, even if the
+config is incomplete (only literal secrets and broken YAML are refused); a red dot on Settings,
+its sections and fields marks required fields still unset, and runs keep using the last valid
+config until they are filled in. The file a save replaces is kept in `.patchmig/config-history/`
 (named with the time and who saved). Saving a form rewrites the YAML without its comments;
 saving on the YAML tab keeps them. Without a valid config, `migrate serve` starts with only
 the settings, so a new project can be set up in the browser.

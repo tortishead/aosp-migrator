@@ -182,6 +182,11 @@ def create_app(
             raise HTTPException(404, "settings are not served (static site)")
         return settings_view(editor.view())
 
+    @app.get("/api/settings/missing")
+    def settings_missing() -> list[str]:
+        """Required fields not set yet (the Settings tab shows a red dot while any are)."""
+        return editor.missing() if editor else []
+
     @app.get("/api/settings/auth", dependencies=[Depends(admin)])
     def settings_auth() -> dict:
         return {"ok": True}

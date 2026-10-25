@@ -77,8 +77,10 @@ function Problems({ path }) {
 }
 
 function Row({ title, help, required, path, children }) {
+  const { missing } = useContext(Ctx);
+  const unset = missing.includes(dotted(path));
   return html`<div class="field">
-    <label>${title}${required ? html`<span class="req" title="required"> *</span>` : null}</label>
+    <label>${title}${required ? html`<span class="req" title="required"> *</span>` : null}${unset ? html`<span class="dot" title="required, not set"></span>` : null}</label>
     <div class="control">${children}${help ? html`<small class="muted">${help}</small>` : null}<${Problems} path=${path} /></div>
   </div>`;
 }
@@ -363,10 +365,13 @@ export function SettingsPage({ section }) {
   const current = section === "yaml" ? null : sections.find((s) => s[0] === section) || sections[0];
   const dirty = JSON.stringify(values) !== JSON.stringify(view.values || {}) || Object.keys(pending).length > 0;
   const yamlDirty = yamlText !== (view.yaml || "");
-  const countFor = (keys) => problems.filter((p) => keys.some((k) => p.loc === k || p.loc.startsWith(`${k}.`))).length;
+  const inSection = (keys) => (loc) => keys.some((k) => loc === k || loc.startsWith(`${k}.`));
+  const missing = view.missing || [];
+  const missingIn = (keys) => missing.filter(inSection(keys));
+  const countFor = (keys) => problems.filter((p) => inSection(keys)(p.loc) && !missing.includes(p.loc)).length;
 
   const ctx = {
-    root: schema, problems, status: view.secrets || {}, pending,
+    root: schema, problems, missing: view.missing || [], status: view.secrets || {}, pending,
     setSecret: (key, v) => setPending((p) => { const n = { ...p }; if (v === undefined) delete n[key]; else n[key] = v; return n; }),
     shiftSecrets: (prefix, removed) => setPending((p) => {
       const n = {};
@@ -390,7 +395,10 @@ export function SettingsPage({ section }) {
     setBusy(false);
     if (res.status === 200) {
       accept(res.data);
-      setMessage(res.data.reload_error ? { error: true, text: `Saved, but the server could not load it: ${res.data.reload_error}` } : { text: "Saved. New runs and commands use these settings." });
+      window.dispatchEvent(new Event("patchmig-settings-saved"));
+      setMessage(res.data.problems?.length
+        ? { error: true, text: "Saved, but the settings are not complete yet: fill in the sections with a red dot and fix the problems below. Runs keep the last complete settings until then." }
+        : res.data.reload_error ? { error: true, text: `Saved, but the server could not load it: ${res.data.reload_error}` } : { text: "Saved. New runs and commands use these settings." });
     } else if (res.status === 422) {
       setProblems(parseProblems(res.data.detail.problems));
       setMessage({ error: true, text: "Not saved: fix the problems below." });
@@ -413,7 +421,12 @@ export function SettingsPage({ section }) {
       </div>` : html`<p class="muted">Read-only: this server was started with <code>--read-only</code>.</p>`}
     ${!view.exists ? html`<p class="muted">No config file yet: fill in the required fields (*) and save to create it.</p>` : null}
     <nav class="subtabs">
-      ${sections.map(([id, name, keys]) => { const n = countFor(keys); return html`<a class=${current && current[0] === id ? "active" : ""} href=${`#/settings/${id}`}>${name}${n ? html` <span class="count">${n}</span>` : null}</a>`; })}
+      ${sections.map(([id, name, keys]) => {
+        const n = countFor(keys);
+        const unset = missingIn(keys);
+        return html`<a class=${current && current[0] === id ? "active" : ""} href=${`#/settings/${id}`}>${name}${unset.length
+          ? html`<span class="dot" title=${`required fields not set: ${unset.join(", ")}`}></span>` : null}${n ? html` <span class="count">${n}</span>` : null}</a>`;
+      })}
       <a class=${section === "yaml" ? "active" : ""} href="#/settings/yaml">YAML</a>
     </nav>
     ${message ? html`<p class=${message.error ? "field-error banner" : "ok banner"}>${message.text}</p>` : null}

@@ -1,8 +1,10 @@
 """Editing the project config from the web front end.
 
 The browser edits the values written in the YAML file (defaults stay implicit) as a form, or
-the YAML text itself. A save is validated against the schema first and written only if the
-whole config is valid; the file it replaces is kept under `.patchmig/config-history/`.
+the YAML text itself. A save is written even if the config is incomplete or invalid, so a
+half-filled form is never lost; the view reports the problems (and which required fields are
+missing) until they are fixed. Only literal secrets and unparseable YAML are refused. The file
+it replaces is kept under `.patchmig/config-history/`.
 
 Secrets stay references. A token typed into the browser is written to its own file (mode
 0600) in the secret store, and the config gets a `file:` reference to it. Reads never return
@@ -86,6 +88,25 @@ def _set_path(values: dict, dotted: str, value) -> None:
         node[parts[-1]] = value
 
 
+def literal_secrets(values: dict) -> list[str]:
+    """Problems for secret fields holding a literal value instead of an env:/file: reference."""
+    problems = []
+    for path, ref in secret_fields(values).items():
+        try:
+            _check_secret_ref(ref)
+        except ValueError as e:
+            problems.append(f"{path}: {e}")
+    return problems
+
+
+MISSING = ": Field required"
+
+
+def missing_fields(problems: list[str]) -> list[str]:
+    """Dotted paths of the required fields the problems say are not set."""
+    return [p.removesuffix(MISSING) for p in problems if p.endswith(MISSING)]
+
+
 def version_of(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
@@ -131,6 +152,9 @@ class SettingsEditor:
             out[path] = {"ref": ref, "available": available, "managed": managed}
         return out
 
+    def missing(self) -> list[str]:
+        return missing_fields(self.parse(self.text())[1])
+
     def view(self) -> dict:
         text = self.text()
         values, problems = self.parse(text)
@@ -141,6 +165,7 @@ class SettingsEditor:
             "yaml": text,
             "values": values,
             "problems": problems,
+            "missing": missing_fields(problems),
             "secrets": self.secret_status(values),
             "secrets_dir": str(self.secrets_dir),
             "schema": ProjectConfig.model_json_schema(),
@@ -162,7 +187,7 @@ class SettingsEditor:
         return self.secrets_dir / f"{slug}-{pysecrets.token_hex(4)}"
 
     def save(self, values: dict, new_secrets: dict[str, str], version: str, author: str) -> dict:
-        """Validate and write form values; new_secrets maps dotted paths to typed tokens."""
+        """Write form values, valid or not; new_secrets maps dotted paths to typed tokens."""
         old = self._check_version(version)
         values = copy.deepcopy(values)
         files: dict[Path, str] = {}
@@ -175,10 +200,8 @@ class SettingsEditor:
                 _set_path(values, dotted, f"file:{target}")
             except (KeyError, IndexError, ValueError, TypeError, AttributeError) as e:
                 raise SettingsError([f"{dotted}: no such field"]) from e
-        try:
-            ProjectConfig.model_validate(values)
-        except ValidationError as e:
-            raise SettingsError(_format_errors(e)) from e
+        if problems := literal_secrets(values):
+            raise SettingsError(problems)
         known = secret_fields(values)
         if bad := sorted(set(new_secrets) - set(known)):
             raise SettingsError([f"{p}: not a secret field" for p in bad])
@@ -188,10 +211,15 @@ class SettingsEditor:
         return self.view()
 
     def save_yaml(self, text: str, version: str, author: str) -> dict:
-        """Validate and write the YAML text as it is (comments kept)."""
+        """Write the YAML text as it is (comments kept), valid or not, if it parses."""
         old = self._check_version(version)
-        values, problems = self.parse(text)
-        if problems:
+        try:
+            values = yaml.safe_load(text) if text.strip() else {}
+        except yaml.YAMLError as e:
+            raise SettingsError([f"not valid YAML: {e}"]) from e
+        if not isinstance(values, dict):
+            raise SettingsError(["top level must be a mapping"])
+        if problems := literal_secrets(values):
             raise SettingsError(problems)
         self._write(old, text if text.endswith("\n") else text + "\n", author)
         self._prune(old, values)

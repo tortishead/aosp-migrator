@@ -233,6 +233,7 @@ label.check { display: inline-flex; align-items: center; gap: 6px; font-weight: 
 nav.subtabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
 nav.subtabs a { padding: 4px 10px; border-radius: 6px; color: var(--text); border: 1px solid var(--line); background: var(--panel); }
 nav.subtabs a.active { border-color: var(--accent); font-weight: 600; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--s-failed); margin-left: 5px; vertical-align: super; }
 nav.subtabs .count { background: var(--s-failed); color: var(--badge-text); border-radius: 8px; padding: 0 6px; font-size: 11.5px; }
 .signin { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
 .signin label { display: inline-flex; gap: 6px; align-items: center; }

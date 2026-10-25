@@ -96,21 +96,35 @@ def test_typed_token_goes_to_the_store_and_never_comes_back(editor: SettingsEdit
         editor.secrets_dir / ".gitignore"]  # fmt: skip
 
 
-def test_invalid_or_stale_saves_change_nothing(editor: SettingsEditor):
+def test_literal_secrets_or_stale_saves_change_nothing(editor: SettingsEditor):
     view = editor.view()
     before = editor.path.read_text()
     literal = {**view["values"], "jira": {**view["values"]["jira"], "token": "plain-token"}}
     with pytest.raises(SettingsError, match="secrets must be references"):
         editor.save(literal, {}, view["version"], "x")
-    bad = {**view["values"], "budget": {"max_fix_attempts": -1}}
-    with pytest.raises(SettingsError, match="budget.max_fix_attempts"):
-        editor.save(bad, {"llm.github_token": TOKEN}, view["version"], "x")
+    with pytest.raises(SettingsError, match="secrets must be references"):
+        editor.save_yaml(yaml.safe_dump(literal), view["version"], "x")
     with pytest.raises(SettingsError, match="not a secret field"):
         editor.save(view["values"], {"name": TOKEN}, view["version"], "x")
     with pytest.raises(SettingsError) as e:
         editor.save(view["values"], {}, "0" * 16, "x")
     assert e.value.conflict
     assert editor.path.read_text() == before and not editor.secrets_dir.exists()
+
+
+def test_incomplete_or_invalid_settings_are_saved_and_reported(editor: SettingsEditor):
+    view = editor.view()
+    assert view["missing"] == [] and editor.missing() == []
+    values = {k: v for k, v in view["values"].items() if k != "name"}
+    values["budget"] = {"max_fix_attempts": -1}
+    saved = editor.save(values, {"llm.github_token": TOKEN}, view["version"], "x")
+    assert "name" not in yaml.safe_load(editor.path.read_text())
+    assert saved["missing"] == ["name"] == editor.missing()
+    assert any(p.startswith("budget.max_fix_attempts") for p in saved["problems"])
+    assert saved["secrets"]["llm.github_token"]["available"]  # the token was stored too
+    text = editor.path.read_text().replace("max_fix_attempts: -1", "max_fix_attempts: -2")
+    again = editor.save_yaml(text, saved["version"], "x")
+    assert again["missing"] == ["name"] and "max_fix_attempts: -2" in editor.path.read_text()
 
 
 def test_yaml_save_keeps_comments(editor: SettingsEditor):
@@ -142,11 +156,21 @@ def test_settings_api_needs_the_admin_token_and_reloads(make_config):  # noqa: F
     res = client.put("/api/settings", json=body, headers=auth)
     assert res.status_code == 200 and res.json()["reload_error"] is None
     assert client.put("/api/settings", json=body, headers=auth).status_code == 409  # stale
-    body = {**body, "version": res.json()["version"], "values": {"name": "x"}}
+    assert client.get("/api/settings/missing").json() == []
+    incomplete = {k: v for k, v in body["values"].items() if k != "migration"}
+    body = {**body, "version": res.json()["version"], "values": incomplete}
     res = client.put("/api/settings", json=body, headers=auth)
-    assert res.status_code == 422 and any(
-        "migration" in p for p in res.json()["detail"]["problems"]
-    )
+    assert res.status_code == 200 and res.json()["missing"] == ["migration"]
+    assert res.json()["reload_error"]  # the server keeps running on the last valid config
+    assert client.get("/api/settings/missing").json() == ["migration"]
+    body = {
+        **body,
+        "version": res.json()["version"],
+        "values": {**incomplete, "jira": {"token": "x"}},
+    }
+    assert client.put("/api/settings", json=body, headers=auth).status_code == 422
+    restore = {**body, "values": view["values"]}
+    assert client.put("/api/settings", json=restore, headers=auth).status_code == 200
 
     checks = client.post("/api/settings/check/trees", headers=auth).json()
     assert [c["ok"] for c in checks] == [True, True]
