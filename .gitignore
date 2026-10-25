@@ -1,0 +1,11 @@
+.venv/
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+frontend/dist/
+backend/aosp_migrator/static/
+playwright-report/
+test-results/
+.DS_Store
