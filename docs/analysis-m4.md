@@ -17,8 +17,11 @@ migrate clusters -c ~/spike/project.yaml --show <cluster id>
 forecast of the clusters still to migrate. `clusters` lists the clusters in migration order;
 `--show` prints the members, the links that joined them, the forecast reasons and the net diff.
 
-A run can be analysed once. To try again (for example, after changing `analysis` settings or
-path rules), ingest into a new run; intents are reused by fingerprint, so that costs nothing.
+A run can be analysed again at any time: only new patches are checked, and only backlog items
+with new information go to Copilot. To check everything again (for example, after changing
+`analysis` settings or path rules), import into a new run with `migrate ingest --new-run`;
+analyses with the same information are reused, so that costs nothing. Add `--no-agent` to run
+only the checks.
 
 ## What helps most to check
 

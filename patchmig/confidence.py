@@ -1,7 +1,7 @@
 """One confidence scale for everything Copilot (and the deterministic steps) judge.
 
 Every agent that answers with a `confidence` gets the same scale in its brief, so that 0.8
-from the intent writer means what 0.8 from the cluster agent or the reviewer means. The CLI,
+from the analyst means what 0.8 from the cluster agent or the reviewer means. The CLI,
 the PR descriptions, the report and the front end name the level next to the number.
 Review queues still use `thresholds` (quick approve, careful review); the scale is what the
 numbers mean, the thresholds are what a project does with them.

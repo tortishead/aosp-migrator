@@ -20,7 +20,9 @@ from pydantic import (
     model_validator,
 )
 
-AGENT_NAMES = ("intent_writer", "cluster_agent", "reviewer", "build_fixer", "memory_curator")
+AGENT_NAMES = ("analyst", "cluster_agent", "reviewer", "build_fixer", "memory_curator")
+# Earlier names, still read from configs: the analyst took over from the intent writer.
+AGENT_ALIASES = {"intent_writer": "analyst"}
 
 
 def _check_secret_ref(value: str) -> str:
@@ -335,7 +337,9 @@ class LlmConfig(Model):
         default=60_000, ge=1000, description="Longer briefs are passed as an attachment file"
     )
     extra_args: list[str] = Field(default_factory=list, description="Appended to every call")
-    intent_max_diff_chars: int = Field(default=20_000, ge=1000)
+    intent_max_diff_chars: int = Field(
+        default=20_000, ge=1000, description="Diff text given to the analyst per patch"
+    )
 
     def credits_for(self, model: str | None) -> float:
         return self.credits_per_call.get(
@@ -345,6 +349,7 @@ class LlmConfig(Model):
     @field_validator("models")
     @classmethod
     def _known_agents(cls, value: dict[str, str]) -> dict[str, str]:
+        value = {AGENT_ALIASES.get(k, k): v for k, v in value.items()}
         unknown = sorted(set(value) - set(AGENT_NAMES))
         if unknown:
             raise ValueError(f"unknown agents {unknown}; known: {list(AGENT_NAMES)}")

@@ -7,12 +7,13 @@ from sqlalchemy import select
 from typer.testing import CliRunner
 
 from patchmig import notes
+from patchmig.agents.analyst import analyse_items, stale_items
 from patchmig.agents.fake import FakeAdapter
-from patchmig.agents.intent import write_intents
 from patchmig.agents.runner import AgentRunner
 from patchmig.cli import app
 from patchmig.ledger import Cluster, State, Transition
 from patchmig.memory import patch_key
+from tests.fixtures.analyst import analyst
 from tests.fixtures.scenario import BT_OLD, FRAMEWORKS
 from tests.test_migrate import Project, answer, approve, resolve_power
 
@@ -20,12 +21,7 @@ MCP = {"type": "local", "command": "true"}
 
 
 def writer(asked: list):
-    def respond(task, attempt):
-        asked.append(task)
-        return {"problem": "p", "change": "c", "verification": "v", "components": [],
-                "sources": ["diff"], "confidence": 0.7}  # fmt: skip
-
-    return respond
+    return analyst(asked=asked, confidence=0.7)
 
 
 @pytest.fixture
@@ -77,60 +73,61 @@ def test_scopes_editing_and_removal(project):
         notes.edit(store, path.id, "anna", text="again")
 
 
-def test_intents_get_notes_and_only_stale_ones_are_rewritten(project):
+def keys(asked) -> list[str]:
+    return [t.key.removeprefix("item:") for t in asked]
+
+
+def test_analyses_get_notes_and_only_stale_ones_are_redone(project):
     store, run = project.store, project.run
     notes.add(store, "Target is BMW QSSI 15.", "xuan", stages=["analyse"])
     asked: list = []
-    report = write_intents(project.config, store, run, runner_for(project, writer(asked)))
-    assert report.written == 4
+    report = analyse_items(project.config, store, run, runner_for(project, writer(asked)))
+    assert report.analysed == 3
     assert all("Notes from the migration engineers" in t.brief for t in asked)
     assert all("Target is BMW QSSI 15." in t.brief for t in asked)
-    assert notes.stale_intents(store, run) == []
+    assert stale_items(store, run) == []
 
-    # A note on one patch makes only that intent stale; a migrate-only note none.
+    # A note on one patch makes only its item stale; a migrate-only note none.
     p3 = project.patch("P3")
     note = notes.add(store, "Slow phones need 12 s.", "xuan", "patch", patch_key(p3))
     notes.add(store, "Only for the agent.", "xuan", "ticket", "OEM-101", stages=["migrate"])
-    assert [x.id for x in notes.stale_intents(store, run)] == [p3.id]
+    assert [x.name for x in stale_items(store, run)] == ["OEM-202"]
     asked.clear()
-    report = write_intents(project.config, store, run, runner_for(project, writer(asked)),
-                           stale=True)  # fmt: skip
-    assert report.written == 1 and [t.subject_id for t in asked] == [p3.id]
+    report = analyse_items(project.config, store, run, runner_for(project, writer(asked)))
+    assert report.analysed == 1 and keys(asked) == ["OEM-202"]
     assert "Slow phones need 12 s." in asked[0].brief
-    assert notes.stale_intents(store, run) == []
+    assert "Your earlier analysis of this item" in asked[0].brief
+    assert stale_items(store, run) == []
 
-    # Removing the note makes it stale again; --patch rewrites one on demand.
+    # Removing the note makes it stale again; asking by key redoes one on demand.
     notes.remove(store, note.id, "xuan")
-    assert [x.id for x in notes.stale_intents(store, run)] == [p3.id]
+    assert [x.name for x in stale_items(store, run)] == ["OEM-202"]
     asked.clear()
-    p1 = project.patch("P1")
-    write_intents(project.config, store, run, runner_for(project, writer(asked)), redo=[p1.id])
-    assert [t.subject_id for t in asked] == [p1.id]
+    analyse_items(project.config, store, run, runner_for(project, writer(asked)), keys=["OEM-101"])
+    assert keys(asked) == ["OEM-101"]
 
 
-def test_intent_reuse_needs_the_same_notes(project):
+def test_reuse_needs_the_same_notes(project):
     store = project.store
     asked: list = []
-    write_intents(project.config, store, project.run, runner_for(project, writer(asked)))
+    analyse_items(project.config, store, project.run, runner_for(project, writer(asked)))
+    from patchmig.analysis import analyse
     from patchmig.ingest import ingest
 
     def next_run():
         run = store.create_run(project.config)
         ingest(project.config, store, run)
+        analyse(project.config, store, run)
+        project.run = run
         return run
 
-    report = write_intents(project.config, store, next_run(), runner_for(project, writer(asked)))
-    assert report.reused == 4  # the first run wrote only the needed patches' intents
-    asked.clear()
-    report = write_intents(project.config, store, next_run(), runner_for(project, writer(asked)))
-    assert report.written == 0 and report.reused == 10  # same patches: free
+    report = analyse_items(project.config, store, next_run(), runner_for(project, writer(asked)))
+    assert report.reused == 3 and report.analysed == 0
 
     notes.add(store, "Target is BMW QSSI 15.", "xuan")
     asked.clear()
-    run = next_run()
-    project.run = run
-    report = write_intents(project.config, store, run, runner_for(project, writer(asked)))
-    assert report.reused == 0 and len(asked) == 10  # not analysed: nothing is dropped
+    report = analyse_items(project.config, store, next_run(), runner_for(project, writer(asked)))
+    assert report.reused == 0 and len(asked) == 3
 
 
 def test_cluster_agent_reviewer_get_notes_and_stale_cluster_reruns(project):

@@ -119,12 +119,12 @@ Copilot CLI is the only AI the tool uses. This tab also holds the credit budget.
 | `github_token` 🔑 | **Fine-grained personal access token with the "Copilot Requests" permission**, created on that host by a user with a Copilot licence. Classic `ghp_` tokens do **not** work | | Every Copilot call. Empty: the CLI uses its own `copilot login` on the server |
 | `executable` | The Copilot CLI program | `copilot` (default) or a full path | Running the agents |
 | `runtime` | Agent runtime | `copilot-cli` (the only choice) | |
-| `models` | Model per agent; agents not listed use the CLI's default | `{cluster_agent: <model>, intent_writer: <cheaper model>}` | Agents: `intent_writer`, `cluster_agent`, `reviewer`, `build_fixer`, `memory_curator`. Use model names exactly as Copilot CLI lists them |
+| `models` | Model per agent; agents not listed use the CLI's default | `{cluster_agent: <model>, analyst: <cheaper model>}` | Agents: `analyst`, `cluster_agent`, `reviewer`, `build_fixer`, `memory_curator`. Use model names exactly as Copilot CLI lists them |
 | `credits_per_call` | Estimated Copilot credits one call costs, per model name (`default` for any other) | `{default: 1.0}` | Credit estimates and the budget caps. Calibrate it in the M3 spike (`docs/spike-m3.md`) |
 | `timeout_seconds` | Longest one call may run | `900` (default) | A call over it is stopped |
 | `max_retries` | Extra calls when an answer is not valid JSON | `1` (default) | |
 | `inline_prompt_max_chars` | Longer briefs are passed as an attached file | `60000` (default) | |
-| `intent_max_diff_chars` | Diff text given to the intent writer per patch | `20000` (default) | Keeps credits and prompt size down |
+| `intent_max_diff_chars` | Diff text given to the analyst per patch | `20000` (default) | Keeps credits and prompt size down |
 | `mcp_flag` | The Copilot CLI flag that takes the tool's MCP server config | `--additional-mcp-config` (default) | Change only if a Copilot CLI release renames it |
 | `extra_args` | Extra arguments added to every call | `["--log-level", "debug"]` | |
 
@@ -288,7 +288,7 @@ Rules for sensitive parts of the tree. Each rule has:
 
 | Field | What it is | Example | Used for |
 |---|---|---|---|
-| `path` | Local clone of the migration memory git repo | `../migration-memory` | Carrying intents, decisions and lessons to the next migration. `migrate memory record` creates it |
+| `path` | Local clone of the migration memory git repo | `../migration-memory` | Carrying intents, analyses, decisions and lessons to the next migration. `migrate memory record` creates it |
 | `brief_max_chars` | Memory text given to the cluster agent per cluster | `4000` (default) | |
 | `max_lessons` | Lessons the curator may propose per run | `5` (default) | |
 

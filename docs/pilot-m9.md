@@ -32,7 +32,7 @@ llm:
   models:                        # per agent; measure cheaper ones in the spike
     cluster_agent: <model>
     build_fixer: <model>
-    intent_writer: <cheaper model>
+    analyst: <cheaper model>
     reviewer: <cheaper model>
 build:
   transport: ssh
@@ -57,9 +57,8 @@ memory:
 migrate history  -c pilot/project.yaml        # depth-1 repo sync: OEM range in the source
 migrate ingest   -c pilot/project.yaml
 migrate history  -c pilot/project.yaml        # target history for the upstream checks
-migrate analyse  -c pilot/project.yaml        # warns about any project still too shallow
+migrate analyse  -c pilot/project.yaml        # checks, then Copilot per backlog item
 migrate clusters -c pilot/project.yaml        # check the clusters and forecasts
-migrate intents  -c pilot/project.yaml        # needed patches only; memory reuse first
 migrate apply    -c pilot/project.yaml        # cherry-pick, net diff, then the agent
 migrate verify   -c pilot/project.yaml        # affected modules only, then tests
 migrate publish  -c pilot/project.yaml
@@ -69,14 +68,14 @@ migrate report   -c pilot/project.yaml --out pilot/report-1.md
 Each step can be limited (`--limit`, `--cluster`) to go slowly at first. `migrate serve`
 shows the same ledger in the browser.
 
-When an intent or a migration is wrong because the agent lacked context (an OEM convention,
+When an analysis or a migration is wrong because the agent lacked context (an OEM convention,
 where something moved in the target, which variant a ticket is for), add a note instead of
 rejecting blindly, and rerun only what it affects:
 
 ```bash
 migrate notes add "..." --patch N --by <you> -c pilot/project.yaml   # or --cluster/--ticket/--path
 migrate notes stale     -c pilot/project.yaml
-migrate intents --stale -c pilot/project.yaml
+migrate analyse         -c pilot/project.yaml   # items with new information only
 migrate apply --stale --by <you> -c pilot/project.yaml && migrate verify -c pilot/project.yaml
 ```
 
@@ -129,10 +128,9 @@ What goes in:
 - `lessons/proposed/` and `lessons/approved/`: Markdown with `title` and `applies_to` globs.
   Only approved lessons are used.
 
-How it is used next time: `migrate intents` reuses a remembered intent instead of asking the
-agent (no credits); the cluster agent's brief gets each member's earlier outcomes, the
-mappings of the files it touches and the approved lessons whose globs match, at most
-`memory.brief_max_chars` characters. Only approved results are recorded, so the memory never
+How it is used next time: the analyst's and the cluster agent's briefs get each patch's
+earlier outcomes, the mappings of the files it touches and the approved lessons whose globs
+match, at most `memory.brief_max_chars` characters. Only approved results are recorded, so the memory never
 learns from work a human did not accept.
 
 ## 5. Judge the pilot

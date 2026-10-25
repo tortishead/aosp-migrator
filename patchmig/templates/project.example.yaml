@@ -92,8 +92,8 @@ llm:
   executable: copilot
   # github_host: oem.ghe.com        # Copilot licence host; empty: github.com
   # github_token: env:COPILOT_PAT   # fine-grained PAT, "Copilot Requests" permission (not ghp_)
-  models: {}                        # per agent: intent_writer, cluster_agent, reviewer, build_fixer,
-                                    # memory_curator; e.g. {cluster_agent: <model>, intent_writer: <cheaper>}
+  models: {}                        # per agent: analyst, cluster_agent, reviewer, build_fixer,
+                                    # memory_curator; e.g. {cluster_agent: <model>, analyst: <cheaper>}
   credits_per_call: {default: 1.0}  # estimated credits per call by model name; calibrate in the spike
   timeout_seconds: 900
 

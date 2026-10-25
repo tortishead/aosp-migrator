@@ -214,33 +214,6 @@ def _adapter(cfg: ProjectConfig) -> CopilotCliAdapter:
     return CopilotCliAdapter(cfg.llm, scratch=cfg.workdir / "briefs")
 
 
-@app.command("intents")
-def intents_cmd(
-    config: ConfigOption = DEFAULT_CONFIG,
-    run_id: RunOption = None,
-    limit: Annotated[int | None, typer.Option(help="Ask the agent for at most N intents")] = None,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Only reuse earlier intents; no agent calls")
-    ] = False,
-    export: Annotated[
-        Path | None, typer.Option(help="Also write a Markdown review sheet to this file")
-    ] = None,
-    patch: Annotated[
-        list[int] | None,
-        typer.Option("--patch", help="Write this patch's intent again (repeatable)"),
-    ] = None,
-    stale: Annotated[
-        bool, typer.Option("--stale", help="Write again the intents whose notes changed")
-    ] = False,
-) -> None:
-    """Write an intent for each needed patch (run after analyse; earlier intents are reused).
-
-    After adding, editing or removing notes, `--stale` rewrites only the affected intents.
-    """
-    _step(config, steps.intents, run_id=run_id, limit=limit, dry_run=dry_run, patches=patch,
-          stale=stale, export=export)  # fmt: skip
-
-
 @app.command("history")
 def history_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
@@ -260,12 +233,27 @@ def history_cmd(
 def analyse_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
     run_id: RunOption = None,
+    item: Annotated[
+        list[str] | None,
+        typer.Option("--item", help="Analyse this backlog item again (repeatable)"),
+    ] = None,
+    limit: Annotated[int | None, typer.Option(help="Ask Copilot about at most N items")] = None,
+    no_agent: Annotated[
+        bool, typer.Option("--no-agent", help="Only the deterministic checks; no Copilot")
+    ] = False,
+    export: Annotated[
+        Path | None, typer.Option(help="Also write a Markdown review sheet to this file")
+    ] = None,
 ) -> None:
-    """Decide which patches are still needed, cluster them and forecast each cluster.
+    """Analyse the backlog: check new patches against the target, then ask Copilot per item.
 
-    Deterministic: no agent calls, no credits.
+    The checks are deterministic (no credits). Copilot gets each item that needs it, with
+    everything imported and added: understanding, still needed, related items, a solution.
+    Run it again after adding information: items with new information are analysed again,
+    the others keep their analysis. `--item` analyses chosen items again regardless.
     """
-    _step(config, steps.analyse, run_id=run_id)
+    _step(config, steps.analyse, run_id=run_id, items=item, limit=limit, no_agent=no_agent,
+          export=export)  # fmt: skip
 
 
 @app.command("clusters")
@@ -594,7 +582,7 @@ def memory_reject(name: str, by: ByOption, config: ConfigOption = DEFAULT_CONFIG
 
 StageOption = Annotated[
     list[str] | None,
-    typer.Option("--for", help="analyse (intent writer) or migrate (cluster agent, reviewer, "
+    typer.Option("--for", help="analyse (analyst) or migrate (cluster agent, reviewer, "
                  "build fixer); repeatable; default both"),
 ]  # fmt: skip
 
@@ -640,7 +628,7 @@ def notes_add(
     except engineer_notes.NoteError as e:
         raise _note_error(e) from e
     typer.echo(_note_line(n))
-    typer.echo("Rerun what it affects with: migrate intents --stale / migrate apply --stale")
+    typer.echo("Rerun what it affects with: migrate analyse / migrate apply --stale")
 
 
 @notes_app.command("list")
@@ -701,7 +689,7 @@ def notes_edit(
     except engineer_notes.NoteError as e:
         raise _note_error(e) from e
     typer.echo(_note_line(n))
-    typer.echo("Rerun what it affects with: migrate intents --stale / migrate apply --stale")
+    typer.echo("Rerun what it affects with: migrate analyse / migrate apply --stale")
 
 
 @notes_app.command("remove")
@@ -715,30 +703,31 @@ def notes_remove(note: int, by: ByOption, config: ConfigOption = DEFAULT_CONFIG)
     except engineer_notes.NoteError as e:
         raise _note_error(e) from e
     typer.echo(f"Note {note} removed.")
-    typer.echo("Rerun what it affects with: migrate intents --stale / migrate apply --stale")
+    typer.echo("Rerun what it affects with: migrate analyse / migrate apply --stale")
 
 
 @notes_app.command("stale")
 def notes_stale(config: ConfigOption = DEFAULT_CONFIG, run_id: RunOption = None) -> None:
-    """Intents and migrations made with notes (or intents) that have changed since."""
+    """Analyses and migrations made with information that has changed since."""
     from patchmig import notes as engineer_notes
+    from patchmig.agents.analyst import stale_items
 
     _, store, run = _open_run(config, run_id)
-    intents = engineer_notes.stale_intents(store, run)
+    items = stale_items(store, run)
     clusters = engineer_notes.stale_clusters(store, run)
-    if not intents and not clusters:
+    if not items and not clusters:
         typer.echo(f"Run {run.id}: nothing is stale.")
         return
-    if intents:
-        typer.echo(f"{len(intents)} intent(s); rerun with: migrate intents --stale")
-        for x in intents:
-            typer.echo(f"  #{x.id} {x.state:<14} {x.name}")
+    if items:
+        typer.echo(f"{len(items)} backlog item(s); analyse them again with: migrate analyse")
+        for x in items:
+            typer.echo(f"  {x.name}: {x.why}")
     if clusters:
         typer.echo(f"{len(clusters)} cluster(s); rerun with: migrate apply --stale")
         for x in clusters:
             typer.echo(f"  [{x.id}] {x.state:<14} {x.name}: {x.why}")
-    if intents and clusters:
-        typer.echo("Rewrite the intents first: the clusters' briefs include them.")
+    if items and clusters:
+        typer.echo("Analyse first: the clusters' briefs include the analysis.")
 
 
 @backlog_app.command("list")
@@ -789,8 +778,17 @@ def backlog_show(
         typer.echo(f"  added [{a['id']}] {a['kind']}: {what} by {a['by']}{gone}")
     for n in i["notes"]:
         typer.echo(f"  note [{n['id']}] {n['author']}: {n['text']}")
-    if i["analysis"]:
-        typer.echo(f"  analysed {i['analysed_at']} ({i['earlier_analyses']} earlier)")
+    if a := i["analysis"]:
+        stale = "; new information since" if i["stale"] else ""
+        typer.echo(f"  analysed {i['analysed_at']} ({len(i['earlier_analyses'])} earlier"
+                   f"{stale}), confidence {describe(a['confidence'])}")  # fmt: skip
+        typer.echo(f"  understanding: {a['understanding']}")
+        typer.echo(f"  still needed: {a['relevance']}: {a['relevance_reason']}")
+        typer.echo(f"  solution: {a['solution']['approach']}: {a['solution']['summary']}")
+        for r in a.get("related", []):
+            typer.echo(f"  related: {r['ref']} ({r['relation']}): {r['why']}")
+        for q in a.get("missing_information", []):
+            typer.echo(f"  missing: {q}")
 
 
 @backlog_app.command("add")

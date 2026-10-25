@@ -421,19 +421,16 @@ def test_two_projects_on_one_target_tree_keep_their_own_branches(project, tmp_pa
     assert project.target_git(FRAMEWORKS, "rev-parse", second).strip()
 
 
-def test_intents_are_not_bought_for_dropped_patches(project):
-    from patchmig.agents.intent import write_intents
+def test_analyses_are_not_bought_for_dropped_patches(project):
+    from patchmig.agents.analyst import analyse_items
+    from tests.fixtures.analyst import analyst
 
-    asked = []
-
-    def writer(task, attempt):
-        asked.append(task.subject_id)
-        return {"problem": "p", "change": "c", "verification": "v", "components": [],
-                "sources": ["diff"], "confidence": 0.7}  # fmt: skip
-
-    report = write_intents(project.config, project.store, project.run, project.runner(writer))
-    assert report.not_needed == 6 and report.written == 4
-    assert {project.patch(k).id for k in ("P1", "P2", "P3", "P8")} == set(asked)
+    asked: list = []
+    report = analyse_items(project.config, project.store, project.run,
+                           project.runner(analyst(asked=asked)))  # fmt: skip
+    assert report.not_required == 5 and report.analysed == 3
+    assert [t.key for t in asked] == ["item:OEM-101", "item:OEM-202", "item:OEM-606"]
+    assert all(project.patch(k).intent for k in ("P1", "P2", "P3", "P8"))
 
 
 ICON = "core/res/res/drawable/oem_icon.png"

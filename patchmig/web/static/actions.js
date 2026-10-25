@@ -317,7 +317,7 @@ export function ReviewActions({ run, cluster, queue, onDone, compact }) {
 // ---------- engineer notes ----------
 
 const SCOPES = [["all", "every patch"], ["path", "a path glob"], ["patch", "one patch (id)"], ["cluster", "one cluster (id)"], ["ticket", "one Jira ticket"]];
-const STAGE_INFO = { analyse: "intent writer", migrate: "cluster agent, reviewer, build fixer" };
+const STAGE_INFO = { analyse: "analyst", migrate: "cluster agent, reviewer, build fixer" };
 
 function Stages({ value, set }) {
   return html`<span class="stages">${Object.entries(STAGE_INFO).map(([s, help]) => html`<label class="check" title=${help}><input type="checkbox" checked=${value.includes(s)}
@@ -405,14 +405,14 @@ export function NotesPage({ run }) {
   return html`
     <h1>Engineer notes <span class="muted">· what the agents should know beyond the patches and tickets; notes carry over to later runs</span></h1>
     <${NeedsSignIn}>${html`<div class="panel"><h2>Add a note</h2><${NoteForm} run=${run} onDone=${reload} /></div>`}<//>
-    ${stale && (stale.intents.length || stale.clusters.length) ? html`<div class="panel">
-      <h2>Made with notes that changed since <span class="muted">· rerun only these to save credits</span></h2>
-      ${stale.intents.length ? html`<p>${stale.intents.length} intent(s): ${stale.intents.map((x, i) => html`${i ? ", " : ""}<a href=${`#/r/${run}/patches/${x.id}`}>${x.name}</a>`)}</p>` : null}
+    ${stale && (stale.items.length || stale.clusters.length) ? html`<div class="panel">
+      <h2>Made with information that changed since <span class="muted">· rerun only these to save credits</span></h2>
+      ${stale.items.length ? html`<p>${stale.items.length} backlog item(s): ${stale.items.map((x, i) => html`${i ? ", " : ""}<a href=${`#/r/${run}/backlog/${x.name}`}>${x.name}</a>`)}</p>` : null}
       ${stale.clusters.length ? html`<p>${stale.clusters.length} cluster(s): ${stale.clusters.map((x, i) => html`${i ? ", " : ""}<a href=${`#/r/${run}/clusters/${x.id}`}>${x.name}</a> <span class="muted">(${x.why})</span>`)}</p>` : null}
       <div class="actions">
-        ${stale.intents.length ? html`<${JobButton} steps=${["intents"]} options=${{ intents: { stale: true } }} run=${run} label="Rewrite stale intents" />` : null}
+        ${stale.items.length ? html`<${JobButton} steps=${["analyse"]} run=${run} label="Analyse stale items again" />` : null}
         ${stale.clusters.length ? html`<${JobButton} steps=${["apply"]} options=${{ apply: { stale: true } }} run=${run} label="Rerun stale clusters" />` : null}
-        ${stale.intents.length && stale.clusters.length ? html`<${JobButton} steps=${["intents", "apply"]} options=${{ intents: { stale: true }, apply: { stale: true } }} run=${run} label="Both, intents first" primary=${true} />` : null}
+        ${stale.items.length && stale.clusters.length ? html`<${JobButton} steps=${["analyse", "apply"]} options=${{ apply: { stale: true } }} run=${run} label="Both, analysis first" primary=${true} />` : null}
       </div></div>` : null}
     <div class="panel">
       <h2>Notes <span class="muted">(${notes.length})</span> <label class="check small" style="margin-left:12px"><input type="checkbox" checked=${removed} onChange=${(e) => setRemoved(e.target.checked)} /> show removed</label></h2>

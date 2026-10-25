@@ -16,7 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from patchmig.agents.adapter import AgentTask, ToolPolicy, answer_instructions, truncate
-from patchmig.agents.intent import notes_section
+from patchmig.agents.analyst import notes_section
 from patchmig.agents.runner import AgentOutcome, AgentRunner
 from patchmig.confidence import rubric
 from patchmig.config import ProjectConfig

@@ -229,17 +229,29 @@ def history(ctx: Context, run_id: int | None = None, dry_run: bool = False) -> N
         raise StepFailed("")
 
 
-def analyse(ctx: Context, run_id: int | None = None) -> None:
-    """Decide which patches are needed, cluster them and forecast each cluster. No credits."""
+def analyse(
+    ctx: Context,
+    run_id: int | None = None,
+    items: list[str] | str | None = None,
+    limit: int | None = None,
+    no_agent: bool = False,
+    export: Path | None = None,
+) -> None:
+    """Analyse the backlog: the deterministic checks on new patches, then Copilot on the items
+    that need it (never analysed, or new information since). `items` analyses these again."""
+    from patchmig.agents.analyst import analyse_items, export_review_sheet
     from patchmig.analysis import AnalysisError
     from patchmig.analysis import analyse as do_analyse
+    from patchmig.backlog import BacklogError
 
     run = ctx.run(run_id)
     try:
         report = do_analyse(ctx.config, ctx.store, run)
     except AnalysisError as e:
         raise StepFailed(f"Analysis failed: {e}") from e
-    ctx.info(f"Run {run.id}: {sum(report.states.values())} patches, {report.clusters} clusters")
+    ctx.info(f"Run {run.id}: {sum(report.states.values())} patches ({report.decided} checked "
+             f"now), {report.clusters} clusters ({report.clusters_new} new, "
+             f"{report.clusters_changed} changed)")  # fmt: skip
     for state in State:
         if report.states.get(state.value):
             ctx.info(f"  {state.value:<15} {report.states[state.value]}")
@@ -253,38 +265,28 @@ def analyse(ctx: Context, run_id: int | None = None) -> None:
         )
     for w in report.warnings:
         ctx.warn(f"  warning: {w}")
-
-
-def intents(
-    ctx: Context,
-    run_id: int | None = None,
-    limit: int | None = None,
-    dry_run: bool = False,
-    patches: list[int] | None = None,
-    stale: bool = False,
-    export: Path | None = None,
-) -> None:
-    """Write an intent for each needed patch (earlier intents are reused)."""
-    from patchmig.agents.intent import export_review_sheet, write_intents
-
-    run = ctx.run(run_id)
-    rid = run.id
-    runner = None if dry_run else ctx.runner(run)
-    report = write_intents(ctx.config, ctx.store, run, runner, limit=limit, memory=ctx.memory(),
-                           redo=patches, stale=stale)  # fmt: skip
-    ctx.info(
-        f"Run {rid}: {report.written} written, {report.reused} reused, "
-        f"{report.skipped} already had one, {report.not_needed} not needed; "
-        f"estimated credits {report.credits:.1f}"
-    )
-    for failure in report.failed:
-        ctx.warn(f"  failed: {failure}")
-    if report.stopped_by_budget:
-        ctx.warn(f"  stopped: {report.stopped_by_budget}")
-        ctx.stopped = report.stopped_by_budget
+    if no_agent:
+        ctx.info("Copilot analysis skipped (no agent).")
+    else:
+        try:
+            ar = analyse_items(ctx.config, ctx.store, run, ctx.runner(run), keys=item_keys(items),
+                               limit=limit, memory=ctx.memory(), mcp=ctx.mcp(run.id))  # fmt: skip
+        except BacklogError as e:
+            raise StepFailed(str(e)) from e
+        ctx.info(f"Copilot analysis: {ar.analysed} items analysed, {ar.reused} reused from an "
+                 f"earlier run, {ar.current} unchanged since their analysis, {ar.not_required} "
+                 f"not needed (the checks dropped every patch); estimated credits "
+                 f"{ar.credits:.1f}")  # fmt: skip
+        for m in ar.moved:
+            ctx.info(f"  moved {m}")
+        for failure in ar.failed:
+            ctx.warn(f"  failed: {failure}")
+        if ar.stopped_by_budget:
+            ctx.warn(f"  stopped: {ar.stopped_by_budget}")
+            ctx.stopped = ar.stopped_by_budget
     if export:
         n = export_review_sheet(ctx.store, run, export)
-        ctx.info(f"Review sheet with {n} intents written to {export}")
+        ctx.info(f"Review sheet with {n} analyses written to {export}")
 
 
 def apply(
@@ -519,14 +521,11 @@ STEPS: dict[str, Step] = {s.name: s for s in (
     Step("history", "Deepen shallow checkouts", "Fetch the history the upstream checks need "
          "(repo sync --depth=1 trees). Before ingest for a git range, and after it.", history,
          "none", (Option("dry_run", "bool", "Only report"),), in_pipeline=True),
-    Step("analyse", "Analyse", "Decide which patches are still needed, cluster and forecast "
-         "them. Deterministic.", analyse, "none", in_pipeline=True),
-    Step("intents", "Write intents", "One intent per needed patch; earlier ones are reused.",
-         intents, "yes", (LIMIT, Option("stale", "bool", "Only intents whose notes changed"),
-                          Option("patches", "ints", "Write these patches' intents again",
-                                 "patch ids"),
-                          Option("dry_run", "bool", "Only reuse earlier intents")),
-         in_pipeline=True),
+    Step("analyse", "Analyse", "Check new patches against the target (no credits), then "
+         "Copilot per backlog item that needs it: understanding, still needed, related items, "
+         "a solution. Items with new information are analysed again.", analyse, "yes",
+         (Option("items", "text", "Analyse these items again", "Jira keys, comma-separated"),
+          LIMIT, Option("no_agent", "bool", "Only the checks: no Copilot")), in_pipeline=True),
     Step("apply", "Migrate clusters", "Cherry-pick, then net diff, then the cluster agent only "
          "when both fail.", apply, "maybe",
          (CLUSTERS, LIMIT, Option("no_agent", "bool", "No agent calls"),

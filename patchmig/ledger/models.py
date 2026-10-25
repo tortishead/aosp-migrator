@@ -211,7 +211,7 @@ class Note(Base):
     Notes belong to the project, not to one run, so they carry over to later runs. A note
     applies to every patch, to patches touching a path glob, to one patch (by Change-Id or
     patch-id, so the same patch in a later run), to one cluster, or to the patches of one
-    Jira ticket; and to the analyse step (intent writer), the migrate step (cluster agent,
+    Jira ticket; and to the analyse step (analyst), the migrate step (cluster agent,
     reviewer, build fixer) or both. Edits keep the earlier texts; removal is a timestamp.
     """
 

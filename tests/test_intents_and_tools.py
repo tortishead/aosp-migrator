@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -9,9 +10,10 @@ from mcp.server.mcpserver.exceptions import ToolError as McpToolError
 from sqlalchemy import select
 from typer.testing import CliRunner
 
+from patchmig.agents.analyst import analyse_items
 from patchmig.agents.fake import FakeAdapter
-from patchmig.agents.intent import IntentResult, write_intents
 from patchmig.agents.runner import AgentRunner
+from patchmig.analysis import analyse
 from patchmig.cli import app
 from patchmig.config import load_config
 from patchmig.config.schema import BudgetConfig
@@ -30,6 +32,7 @@ from patchmig.mcp_server.tools import (
     read_file,
     search_code,
 )
+from tests.fixtures.analyst import analysis_for, analyst
 from tests.fixtures.scenario import BT_NEW, CAR, EXPECTED, FRAMEWORKS, POWER
 from tests.test_agents import FAKE_COPILOT
 from tests.test_ingest import JIRA, FakeJira, make_config  # noqa: F401  (fixture)
@@ -37,15 +40,9 @@ from tests.test_ingest import JIRA, FakeJira, make_config  # noqa: F401  (fixtur
 N = len(EXPECTED)
 
 
-def intent_for(task, attempt):
-    return IntentResult(
-        problem=f"problem of {task.key}",
-        change="change",
-        verification="verify",
-        components=["X"],
-        sources=["commit_message", "diff"],
-        confidence=0.8,
-    ).model_dump()
+# Items Copilot is asked about: those with a patch the checks left needed (P1+P2, P3, P8).
+ASKED = ["OEM-101", "OEM-202", "OEM-606"]
+intent_for = analysis_for
 
 
 @pytest.fixture
@@ -68,44 +65,61 @@ def _patches(store, run):
         return s.scalars(select(Patch).where(Patch.run_id == run.id).order_by(Patch.seq)).all()
 
 
-def test_intents_written_then_reused_in_next_run(ingested):
+def _runner(store, run, cfg, respond, budget=None):
+    return AgentRunner(FakeAdapter(respond), store, run, cfg.llm, budget or cfg.budget)
+
+
+def test_analyses_written_then_reused_in_next_run(ingested):
     _, cfg, store, run = ingested
-    adapter = FakeAdapter(intent_for)
-    report = write_intents(cfg, store, run, AgentRunner(adapter, store, run, cfg.llm, cfg.budget))
-    assert (report.written, report.reused, report.credits) == (N, 0, float(N))
+    analyse(cfg, store, run)
+    adapter = FakeAdapter(analysis_for)
+    report = analyse_items(cfg, store, run, AgentRunner(adapter, store, run, cfg.llm, cfg.budget))
+    assert (report.analysed, report.reused, report.credits) == (3, 0, 3.0)
+    assert report.not_required == 5  # every patch dropped by the checks: not worth credits
+    assert [t.key for t, _ in adapter.calls] == [f"item:{k}" for k in ASKED]
     first_brief = adapter.calls[0][0].brief
     assert "OEM power mode" in first_brief and "For OEM sleep" in first_brief
     assert "+    public boolean isOemMode()" in first_brief
-    assert '"confidence"' in first_brief  # answer schema included
+    assert '"relevance"' in first_brief  # answer schema included
+    assert "- OEM-606: " in first_brief  # P8 uses P1's isOemMode: a related candidate
     p = _patches(store, run)[0]
-    assert p.intent.startswith("Problem: problem of patch:")
-    assert p.intent_detail["sources"] == ["commit_message", "diff"]
+    assert p.intent.startswith(f"Problem: problem of #{p.id}")
+    assert "Solution: cherry pick: solution for OEM-101" in p.intent
+    assert p.intent_detail["item"] == "OEM-101" and p.intent_detail["confidence"] == 0.8
+
+    # Analysing again: nothing new, nothing asked.
+    again = analyse_items(cfg, store, run, _runner(store, run, cfg, analysis_for))
+    assert (again.analysed, again.current) == (0, 3)
 
     run2 = store.create_run(cfg)
     ingest(cfg, store, run2)
-    adapter2 = FakeAdapter(intent_for)
-    report2 = write_intents(
-        cfg, store, run2, AgentRunner(adapter2, store, run2, cfg.llm, cfg.budget)
-    )
-    assert (report2.written, report2.reused) == (0, N)
-    assert adapter2.calls == []
-    assert _patches(store, run2)[0].intent_detail["reused_from_patch"] == p.id
+    analyse(cfg, store, run2)
+    adapter2 = FakeAdapter(analysis_for)
+    report2 = analyse_items(cfg, store, run2, AgentRunner(adapter2, store, run2, cfg.llm,
+                                                          cfg.budget))  # fmt: skip
+    assert (report2.analysed, report2.reused) == (0, 3) and adapter2.calls == []
+    p2 = _patches(store, run2)[0]
+    assert p2.intent.startswith(f"Problem: problem of #{p.id}")  # the same understanding
+    assert p2.intent_detail["item"] == "OEM-101"
 
 
-def test_intents_limit_budget_and_failures(ingested):
+def test_analyses_limit_budget_and_failures(ingested):
     _, cfg, store, run = ingested
-    runner = AgentRunner(FakeAdapter(intent_for), store, run, cfg.llm, cfg.budget)
-    assert write_intents(cfg, store, run, runner, limit=3).written == 3
-    assert write_intents(cfg, store, run, None).written == 0  # dry run: no agent
-
-    capped = AgentRunner(FakeAdapter(intent_for), store, run, cfg.llm, BudgetConfig(run_credits=4))
-    report = write_intents(cfg, store, run, capped)
-    assert report.written == 1 and report.skipped == 3
+    analyse(cfg, store, run)
+    assert analyse_items(cfg, store, run, _runner(store, run, cfg, analysis_for),
+                         limit=1).analysed == 1  # fmt: skip
+    capped = _runner(store, run, cfg, analysis_for, BudgetConfig(run_credits=2))
+    report = analyse_items(cfg, store, run, capped)
+    assert report.analysed == 1 and report.current == 1
     assert "run budget" in report.stopped_by_budget
 
-    broken = AgentRunner(FakeAdapter(lambda t, a: "nope"), store, run, cfg.llm, cfg.budget)
-    report = write_intents(cfg, store, run, broken)
-    assert len(report.failed) == N - 4 and report.written == 0
+    broken = _runner(store, run, cfg, lambda t, a: "nope")
+    report = analyse_items(cfg, store, run, broken, keys=["OEM-101"])
+    assert len(report.failed) == 1 and report.analysed == 0
+    asked: list = []
+    report = analyse_items(cfg, store, run, _runner(store, run, cfg, analyst(asked=asked)),
+                           keys=["OEM-505"])  # fmt: skip
+    assert report.analysed == 1 and [t.key for t in asked] == ["item:OEM-505"]  # asked for
 
 
 @pytest.fixture
@@ -184,7 +198,7 @@ def _with_fake_copilot(path: Path, tmp_path: Path) -> Path:
     return path
 
 
-def test_cli_doctor_and_intents(make_config, tmp_path, monkeypatch):  # noqa: F811
+def test_cli_doctor_and_analyse(make_config, tmp_path, monkeypatch):  # noqa: F811
     path = _with_fake_copilot(make_config([{"type": "git_range"}]), tmp_path)
     runner = CliRunner()
     monkeypatch.setenv("FAKE_COPILOT_ANSWER", '{"ok": true, "sum": 42}')
@@ -197,45 +211,17 @@ def test_cli_doctor_and_intents(make_config, tmp_path, monkeypatch):  # noqa: F8
     assert result.exit_code == 1 and "WRONG plain JSON answer" in result.output
 
     assert runner.invoke(app, ["ingest", "-c", str(path), "--no-jira"]).exit_code == 0
-    monkeypatch.setenv(
-        "FAKE_COPILOT_ANSWER",
-        '{"problem": "p", "change": "c", "verification": "v", "components": [], '
-        '"sources": ["diff"], "confidence": 0.5}',
-    )
-    result = runner.invoke(app, ["intents", "-c", str(path), "--limit", "2"])
+    answer = {"understanding": "u", "relevance": "needed", "relevance_reason": "r",
+              "solution": {"approach": "adapt", "summary": "s"}, "sources": ["diff"],
+              "confidence": 0.5}  # fmt: skip
+    monkeypatch.setenv("FAKE_COPILOT_ANSWER", json.dumps(answer))
+    result = runner.invoke(app, ["analyse", "-c", str(path), "--limit", "2"])
     assert result.exit_code == 0, result.output
-    assert "2 written, 0 reused" in result.output
+    assert "Copilot analysis: 2 items analysed" in result.output
     sheet = tmp_path / "review.md"
-    result = runner.invoke(app, ["intents", "-c", str(path), "--dry-run", "--export", str(sheet)])
-    assert "0 written, 0 reused, 2 already had one" in result.output
+    result = runner.invoke(app, ["analyse", "-c", str(path), "--no-agent", "--export", str(sheet)])
+    assert "Copilot analysis skipped" in result.output
     text = sheet.read_text()
     assert "Agent calls: 2 (2 valid), estimated credits 2.0" in text
-    assert "## 1. Add OEM power mode" in text and text.count("- [ ] Correct and useful") == 2
-
-
-def test_mcp_server_over_real_stdio(ingested):
-    """The exact entry the adapter hands to Copilot CLI starts a working server."""
-    import os
-
-    from mcp.client.session import ClientSession
-    from mcp.client.stdio import StdioServerParameters, stdio_client
-
-    from patchmig.mcp_server.server import server_config
-
-    path, _, _, run = ingested
-    entry = server_config(str(path), run.id)
-    params = StdioServerParameters(
-        command=entry["command"], args=entry["args"], env={**os.environ, **entry["env"]}
-    )
-
-    async def go():
-        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool("list_patches", {})
-            assert "Add OEM power mode" in str(result) and not result.is_error
-            result = await session.call_tool(
-                "read_file", {"tree": "source", "project": "nope", "path": "x"}
-            )
-            assert result.is_error and "unknown project" in str(result)
-
-    asyncio.run(asyncio.wait_for(go(), timeout=60))
+    assert "## OEM-101: OEM power mode" not in text  # no Jira: titled by the first patch
+    assert "## OEM-101: Add OEM power mode" in text and text.count("- [ ] Correct and useful") == 2

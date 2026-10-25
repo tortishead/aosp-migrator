@@ -3,12 +3,12 @@
 An engineer adds a note when the patches and tickets leave out something the agents need:
 "the OEM power HAL moved to vendor/oem/power in this target", "OEM-512 is only for the
 China variant", "keep the old API, the infotainment app still calls it". Notes go into the
-briefs of the step they are for: `analyse` (the intent writer) and `migrate` (the cluster
-agent, the reviewer and the build fixer).
+briefs of the step they are for: `analyse` (the analyst) and `migrate` (the cluster agent,
+the reviewer and the build fixer).
 
 Every agent result records a fingerprint of the notes (and, for clusters, the intents) it
-was given. When notes change, `stale_intents` and `stale_clusters` find exactly the results
-that were made with different knowledge, so a rerun pays only for those.
+was given. When notes change, the analyst's `stale_items` and `stale_clusters` here find
+exactly the results that were made with different knowledge, so a rerun pays only for those.
 """
 
 from __future__ import annotations
@@ -242,25 +242,6 @@ class Stale:
     name: str
     state: str
     why: str
-
-
-def intent_stale(patch: Patch, notes: list[Note]) -> bool:
-    if patch.intent_detail is None or patch.state in DROPPED:
-        return False
-    return (patch.intent_detail or {}).get("notes") != fingerprint(
-        for_patch(notes, patch, "analyse")
-    )
-
-
-def stale_intents(store: LedgerStore, run: Run) -> list[Stale]:
-    notes = active(store)
-    with store.session() as s:
-        patches = s.scalars(select(Patch).where(Patch.run_id == run.id).order_by(Patch.seq)).all()
-    return [
-        Stale("patch", p.id, p.subject, p.state.value, "notes for its intent changed")
-        for p in patches
-        if intent_stale(p, notes)
-    ]
 
 
 def migration_members(store: LedgerStore, cluster: Cluster) -> list[Patch]:

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from patchmig.agents.intent import build_brief
+from patchmig.agents.analyst import ItemContext, build_brief
 from patchmig.config import load_config
 from patchmig.config.schema import JiraCloseConfig
 from patchmig.ingest import ingest
@@ -201,16 +201,36 @@ def test_links_to_unconfigured_hosts_are_not_fetched(make_config, github, monkey
     assert any("is not configured; add it under code_hosts" in w for w in report.warnings)
 
 
-def test_intent_brief_has_comments_and_linked_tickets(make_config):  # noqa: F811
+def test_analyst_brief_has_everything_the_ticket_carries(make_config, tmp_path):  # noqa: F811
+    from patchmig.ledger import BacklogItem
+
     cfg = load_config(make_config([{"type": "git_range"}]))
+    log = tmp_path / "boot.log"
+    log.write_text("E/CarPower: resume failed")
     t = TicketRow(key="OEM-1", summary="Power mode", description="Need OEM sleep", status="Done",
-                  issue_links=["OEM-2"], comments=[f"a: c{i}" for i in range(8)])  # fmt: skip
+                  issue_links=["OEM-2"], comments=[f"a: c{i}" for i in range(40)],
+                  remote_links=[{"url": "https://wiki/x", "title": "Spec"}],
+                  attachments=[{"filename": "boot.log", "size": 25, "path": str(log)},
+                               {"filename": "big.bin", "size": 9, "path": None,
+                                "note": "larger than 2 kB: listed only"}])  # fmt: skip
     linked = TicketRow(key="OEM-2", summary="Car power spec", description="Spec text",
                        status="Open", issue_links=[], comments=[])  # fmt: skip
-    patch = Patch(project=FRAMEWORKS, subject="Add OEM power mode", message="m", jira_keys=[])
-    brief = build_brief(cfg, patch, [t], {"OEM-2": linked})
-    assert "Latest comments:\n- a: c3" in brief and "a: c2" not in brief  # last five
-    assert "Linked OEM-2: Car power spec (Open)\nSpec text" in brief
+    item = BacklogItem(
+        id=1,
+        run_id=1,
+        key="OEM-1",
+        kind="ticket",
+        title="Power mode",
+        added=[{"id": 1, "kind": "link", "url": "https://x/y", "by": "ana"}],
+    )
+    c = ItemContext(item, [], [], t, {"OEM-2": linked}, [])
+    brief = build_brief(cfg, c, [item], {})
+    assert "a: c10" in brief and "a: c9" not in brief and "10 earlier ones left out" in brief
+    assert "### Linked ticket OEM-2: Car power spec (Open)\n\nSpec text" in brief
+    assert "- Spec: https://wiki/x" in brief
+    assert "E/CarPower: resume failed" in brief and "big.bin (9 bytes; larger than 2 kB" in brief
+    assert "- link from ana: https://x/y" in brief
+    assert "no patch found for this ticket" in brief
 
 
 def test_old_ledger_gets_new_columns(tmp_path):

@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 
 from patchmig import notes as engineer_notes
 from patchmig.analysis.patches import load_diff
+from patchmig.backlog import read_text
 from patchmig.config import ProjectConfig
 from patchmig.config.schema import ThresholdsConfig
 from patchmig.ledger import (
@@ -32,9 +33,6 @@ from patchmig.review import queue_of, queues
 
 MAX_DIFF_CHARS = 200_000
 MAX_PREVIEW_CHARS = 20_000  # of a text attachment or added file, on the item page
-TEXT_FILES = (".txt", ".log", ".md", ".xml", ".json", ".yaml", ".yml", ".java", ".kt", ".c",
-              ".cpp", ".h", ".py", ".sh", ".diff", ".patch", ".csv", ".bp", ".mk", ".aidl",
-              ".rc", ".properties", ".html")  # fmt: skip
 
 
 class NotFound(LookupError):
@@ -92,6 +90,7 @@ def summary(store: LedgerStore, run_id: int) -> dict:
             select(Cluster).where(Cluster.run_id == run_id).order_by(Cluster.order_index)
         ).all()
         calls = s.scalars(select(AgentCall).where(AgentCall.run_id == run_id)).all()
+        items = s.scalars(select(BacklogItem).where(BacklogItem.run_id == run_id)).all()
     snapshot = run.config_snapshot
     return {
         "run": {"id": run.id, "created_at": _iso(run.created_at), "note": run.note,
@@ -110,6 +109,9 @@ def summary(store: LedgerStore, run_id: int) -> dict:
                     if c.result.get("forecast"))
         ),
         "intents": sum(1 for p in patches if p.intent),
+        "backlog": {"items": len(items), "analysed": sum(1 for i in items if i.analysis),
+                    "relevance": dict(Counter(i.analysis["relevance"] for i in items
+                                              if i.analysis))},
         "agent_calls": len(calls),
         "credits": round(sum(c.credits for c in calls), 2),
         "agent_failures": sum(1 for c in calls if not c.ok),
@@ -147,7 +149,21 @@ def patch(store: LedgerStore, config: ProjectConfig | None, run_id: int, patch_i
         "intent": p.intent, "intent_detail": p.intent_detail, "state": p.state.value,
         "verdict": p.verdict, "confidence": p.confidence, "cluster_id": p.cluster_id,
         "history": _history(store, p), "diff": _cut(diff), "notes": _notes_for_patch(store, p),
+        "item": _item_key(store, p),
     }  # fmt: skip
+
+
+def _item_key(store: LedgerStore, p: Patch) -> str | None:
+    """The backlog item the patch is analysed under."""
+    from patchmig.backlog import item_of
+
+    with store.session() as s:
+        keys = set(s.scalars(select(BacklogItem.key).where(
+            BacklogItem.run_id == p.run_id, BacklogItem.kind == "ticket")))  # fmt: skip
+        own = item_of(p, keys)
+        found = s.scalar(select(BacklogItem.key).where(
+            BacklogItem.run_id == p.run_id, BacklogItem.key == own))  # fmt: skip
+    return found
 
 
 def clusters(store: LedgerStore, run_id: int) -> list[dict]:
@@ -348,11 +364,13 @@ def notes(store: LedgerStore, removed: bool = False) -> list[dict]:
 
 
 def stale(store: LedgerStore, run_id: int) -> dict:
-    """Intents and migrations made with notes (or intents) that changed since."""
+    """Analyses and migrations made with information (notes, intents) that changed since."""
+    from patchmig.agents.analyst import stale_items
+
     run = _run(store, run_id)
     as_dict = lambda x: {"id": x.id, "name": x.name, "state": x.state, "why": x.why}  # noqa: E731
     return {
-        "intents": [as_dict(x) for x in engineer_notes.stale_intents(store, run)],
+        "items": [as_dict(x) for x in stale_items(store, run)],
         "clusters": [as_dict(x) for x in engineer_notes.stale_clusters(store, run)],
     }
 
@@ -390,7 +408,7 @@ def _item_patches(patches: list[Patch], item: BacklogItem) -> list[Patch]:
 def _item_status(item: BacklogItem, members: list[Patch]) -> str:
     if item.analysis is None:
         return "imported" if members else "imported, no patch"
-    return "analysed"
+    return f"analysed: {item.analysis['relevance'].replace('_', ' ')}"
 
 
 def backlog(store: LedgerStore, run_id: int) -> list[dict]:
@@ -402,11 +420,18 @@ def backlog(store: LedgerStore, run_id: int) -> list[dict]:
         patches = s.scalars(select(Patch).where(Patch.run_id == run_id).order_by(Patch.seq)).all()
         tickets = {t.key: t for t in s.scalars(select(Ticket).where(
             Ticket.key.in_([i.key for i in rows if i.kind == "ticket"])))}  # fmt: skip
+    from patchmig.agents.analyst import contexts, is_stale
+
+    stale = {c.item.key for c in contexts(store, _run(store, run_id)) if is_stale(c)}
     out = []
     for i in rows:
         members = _item_patches(patches, i)
         t = tickets.get(i.key)
         out.append({
+            "stale": i.key in stale,
+            "relevance": (i.analysis or {}).get("relevance"),
+            "approach": ((i.analysis or {}).get("solution") or {}).get("approach"),
+            "confidence": (i.analysis or {}).get("confidence"),
             "key": i.key, "kind": i.kind, "title": i.title, "status": _item_status(i, members),
             "jira_status": t.status if t else None, "sources": i.sources,
             "patches": len(members),
@@ -422,14 +447,7 @@ def backlog(store: LedgerStore, run_id: int) -> list[dict]:
 
 
 def _preview(path: str | None, name: str) -> str | None:
-    if not path or not name.lower().endswith(TEXT_FILES):
-        return None
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            text = f.read(MAX_PREVIEW_CHARS + 1)
-    except OSError:
-        return None
-    return text if len(text) <= MAX_PREVIEW_CHARS else text[:MAX_PREVIEW_CHARS] + "\n[...]"
+    return read_text(path, name, MAX_PREVIEW_CHARS)
 
 
 def _ticket_view(t: Ticket | None, linked: dict[str, Ticket]) -> dict | None:
@@ -450,6 +468,13 @@ def _ticket_view(t: Ticket | None, linked: dict[str, Ticket]) -> dict | None:
         ],
         "fetched_at": _iso(t.fetched_at),
     }  # fmt: skip
+
+
+def _stale(store: LedgerStore, item: BacklogItem) -> bool:
+    from patchmig.agents.analyst import contexts, is_stale
+
+    run = _run(store, item.run_id)
+    return any(is_stale(c) for c in contexts(store, run) if c.item.id == item.id)
 
 
 def backlog_item(store: LedgerStore, run_id: int, key: str) -> dict:
@@ -488,7 +513,8 @@ def backlog_item(store: LedgerStore, run_id: int, key: str) -> dict:
             for a in item.added or []
         ],
         "notes": [_note(n) for n in mine],
-        "analysis": item.analysis, "earlier_analyses": len(item.analyses or []),
+        "analysis": item.analysis, "earlier_analyses": item.analyses or [],
+        "stale": _stale(store, item),
         "imported_at": _iso(item.imported_at), "refreshed_at": _iso(item.refreshed_at),
         "analysed_at": _iso(item.analysed_at),
     }  # fmt: skip

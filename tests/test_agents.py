@@ -67,12 +67,14 @@ def fake_copilot(tmp_path: Path, monkeypatch):
 
 
 def _task(tmp_path: Path, brief: str = "do it", **kw) -> AgentTask:
-    return AgentTask(agent="intent_writer", key="patch:1", brief=brief, schema=Answer,
+    return AgentTask(agent="analyst", key="patch:1", brief=brief, schema=Answer,
                      workdir=tmp_path, **kw)  # fmt: skip
 
 
 def test_copilot_command_shape(tmp_path: Path):
+    # "intent_writer" is the analyst's earlier name: old configs keep working.
     cfg = LlmConfig(models={"intent_writer": "small-model"}, extra_args=["--log-level=error"])
+    assert cfg.models == {"analyst": "small-model"}
     adapter = CopilotCliAdapter(cfg, scratch=tmp_path / "briefs")
     tools = ToolPolicy(allow=["patchmig"], mcp_servers={"patchmig": {"command": "x"}})
     cmd = adapter.command(_task(tmp_path, tools=tools), attempt=1)
@@ -92,7 +94,7 @@ def test_long_brief_goes_to_attachment(tmp_path: Path):
     cmd = adapter.command(_task(tmp_path, brief="x" * 5000), attempt=2)
     attachment = next(a for a in cmd if a.startswith("--attachment="))
     path = Path(attachment.split("=", 1)[1])
-    assert path.read_text() == "x" * 5000 and path.name == "intent_writer-patch-1-2.md"
+    assert path.read_text() == "x" * 5000 and path.name == "analyst-patch-1-2.md"
     assert "x" * 5000 not in cmd
 
 
@@ -129,7 +131,7 @@ def runner_env(write_config):
     def make(responder, budget: BudgetConfig | None = None, retries: int = 1, model=None):
         llm = LlmConfig(max_retries=retries, credits_per_call={"default": 1.0, "big": 3.0})
         if model:
-            llm.models["intent_writer"] = model
+            llm.models["analyst"] = model
         adapter = FakeAdapter(responder)
         return AgentRunner(adapter, store, run, llm, budget or BudgetConfig()), adapter
 

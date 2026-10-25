@@ -7,14 +7,15 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from patchmig.agents.analyst import analyse_items
 from patchmig.agents.curator import curate, signals
 from patchmig.agents.fake import FakeAdapter
-from patchmig.agents.intent import write_intents
 from patchmig.agents.runner import AgentRunner
 from patchmig.cli import app
 from patchmig.ledger import Patch, State
 from patchmig.memory import Memory, MemoryRepoError, change_ids
 from patchmig.report import run_report
+from tests.fixtures.analyst import analyst
 from tests.fixtures.scenario import BT_NEW, BT_OLD, FRAMEWORKS, POWER
 from tests.test_migrate import Project, answer, resolve_power
 from tests.test_publish_review import Published
@@ -106,7 +107,7 @@ def test_open_needs_a_repo_unless_created(tmp_path):
     assert (Memory.open(p.config, create=True).path / ".git").exists()
 
 
-def test_next_migration_reuses_intents_and_briefs_the_agent(remembered, tmp_path):
+def test_next_migration_briefs_the_analyst_and_the_agent(remembered, tmp_path):
     lesson = remembered.memory.propose(
         "OEM callers pass REASON_OEM", "CarPowerService.setMode takes a reason; OEM code uses "
         "REASON_OEM.", [f"{FRAMEWORKS}/{POWER}"], {},
@@ -116,10 +117,11 @@ def test_next_migration_reuses_intents_and_briefs_the_agent(remembered, tmp_path
 
     nxt = Project(tmp_path / "next", memory={"path": str(remembered.memory_path)})
     mem = Memory.open(nxt.config)
-    report = write_intents(nxt.config, nxt.store, nxt.run, None, memory=mem)
-    assert report.reused >= 4
-    assert nxt.patch("P1").intent == "Intent of Add OEM power mode"
-    assert nxt.patch("P1").intent_detail == {"source": "memory", "migration": "mig-A14-A15"}
+    asked: list = []
+    analyse_items(nxt.config, nxt.store, nxt.run, nxt.runner(analyst(asked=asked)), memory=mem)
+    (power,) = [t.brief for t in asked if t.key == "item:OEM-101"]
+    remembered_text = power.split("## From earlier migrations (migration memory)")[1]
+    assert "in mig-A14-A15 verified" in remembered_text
 
     briefs = []
 

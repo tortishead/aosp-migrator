@@ -29,9 +29,8 @@ migrate ingest -c myproject/project.yaml     # import tickets + patches into the
 migrate history -c myproject/project.yaml    # shallow trees: fetch target history for the checks
 migrate patches -c myproject/project.yaml    # list the run's patches in order
 migrate doctor -c myproject/project.yaml --mcp   # check Copilot CLI headless + MCP tools
-migrate analyse -c myproject/project.yaml    # upstream/obsolete/needed, clusters, forecasts
+migrate analyse -c myproject/project.yaml --export review.md  # checks, clusters; Copilot per item
 migrate clusters -c myproject/project.yaml   # clusters in migration order (--show ID for detail)
-migrate intents -c myproject/project.yaml --export review.md   # needed patches only
 migrate apply -c myproject/project.yaml --no-agent   # free rungs only: cherry-pick, net diff
 migrate apply -c myproject/project.yaml --limit 3    # then the cluster agent where they fail
 migrate build-check -c myproject/project.yaml        # SSH to the build server, slots prepared?
@@ -56,7 +55,7 @@ migrate status -c myproject/project.yaml
 | `patchmig/backlog.py` | Backlog items (one per ticket, or per patch without one) and what engineers add to them |
 | `patchmig/gitutil.py` | Thin helpers over the git CLI |
 | `patchmig/jira_client.py` | Jira REST client for Server/Data Center and Cloud (reads and export writes) |
-| `patchmig/agents/` | LLM adapter (Copilot CLI, fake), runner with budgets and retries, intent writer, briefs |
+| `patchmig/agents/` | LLM adapter (Copilot CLI, fake), runner with budgets and retries, analyst, briefs |
 | `patchmig/knowledge/` | Knowledge pack: tree access, OEM footprint map, upstream change map |
 | `patchmig/analysis/` | Upstream rungs, obsolete rule, revert folding, clustering, net diffs, forecasts |
 | `patchmig/migrate/` | Per-cluster sparse worktrees and branches, cherry-pick and net-diff rungs, guardrails, migration orchestration |
@@ -139,13 +138,14 @@ the task's schema, retries once with a correction, and logs every call (credits,
 output tail) in the ledger. Credits are estimates from `llm.credits_per_call`, calibrated by the
 spike.
 
-Models are set per agent in `llm.models` (`intent_writer`, `cluster_agent`, `reviewer`,
+Models are set per agent in `llm.models` (`analyst`, `cluster_agent`, `reviewer`,
 `build_fixer`, `memory_curator`); unset agents use the CLI default. `budget.run_credits` stops a
 step for every cluster; `budget.cluster_credits` caps one cluster's agent, reviewer and build-fix
 calls in a run: a cluster that reaches it goes to `needs_decision` and the other clusters go on.
 
-The intent writer gives each patch a short, sourced intent and reuses intents by patch
-fingerprint, so a patch never costs twice, also across runs.
+The analyst gets one call per backlog item that needs it (see Analysis) and writes the intent
+of each of the item's patches. An item analysed with the same information in an earlier run is
+reused, so it never costs twice. (`intent_writer` in an older config means the analyst.)
 
 ## Engineer notes
 
@@ -161,7 +161,7 @@ migrate notes list [--patch N | --cluster N] / edit N --text ... / remove N   (a
 
 A note applies to every patch, a path glob over `<project>/<file>`, one patch (by Change-Id or
 patch-id, so it follows the patch into later runs), one cluster, or the patches of one Jira
-ticket (`--ticket`); and to `--for analyse` (intent writer), `--for migrate` (cluster agent,
+ticket (`--ticket`); and to `--for analyse` (analyst), `--for migrate` (cluster agent,
 reviewer, build fixer) or both. Notes live in the ledger, outlive runs, and keep their edit
 history. The web front end shows them on patch and cluster pages.
 
@@ -170,7 +170,7 @@ made with, so after a change only the affected work is redone:
 
 ```
 migrate notes stale            # what changed knowledge affects
-migrate intents --stale        # rewrite only those intents (or --patch N)
+migrate analyse                # analyse again the items with new information (or --item KEY)
 migrate apply --stale --by xuan    # reopen and migrate only those clusters, plus clusters built on them
 migrate apply --redo --cluster N --by xuan   # rerun chosen clusters regardless
 ```
@@ -179,11 +179,17 @@ A cluster the agent worked on is stale when any of its notes or intents changed.
 applied by cherry-pick or net diff is stale only when a note about it specifically (its
 patches, the cluster or a ticket) changed; such a note also brings the agent in, since a
 cherry-pick cannot follow it. Approved clusters are never reopened by `--stale`. The
-deterministic `migrate analyse` does not read notes; its LLM counterpart is `migrate intents`.
+deterministic checks of `migrate analyse` do not read notes; its Copilot part does.
 
 ## Analysis
 
-`migrate analyse` is deterministic and spends no credits. It first builds the knowledge pack:
+`migrate analyse` has two parts: deterministic checks of the patches (no credits), then
+Copilot per backlog item. It can run any number of times: patches already checked keep their
+verdict, and clusters already migrated or approved are left as they are.
+
+### Checks
+
+The checks first build the knowledge pack:
 the OEM footprint map (files, symbols and hot spots per project) and, for every touched file,
 its upstream fate between the source base and the target base (unchanged, modified, renamed,
 moved to another project, deleted), with the upstream commits, changed line ranges and changed
@@ -203,6 +209,36 @@ Oversized clusters are split at their weakest links, and clusters are ordered so
 come first. For each cluster, the patches still needed are replayed on the source base to get
 its net diff (fixes fold into what they fix), the net diff gets a textual upstream check of its
 own, and a forecast: clean, conflict, rewrite or obsolete, with reasons.
+
+Run again after an import brought new patches, the checks decide only the new ones; a new
+patch joins a cluster not migrated yet that it is linked to, or forms a new cluster after the
+existing ones. A new patch linked to a cluster already migrated gets its own cluster, which
+depends on that one, with a warning to rerun the migrated cluster if both must go together.
+
+### Copilot: the analyst
+
+Then the analyst gets one call per backlog item that needs it: never analysed, or given new
+information since (a comment, a refreshed ticket, an added link or file, a note, a new patch).
+An item whose patches the checks all dropped is not sent; `--item KEY` sends any item again.
+The analyst gets everything the import kept and engineers added, the patches with their diffs
+and check results, other backlog items as candidates, earlier analyses of the item and what the
+migration memory remembers, and reads the target tree through the MCP tools. It answers with:
+
+- an understanding of the item, and of each patch (written as the patch's intent);
+- whether it is still needed: `needed`, `already_in_target`, `obsolete`, `not_needed` or
+  `unclear`, with the reason and target code as evidence;
+- related backlog items and patches (checked against the backlog);
+- a solution: cherry-pick, adapt, rewrite, drop, or `needs_patch` for a ticket without one;
+- what information is missing, and its confidence.
+
+A confident "not needed" (confidence at least `thresholds.careful_review`) moves the item's
+patches that the checks left `needed` to `upstream` or `obsolete`; an unsure or `unclear`
+answer moves them to `needs_decision` with the missing information as the question; a later
+`needed` moves them back. Verdicts of the checks themselves stay (a disagreement is recorded
+on the patch), and clusters already migrated are not moved: their intents change, which makes
+them stale for `migrate apply --stale`. Each analysis is kept, with the earlier ones, on the
+item (`migrate backlog show KEY`, the Backlog page). `--export review.md` writes a sheet to
+judge the analyses; `--no-agent` runs only the checks.
 
 Without shared history between the trees (for example, an imported vendor drop), the analysis
 compares file contents instead; identity and provenance then rarely conclude, so more patches
@@ -278,9 +314,9 @@ by Change-Id, also found through `Original-Change-Id`) its outcome, strategy, in
 PRs, decisions and reviewer feedback; the files that moved or disappeared upstream; and the
 human decisions. `migrate memory curate` makes one agent call that turns the run's feedback,
 decisions and build fixes into proposed lessons, which reach the cluster agent only after
-`migrate memory approve`. In the next migration, `migrate intents` reuses remembered intents
-without an agent call and the cluster agent's brief gets the patch history, mappings and the
-approved lessons for the paths it touches (capped by `memory.brief_max_chars`).
+`migrate memory approve`. In the next migration the analyst's and the cluster agent's briefs
+get the patch history, mappings and the approved lessons for the paths they touch (capped by
+`memory.brief_max_chars`).
 
 `migrate report` writes a Markdown summary of a run: outcomes, deciding rungs, strategies,
 review queues, builds, tests, agent calls and credits, and what needs a person. See
@@ -303,11 +339,11 @@ Every action needs your name, which is recorded with it (transitions show `human
 reviews `source: web`), and, when the admin token is on, the token (the same one as for
 Settings). Sign in once on the Run page; `--read-only` turns all actions off.
 
-- **Run page.** Each step has a card with the same options as its command: ingest, history,
-  analyse, intents, apply (migrate clusters), verify (build and test), publish, PR review sync,
+- **Run page.** Each step has a card with the same options as its command: import, history,
+  analyse, apply (migrate clusters), verify (build and test), publish, PR review sync,
   Jira export, memory record and lesson proposals. "Whole migration" runs the chosen steps in
-  order (ingest, history, analyse, intents, apply, verify, publish; with a git range, history
-  also runs before ingest) and stops at the first failure or when the credit budget stops a
+  order (import, history, analyse, apply, verify, publish; with a git range, history
+  also runs before import) and stops at the first failure or when the credit budget stops a
   step. A step runs on the server as a background job, one job at a time: the page shows its
   live log (the lines the command prints), its estimated Copilot credits and agent calls, and
   can stop it before its next step (a running step is not cut off). You can close the page.
@@ -318,11 +354,11 @@ Settings). Sign in once on the Run page; `--read-only` turns all actions off.
   needs-decision question, per cluster on the Review page or the cluster page. These wait while
   a job that moves clusters is running. The Review page also syncs PR reviews and previews or
   runs the Jira export; the Report page shows and downloads `migrate report`.
-- **Cluster and patch pages.** Migrate a cluster (again), build and test it, publish it; write
-  one patch's intent again.
+- **Backlog, cluster and patch pages.** Add information to a backlog item and import and
+  analyse it again; migrate a cluster (again), build and test it, publish it.
 - **Notes.** The Notes page lists, adds, edits and removes engineer notes for all, a path glob,
-  a patch, a cluster or a ticket, shows which intents and clusters were made with notes that
-  changed since, and reruns only those. Patch and cluster pages add notes for themselves.
+  a patch, a cluster or a ticket, shows which analyses and clusters were made with information
+  that changed since, and reruns only those. Patch and cluster pages add notes for themselves.
 - **Memory.** Record the run, ask the curator for lessons (one agent call), approve or drop
   proposed lessons.
 - **Start at boot.** `migrate service-file` prints a systemd unit for this config: it starts

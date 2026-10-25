@@ -22,9 +22,9 @@ from patchmig.ledger.models import AgentCall
 from patchmig.memory import Memory
 from patchmig.web.api import create_app
 from patchmig.web.jobs import JobManager
+from tests.fixtures.analyst import analysis_for as intent_for
 from tests.fixtures.scenario import EXPECTED
 from tests.test_ingest import make_config  # noqa: F401  (fixture)
-from tests.test_intents_and_tools import intent_for
 
 TOKEN = "s3cret"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -58,24 +58,24 @@ def text(job) -> list[str]:
 
 def test_pipeline_from_the_browser_logs_what_the_cli_prints(served):
     client, jobs, path, cfg, store, fake = served
-    job = start(client, jobs, ["ingest", "analyse", "intents"], {"ingest": {"use_jira": False}})
+    job = start(client, jobs, ["ingest", "analyse"], {"ingest": {"use_jira": False}})
     assert job["state"] == "done", text(job)
     run = store.latest_run()
     assert job["run_id"] == run.id and job["by"] == "xuan"
-    needed = sum(1 for e in EXPECTED if e.verdict == "needed")
     assert f"Run {run.id} (new backlog): {len(EXPECTED)} new patches, 0 already there" in text(job)
     assert "== Analyse" in text(job) and job["log"][0]["level"] == "step"
-    # Credits: exactly the agent calls the job made, one per needed patch.
-    assert len(fake.calls) == needed and job["agent_calls"] == needed
+    # Credits: exactly the agent calls the job made, one per item with a needed patch.
+    assert len(fake.calls) == 3 and job["agent_calls"] == 3
     with store.session() as s:
         assert job["credits"] == s.scalar(select(func.sum(AgentCall.credits)))
     # The CLI runs the same step function and prints the same lines.
     new = ["ingest", "--no-jira", "--new-run", "--config", str(path)]
     assert CliRunner().invoke(cli, new).exit_code == 0
-    out = CliRunner().invoke(cli, ["analyse", "--config", str(path)]).output
-    i, j = text(job).index("== Analyse"), text(job).index("== Write intents")
+    out = CliRunner().invoke(cli, ["analyse", "--no-agent", "--config", str(path)]).output
+    i = text(job).index("== Analyse")
+    j = next(n for n, line in enumerate(text(job)) if line.startswith("Copilot analysis:"))
     in_job = "\n".join(text(job)[i + 1 : j]).replace(f"Run {run.id}:", f"Run {run.id + 1}:")
-    assert out.rstrip("\n") == in_job
+    assert out.rstrip("\n") == in_job + "\nCopilot analysis skipped (no agent)."
     # The job is kept next to the config and listed.
     assert json.loads((path.parent / ".patchmig/jobs/00001.json").read_text())["state"] == "done"
     assert [j["id"] for j in client.get("/api/jobs").json()] == [job["id"]]
@@ -237,7 +237,9 @@ def test_notes_from_the_browser_and_what_they_make_stale(analysed):
     )
     assert edited.json()["edits"] == 1 and edited.json()["author"] == "lin"
     assert client.get("/api/notes").json()[0]["text"] == "Keep the old API (infotainment)"
-    assert client.get(f"/api/runs/{run.id}/stale").json() == {"intents": [], "clusters": []}
+    # A note for the analysis makes the patch's backlog item stale: it is analysed again.
+    stale = client.get(f"/api/runs/{run.id}/stale").json()
+    assert [x["name"] for x in stale["items"]] == ["OEM-101"] and stale["clusters"] == []
     gone = client.post(f"/api/notes/{note['id']}/remove", headers=AUTH, json={"by": "xuan"})
     assert gone.status_code == 200 and client.get("/api/notes").json() == []
     assert client.get("/api/notes?removed=true").json()[0]["removed_at"]

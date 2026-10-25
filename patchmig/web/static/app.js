@@ -64,7 +64,7 @@ function Confidence({ c, what }) {
 function ConfidenceScale({ open }) {
   if (!LEVELS.length) return null;
   return html`<details class="conf-scale" open=${open}><summary>Confidence scale</summary>
-    <p class="muted small">Every Copilot agent (intent writer, cluster agent, reviewer, build fixer) is given this scale and rates its answer on it. A cluster's confidence is the lowest of its migration, the reviewer and any build fix; cherry-pick counts as 0.90 and the net diff as 0.85. The review queues use the project's thresholds on the same numbers.</p>
+    <p class="muted small">Every Copilot agent (analyst, cluster agent, reviewer, build fixer) is given this scale and rates its answer on it. A cluster's confidence is the lowest of its migration, the reviewer and any build fix; cherry-pick counts as 0.90 and the net diff as 0.85. The review queues use the project's thresholds on the same numbers.</p>
     <table><tbody>${LEVELS.map((l) => html`<tr><td><span class=${`conf conf-${l.name}`}>${l.name}</span></td><td class="mono">${l.from.toFixed(2)}–${l.to.toFixed(2)}</td><td>${l.meaning}</td></tr>`)}</tbody></table>
   </details>`;
 }
@@ -202,6 +202,7 @@ function Dashboard({ run }) {
     return html`
       <h1>${s.project} <span class="muted">· Android ${s.migration?.source_version} → ${s.migration?.target_version}, run ${s.run.id}</span></h1>
       <div class="tiles">
+        <div class="tile"><div class="value"><a href=${`#/r/${run}/backlog`}>${s.backlog.items}</a></div><div class="label">backlog items (${s.backlog.analysed} analysed)</div></div>
         <div class="tile"><div class="value">${s.patches}</div><div class="label">patches</div></div>
         <div class="tile"><div class="value">${toMigrate}</div><div class="label">still needed</div></div>
         <div class="tile"><div class="value">${migrated}</div><div class="label">migrated</div></div>
@@ -297,7 +298,7 @@ function PatchesPage({ run }) {
           <td>${p.project}</td>
           <td><${State} s=${p.state} /></td>
           <td>${p.rung || html`<span class="muted">–</span>`}</td>
-          <td><${Confidence} c=${p.intent_confidence} what="intent writer" /></td>
+          <td><${Confidence} c=${p.intent_confidence} what="analyst" /></td>
           <td><${Confidence} c=${p.confidence} what=${p.cluster_id ? "analysis or migration" : "analysis"} /></td>
           <td>${p.role}</td>
           <td>${p.jira_keys.join(", ")}</td>
@@ -352,8 +353,9 @@ function PatchPage({ run, id }) {
     </div>
     <div class="stack"></div>
     <div class="grid">
-      <div class="panel"><h2>Intent ${p.intent_detail?.confidence != null ? html`<${Confidence} c=${p.intent_detail.confidence} what="intent writer" />` : null}</h2>${p.intent ? html`<pre class="block">${p.intent}</pre>` : html`<p class="muted">No intent yet (step <b>Write intents</b>).</p>`}
-        <div class="actions"><${JobButton} steps=${["intents"]} options=${{ intents: { patches: [p.id] } }} run=${run} label=${p.intent ? "Write this intent again" : "Write this intent"} /></div></div>
+      <div class="panel"><h2>Intent ${p.intent_detail?.confidence != null ? html`<${Confidence} c=${p.intent_detail.confidence} what="analyst" />` : null}</h2>${p.intent ? html`<pre class="block">${p.intent}</pre>` : html`<p class="muted">No intent yet: the step <b>Analyse</b> writes it with the analysis of the patch's backlog item.</p>`}
+        ${p.item ? html`<p class="small">From the analysis of backlog item <a href=${`#/r/${run}/backlog/${p.item}`}>${p.item}</a>.</p>
+        <div class="actions"><${JobButton} steps=${["analyse"]} options=${{ analyse: { items: p.item } }} run=${run} label="Analyse this item again" /></div>` : null}</div>
       <div class="panel"><h2>History</h2><${Timeline} items=${p.history} /></div>
     </div>
     <div class="stack"></div>
@@ -387,7 +389,7 @@ function BacklogPage({ run }) {
         <thead><tr><th>Item</th><th>Title</th><th>Status</th><th>Jira</th><th>Patches</th><th class="num">Comments</th><th class="num">Attachments</th><th class="num">Added</th><th>Refreshed</th></tr></thead>
         <tbody>${shown.map((i) => html`<tr>
           <td><a href=${`#/r/${run}/backlog/${i.key}`}>${i.key}</a></td>
-          <td class="wrap">${i.title}</td><td>${i.status}</td><td>${i.jira_status || "–"}</td>
+          <td class="wrap">${i.title}</td><td>${i.status}${i.stale ? html` <span class="tag tag-maybe" title="new information since the analysis">new info</span>` : null}</td><td>${i.jira_status || "–"}</td>
           <td>${i.patches ? html`<${States} states=${i.states} />` : html`<span class="muted">none</span>`}</td>
           <td class="num">${i.comments}</td><td class="num">${i.attachments}</td><td class="num">${i.added}</td>
           <td>${fmtTime(i.refreshed_at)}</td></tr>`)}</tbody>
@@ -399,6 +401,37 @@ function Preview({ text }) {
   const [open, setOpen] = useState(false);
   if (!text) return null;
   return html` <button type="button" class="link" onClick=${() => setOpen(!open)}>${open ? "hide" : "show"}</button>${open ? html`<pre class="block">${text}</pre>` : null}`;
+}
+
+const RELEVANCE = { needed: "still needed", already_in_target: "already in the target", obsolete: "obsolete", not_needed: "not needed", unclear: "unclear" };
+
+function Analysis({ a, earlier, stale, run, item }) {
+  const [old, setOld] = useState(false);
+  const rerun = html`<div class="actions">
+    <${JobButton} steps=${["ingest", "analyse"]} options=${{ ingest: { items: item.key }, analyse: { items: item.key } }} run=${run} label="Import and analyse this item again" primary=${stale} />
+    <span class="muted small">Copilot reads the ticket again with everything added since.</span></div>`;
+  if (!a) return html`<div class="panel"><h2>Analysis</h2><p class="muted">Not analysed yet: run <b>Analyse</b>.</p>${rerun}</div>`;
+  return html`<div class="panel"><h2>Analysis <${Confidence} c=${a.confidence} what="analyst" />
+      <span class="muted"> · ${fmtTime(a.at)}${a.reused_from_run ? ` · from run ${a.reused_from_run}` : ""}</span>
+      ${stale ? html` <span class="tag tag-maybe">new information since</span>` : null}</h2>
+    <p>${a.understanding}</p>
+    <dl class="kv">
+      <dt>still needed?</dt><dd><b>${RELEVANCE[a.relevance] || a.relevance}</b>: ${a.relevance_reason}</dd>
+      <dt>solution</dt><dd><b>${label(a.solution.approach)}</b>: ${a.solution.summary}
+        ${a.solution.steps?.length ? html`<ol>${a.solution.steps.map((x) => html`<li>${x}</li>`)}</ol>` : null}</dd>
+      ${a.solution.files?.length ? html`<dt>target files</dt><dd class="mono">${a.solution.files.join(", ")}</dd>` : null}
+      ${a.solution.risks?.length ? html`<dt>risks</dt><dd><ul class="plain">${a.solution.risks.map((x) => html`<li>${x}</li>`)}</ul></dd>` : null}
+      ${a.related?.length ? html`<dt>related</dt><dd><ul class="plain">${a.related.map((r) => html`<li>${r.known && !r.ref.startsWith("#") ? html`<a href=${`#/r/${run}/backlog/${r.ref}`}>${r.ref}</a>` : r.known ? html`<a href=${`#/r/${run}/patches/${r.ref.slice(1)}`}>${r.ref}</a>` : html`<span class="muted" title="not in this backlog">${r.ref}</span>`} <span class="muted">${label(r.relation)}</span>: ${r.why}</li>`)}</ul></dd>` : null}
+      ${a.missing_information?.length ? html`<dt>missing</dt><dd><ul class="plain">${a.missing_information.map((x) => html`<li>${x}</li>`)}</ul><span class="muted small">Add it below, then analyse again.</span></dd>` : null}
+      ${a.moved?.length ? html`<dt>moved</dt><dd>${a.moved.join(", ")}</dd>` : null}
+      <dt>sources</dt><dd>${a.sources.join(", ")}</dd>
+    </dl>
+    ${a.target_evidence?.length ? html`<h2 style="margin-top:12px">Target evidence</h2>${a.target_evidence.map((e) => html`<p class="mono small">${e.project}/${e.path}</p><pre class="block">${e.snippet}</pre>`)}` : null}
+    ${earlier.length ? html`<p class="small"><button type="button" class="link" onClick=${() => setOld(!old)}>${old ? "hide" : "show"} ${earlier.length} earlier analys${earlier.length === 1 ? "is" : "es"}</button></p>
+      ${old ? html`<ul class="plain notes">${[...earlier].reverse().map((e) => html`<li class="note"><span class="muted">${fmtTime(e.at)} · ${RELEVANCE[e.relevance] || e.relevance} · ${label(e.solution?.approach)}</span><div class="note-text">${e.understanding}
+${e.relevance_reason}</div></li>`)}</ul>` : null}` : null}
+    ${rerun}
+  </div>`;
 }
 
 function BacklogItemPage({ run, itemKey }) {
@@ -428,6 +461,7 @@ function BacklogItemPage({ run, itemKey }) {
       </div>
     </div>
     <div class="stack"></div>
+    <${Analysis} a=${i.analysis} earlier=${i.earlier_analyses} stale=${i.stale} run=${run} item=${i} />
     ${t?.comments.length ? html`<div class="panel"><h2>Comments <span class="muted">(${t.comments.length})</span></h2>
       <ul class="plain notes">${t.comments.map((c) => html`<li class="note"><div class="note-text">${c}</div></li>`)}</ul></div>` : null}
     ${t?.attachments.length ? html`<div class="panel"><h2>Attachments <span class="muted">(${t.attachments.length})</span></h2>
@@ -437,7 +471,7 @@ function BacklogItemPage({ run, itemKey }) {
         <span class="muted">· ${a.by} · ${fmtTime(a.at)}${a.removed_at ? ` · removed by ${a.removed_by}` : ""}</span><${RemoveAddition} run=${run} item=${i} addition=${a} onDone=${reload} /><${Preview} text=${a.preview} /></li>`)}</ul>`
         : html`<p class="muted">Nothing yet.</p>`}
       <${InfoForm} run=${run} item=${i} onDone=${reload} />
-      <div class="actions"><${JobButton} steps=${["ingest"]} options=${{ ingest: { items: i.key } }} run=${run} label="Import this item again" /></div>
+      <div class="actions"><${JobButton} steps=${["ingest", "analyse"]} options=${{ ingest: { items: i.key }, analyse: { items: i.key } }} run=${run} label="Import and analyse this item again" /></div>
     </div>
     <${NotesPanel} notes=${i.notes} run=${run} scope=${i.kind === "ticket" ? "ticket" : "patch"} target=${i.kind === "ticket" ? i.key : i.patches[0]?.id} onDone=${reload} />`;
   }}<//>`;

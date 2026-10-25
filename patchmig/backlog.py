@@ -25,6 +25,22 @@ from patchmig.config import ProjectConfig
 from patchmig.ledger import BacklogItem, LedgerStore, Patch, Run
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
+# Attachments and added files the analysis (and the item page) can read as text.
+TEXT_FILES = (".txt", ".log", ".md", ".xml", ".json", ".yaml", ".yml", ".java", ".kt", ".c",
+              ".cpp", ".h", ".py", ".sh", ".diff", ".patch", ".csv", ".bp", ".mk", ".aidl",
+              ".rc", ".properties", ".html")  # fmt: skip
+
+
+def read_text(path: str | None, name: str, limit: int) -> str | None:
+    """A text attachment or added file, at most `limit` characters; None if not text."""
+    if not path or not name.lower().endswith(TEXT_FILES):
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(limit + 1)
+    except OSError:
+        return None
+    return text if len(text) <= limit else text[:limit] + "\n[...]"
 
 
 class BacklogError(Exception):

@@ -34,7 +34,7 @@ migrate init ~/spike            # creates ~/spike/project.yaml
 - `patch_sources`: keep the spike to about 20 patches. The simplest way is a `git_range` limited to
   one or two projects, or a small spreadsheet with 20 commit rows.
 - `jira`: URL, project key, and `token: env:JIRA_TOKEN`. Remove the section to skip Jira.
-- `llm.models`: optional, for example `{intent_writer: <a cheaper model>}`.
+- `llm.models`: optional, for example `{analyst: <a cheaper model>}`.
 - Remove the `build` and `output` sections; the spike doesn't use them.
 
 Then run `migrate config validate -c ~/spike/project.yaml`.
@@ -68,25 +68,25 @@ Check that the ingest summary (patch count, roles, warnings) matches what you ex
 - A policy message about MCP servers: your enterprise policy blocks MCP in Copilot CLI. Tell me;
   the fallback is giving agents a short list of allowed read-only shell commands instead.
 
-## 6. Write intents and review them
+## 6. Analyse and review the analyses
 
 Note your current premium-request usage in your Copilot settings first, so you can compare
 afterwards.
 
 ```bash
-migrate intents -c ~/spike/project.yaml --limit 20 --export ~/spike/intent-review.md
+migrate analyse -c ~/spike/project.yaml --limit 20 --export ~/spike/analysis-review.md
 ```
 
-Open `intent-review.md` and tick each intent that is correct and useful; add a note where it
-is wrong. Then check the premium-request usage again and set `llm.credits_per_call` in the config
+Open `analysis-review.md` and tick each analysis that is correct and useful; add a note where
+it is wrong. Then check the premium-request usage again and set `llm.credits_per_call` in the config
 to the measured usage per call (for example, `{default: 1.0}`).
 
 ## 7. What to send back
 
 - The output of the two `doctor` runs and the ingest summary.
-- How many of the 20 intents you ticked, and the main kinds of mistakes. Leave out code or ticket
+- How many of the 20 analyses you ticked, and the main kinds of mistakes. Leave out code or ticket
   text if it is confidential.
-- Premium requests used for the 20 intents, and the average duration from the review sheet.
+- Premium requests used for the 20 analyses, and the average duration from the review sheet.
 
-Gate: the intents are useful enough to build on, both doctor checks pass (or there is a
-workable fallback for MCP), and the credit cost per patch is acceptable.
+Gate: the analyses are useful enough to build on, both doctor checks pass (or there is a
+workable fallback for MCP), and the credit cost per item is acceptable.

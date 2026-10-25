@@ -8,7 +8,7 @@ import yaml
 from sqlalchemy import select
 from typer.testing import CliRunner
 
-from patchmig.analysis import AnalysisError, analyse
+from patchmig.analysis import analyse
 from patchmig.cli import app
 from patchmig.config import load_config
 from patchmig.ingest import ingest
@@ -165,10 +165,53 @@ def test_other_clusters_forecast_and_dropped_clusters(analysed):
     assert _cluster_of(clusters, p["P4"]).state == State.OBSOLETE
 
 
-def test_analysing_twice_is_refused(analysed):
-    cfg, store, run, *_ = analysed
-    with pytest.raises(AnalysisError, match="already analysed"):
-        analyse(cfg, store, run)
+def test_analysing_again_keeps_what_was_decided_and_places_new_patches(analysed, tmp_path):
+    from patchmig import backlog as bl
+    from patchmig.ledger import Transition
+    from tests.test_jira_ingest import ATTACHED
+
+    cfg, store, run, _, p, clusters = analysed
+    with store.session() as s:
+        moves = s.query(Transition).count()
+    again = analyse(cfg, store, run)
+    assert (again.decided, again.clusters_new, again.clusters_changed) == (0, 0, 0)
+    with store.session() as s:
+        assert s.query(Transition).count() == moves  # nothing moved
+        assert s.query(KnowledgeItem).filter_by(kind="file_fate").count() == len(
+            {(f.project, f.path) for f in (_fate(i) for i in s.query(KnowledgeItem).filter_by(
+                kind="file_fate"))})  # fmt: skip
+
+    # The power cluster has been migrated: it is left as it is.
+    power, bt = _cluster_of(clusters, p["P1"]), _cluster_of(clusters, p["P3"])
+    with store.session() as s, s.begin():
+        row = s.get(Cluster, power.id)
+        row.result = {**row.result, "migration": {"state": "applied"}}
+    # New information: a follow-up diff for the BT ticket, and one for the power ticket.
+    bl.add_info(cfg, store, run, "OEM-202", "xuan", filename="bt.diff", content=ATTACHED)
+    new_file = f"{FRAMEWORKS}/core/java/android/os/OemPowerLog.java"
+    power_fix = (f"diff --git a/{new_file} b/{new_file}\nnew file mode 100644\n--- /dev/null\n"
+                 f"+++ b/{new_file}\n@@ -0,0 +1,3 @@\n+package android.os;\n+\n"
+                 "+class OemPowerLog {}\n")  # fmt: skip
+    bl.add_info(cfg, store, run, "OEM-101", "xuan", filename="power.diff", content=power_fix)
+    ingest(cfg, store, run, items=["OEM-202", "OEM-101"])
+    report = analyse(cfg, store, run)
+    assert report.decided == 2 and report.clusters_new == 1 and report.clusters_changed == 1
+    with store.session() as s:
+        added = s.scalars(select(Patch).where(Patch.sources == ["added"])).all()
+        by_key = {x.jira_keys[0]: x for x in added}
+        assert by_key["OEM-202"].cluster_id == bt.id  # joined the BT cluster, not migrated yet
+        assert by_key["OEM-202"].state == State.NEEDED
+        own = s.get(Cluster, by_key["OEM-101"].cluster_id)
+        assert own.id not in {c.id for c in clusters}  # the power cluster stays closed
+        assert power.order_index in own.result["depends_on_order"]
+        assert set(s.get(Cluster, power.id).result["members"]) == set(power.result["members"])
+    assert any(f"depends on cluster {power.id}, already migrated" in w for w in report.warnings)
+
+
+def _fate(item):
+    from patchmig.knowledge.upstream import FileFate
+
+    return FileFate.from_json(item.data)
 
 
 def test_path_rules_park_patches_for_a_decision(make_config):  # noqa: F811
@@ -231,9 +274,9 @@ def test_cli_analyse_and_clusters(make_config):  # noqa: F811
     runner = CliRunner()
     assert runner.invoke(app, ["clusters", "-c", str(path)]).exit_code == 1  # no run yet
     assert runner.invoke(app, ["ingest", "-c", str(path), "--no-jira"]).exit_code == 0
-    result = runner.invoke(app, ["analyse", "-c", str(path)])
+    result = runner.invoke(app, ["analyse", "-c", str(path), "--no-agent"])
     assert result.exit_code == 0, result.output
-    assert f"{len(EXPECTED)} patches, 6 clusters" in result.output
+    assert f"{len(EXPECTED)} patches ({len(EXPECTED)} checked now), 6 clusters" in result.output
     assert "reverted        2" in result.output
     assert "clusters to migrate: clean 1, rewrite 1" in result.output
     result = runner.invoke(app, ["clusters", "-c", str(path)])
@@ -243,7 +286,8 @@ def test_cli_analyse_and_clusters(make_config):  # noqa: F811
     result = runner.invoke(app, ["clusters", "-c", str(path), "--show", str(cid)])
     assert "link" in result.output and "forecast: setMode()" in result.output
     assert f"+++ b/{CAR}/" in result.output
-    assert runner.invoke(app, ["analyse", "-c", str(path)]).exit_code == 1
+    result = runner.invoke(app, ["analyse", "-c", str(path), "--no-agent"])
+    assert result.exit_code == 0 and "(0 checked now)" in result.output
 
 
 def test_mcp_tools_expose_clusters_and_fates(analysed):
