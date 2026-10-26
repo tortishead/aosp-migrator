@@ -22,3 +22,6 @@ Without a real Jira, run the fake one in a second terminal and use
 ```sh
 cd backend && PYTHONPATH=tests uv run python -m fake_jira --port 8090
 ```
+
+For pre-scan, add `--prescan-tree /tmp/aosp` (must not exist yet): it builds a matching
+`repo` tree there; use it as the workspace target tree.
