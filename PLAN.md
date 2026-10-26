@@ -171,7 +171,7 @@ Each step lists what is built and what proves it works.
 - **Goal:** per backlog item, find the affected repo(s), decide whether the patch is already present, still required and makes sense, and suggest dependencies/clusters. Deterministic first; Copilot only where judgment is needed (spec: save tokens).
 - **Trigger:** user-started background job for the whole workspace, the filtered selection, or one item. Same mechanics as import (progress polling, cancel, one job per workspace, a failing item records an error and does not abort). Not run automatically after import.
 - **Order:** deterministic stages (repo mapping, already-present, candidate graph) run for the whole selection first, then Copilot works through the items that still need it. An item proven present skips Copilot. Copilot calls sequential; parallelism setting (max 4) later.
-- **Trees:** `repo` target trees only. Projects come from `.repo/project.list`; missing file fails the job with a hint to run `repo sync`. `git` / `plain` trees are parked.
+- **Trees:** `repo` target trees: projects come from `.repo/project.list`; missing file fails the job with a hint to run `repo sync`. A `git` or `plain` tree is one project, `.` (the tree root); a diff with only new files maps to it. A `plain` tree has no history, so HEAD is null and history lookups give `unknown` ("history unavailable"). Git never discovers a repository above the scanned directory.
 - **Never mutate user trees:** no fetch, no deepen, no checkout. Read-only git commands only.
 - **Repo mapping (per diff, not per item):**
   - Hint: paths in the description (`{VAR}/…`, `${VAR}/…`, `$VAR/…`, bare `frameworks/base/...`), longest project-list prefix wins. Built-in pattern, no per-workspace regex.
