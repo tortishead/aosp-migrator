@@ -141,6 +141,25 @@ def test_shallow_history_unavailable(tree: RepoTree, tmp_path: Path) -> None:
     assert result.detail["reason"] == HISTORY_UNAVAILABLE
 
 
+def test_drifted_context_still_present(tree: RepoTree, project: Path) -> None:
+    patch = tree.format_patch(PROJECT, fix(tree))
+    # Lines two away from the change move; the changed lines stay.
+    tree.commit(PROJECT, {CPP: lines("// new", "int resume() {", "  if (!client) return -1;", "  return 0;", "}").replace("// line 8", "// moved")}, "camera: drift context")
+    tree.commit(PROJECT, {H: lines("int resume() const;").replace("// tail 1", "// moved")}, "camera: drift header context")
+    assert check_presence(project, patch) == Presence("present", {"files": {CPP: "present", H: "present"}})
+
+
+def test_shallow_but_cleanly_applicable_is_not_present(tree: RepoTree, tmp_path: Path) -> None:
+    patch = tree.format_patch(PROJECT, fix(tree, author=None))
+    tree.git(PROJECT, "reset", "-q", "--hard", "HEAD~1")
+    tree.commit(PROJECT, {"OTHER.md": "x\n"}, "unrelated")
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{tree.root / PROJECT}", str(shallow)], check=True)
+    result = check_presence(shallow, patch)
+    assert result.status == "not_present"
+    assert "reason" not in result.detail
+
+
 def test_series_with_same_file_twice(tree: RepoTree, project: Path) -> None:
     fix(tree)
     drift(tree)

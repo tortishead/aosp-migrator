@@ -1,10 +1,12 @@
 """Already-present check: is a diff already in the mapped target project?
 
 First `git apply --reverse --check` per file, in the project's working tree; all files
-reversible means present, some means partial. When that is not conclusive and every
-commit of a format-patch is by an upstream author (Google/AOSP), the project history is
-searched for each commit by Change-Id, then subject, then `git patch-id`. A shallow or
-partial clone that cannot answer gives `unknown` ("history unavailable").
+reversible means present, some means partial. A file that applies neither way (its
+context drifted) is retried in reverse with one context line (`-C1`). When that is not
+conclusive and every commit of a format-patch is by an upstream author (Google/AOSP), the
+project history is searched for each commit by Change-Id, then subject, then `git
+patch-id`. A shallow or partial clone that cannot answer gives `unknown` ("history
+unavailable"), unless every file still applies forward cleanly (`not_present`).
 Read-only: see `prescan.git`.
 """
 
@@ -45,12 +47,14 @@ class Presence:
 
 def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable[str] = DEFAULT_UPSTREAM_DOMAINS) -> Presence:
     commits = _split_commits(diff_text)
-    files = _reverse_check_files(project_dir, commits)
+    files, clean = _reverse_check_files(project_dir, commits)
     detail: dict[str, Any] = {"files": files}
     known = [r for r in files.values() if r != "unknown"]
     if known and all(r == "present" for r in known):
         return Presence("present", detail)
     some_files = "present" in known
+    # Without usable history, files that still apply forward cleanly settle it.
+    no_history = "not_present" if known and len(clean) == len(files) else "unknown"
 
     headers = [c for _, parsed in commits for c in parsed.commits]
     if not headers or not all(_is_upstream(c.author, upstream_domains) for c in headers):
@@ -62,14 +66,16 @@ def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable
         history = [_find_in_history(project_dir, header, parsed.files) for (_, parsed) in commits for header in parsed.commits]
         shallow = is_shallow(project_dir)
     except GitError:
-        return Presence("partial" if some_files else "unknown", {**detail, "reason": HISTORY_UNAVAILABLE})
+        if some_files or no_history == "not_present":
+            return Presence("partial" if some_files else "not_present", detail)
+        return Presence("unknown", {**detail, "reason": HISTORY_UNAVAILABLE})
     detail["history"] = history
     found = sum(h["sha"] is not None for h in history)
     if found == len(history):
         return Presence("present", detail)
     if found or some_files:
         return Presence("partial", detail)
-    if shallow:
+    if shallow and no_history == "unknown":
         return Presence("unknown", {**detail, "reason": HISTORY_UNAVAILABLE})
     return Presence("not_present", detail)
 
@@ -94,11 +100,13 @@ def _split_commits(text: str) -> list[tuple[str, Any]]:
     return [(chunk, parse_diff(chunk)) for chunk in chunks]
 
 
-def _reverse_check_files(project_dir: Path, commits: list[tuple[str, Any]]) -> dict[str, FileResult]:
+def _reverse_check_files(project_dir: Path, commits: list[tuple[str, Any]]) -> tuple[dict[str, FileResult], set[str]]:
     """Reverse-apply each file on its own, with its sections from every commit of a series.
 
     Sections go in series order: `git apply --reverse` undoes them newest first itself.
+    Also returns the files that apply forward cleanly, i.e. surely lack the change.
     """
+    clean: set[str] = set()
     sections: dict[str, list[FileChange]] = {}
     for _, parsed in commits:
         for change in parsed.files:
@@ -112,9 +120,20 @@ def _reverse_check_files(project_dir: Path, commits: list[tuple[str, Any]]) -> d
             continue
         patch = "".join(c.raw for c in changes)
         strip = "-p1" if _P1.search(patch) else "-p0"
-        result = git(project_dir, "apply", "--reverse", "--check", strip, "-", input=patch, check=False)
-        results[path] = "present" if result.returncode == 0 else "not_present"
-    return results
+
+        def applies(*flags: str) -> bool:
+            return git(project_dir, "apply", "--check", strip, *flags, "-", input=patch, check=False).returncode == 0
+
+        if applies("--reverse"):
+            results[path] = "present"
+        elif applies():
+            results[path] = "not_present"
+            clean.add(path)
+        else:
+            # Neither way cleanly: the context drifted since. One context line still
+            # pins the changed lines, so the change itself is there.
+            results[path] = "present" if applies("--reverse", "-C1") else "not_present"
+    return results, clean
 
 
 def _is_upstream(author: str | None, domains: Iterable[str]) -> bool:
