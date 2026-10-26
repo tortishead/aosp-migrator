@@ -1,5 +1,7 @@
 """Repo mapping: which project of a `repo` target tree a diff belongs to.
-A `git` or `plain` tree is a single project, `ROOT_PROJECT`.
+A `git` or `plain` tree has no project list: its projects are the directories holding
+a `.git`, nested ones included (`ROOT_PROJECT` for the root), or `ROOT_PROJECT` alone
+when there are none.
 
 Diff paths are relative to the project root. A project matches a diff when the files
 the diff expects to exist (modified, deleted, rename/copy sources) exist under it.
@@ -8,6 +10,7 @@ longest project-list prefix wins, and a hinted project must match the same way.
 Read-only: nothing here touches git.
 """
 
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -17,8 +20,10 @@ from typing import Literal
 from aosp_migrator.importer.diffparse import FileChange
 
 PROJECT_LIST = Path(".repo") / "project.list"
-# The project of a `git` or `plain` tree: the tree root itself.
+# The tree root as a project of a `git` or `plain` tree.
 ROOT_PROJECT = "."
+# Build output at the tree root: huge, and never a project.
+_SKIP_AT_ROOT = {"out"}
 
 MappingSource = Literal["hint", "files", "copilot", "manual"]
 
@@ -47,6 +52,29 @@ def read_project_list(tree: Path) -> list[str]:
     except FileNotFoundError:
         raise ProjectListMissing(tree) from None
     return [line.strip().strip("/") for line in text.splitlines() if line.strip()]
+
+
+def discover_projects(tree: Path) -> list[str]:
+    """Projects of a tree without a project list, relative to its root, sorted.
+
+    Does not follow symlinks or enter hidden directories (`.git`, `.repo`, ...).
+    """
+    projects: list[str] = []
+    stack = [tree]
+    while stack:
+        directory = stack.pop()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            continue
+        if any(entry.name == ".git" for entry in entries):
+            projects.append(directory.relative_to(tree).as_posix())
+        for entry in entries:
+            if entry.name.startswith(".") or (directory == tree and entry.name in _SKIP_AT_ROOT):
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                stack.append(Path(entry.path))
+    return sorted(projects) or [ROOT_PROJECT]
 
 
 def path_hints(text: str, projects: Iterable[str]) -> list[str]:

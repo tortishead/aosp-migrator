@@ -21,7 +21,7 @@ from aosp_migrator.db.models import Attachment, DiffScan, ImportJob, Item, JiraI
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.graph import read_diff_text, rebuild_graph
-from aosp_migrator.prescan.mapping import ROOT_PROJECT, ProjectListMissing, map_diff, path_hints, read_project_list
+from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list
 from aosp_migrator.prescan.presence import check_presence
 
 log = logging.getLogger(__name__)
@@ -71,12 +71,12 @@ def current_diffs(session: Session, issue_id: int) -> list[Attachment]:
 
 
 def target_projects(workspace: Workspace) -> tuple[Path, list[str]]:
-    """Projects of a `repo` tree; a `git` or `plain` tree is one project at its root."""
+    """Projects of a `repo` tree from its project list; of a `git` or `plain` tree from its `.git` dirs."""
     tree = Path(workspace.target_tree)
     if not tree.is_dir():
         raise PrescanError(f"Target tree not found: {tree}")
     if workspace.target_tree_type != "repo":
-        return tree, [ROOT_PROJECT]
+        return tree, discover_projects(tree)
     try:
         return tree, read_project_list(tree)
     except ProjectListMissing as exc:
@@ -148,6 +148,8 @@ class _Job:
     def run(self) -> None:
         workspace = self.session.get(Workspace, self.job.workspace_id)
         assert workspace is not None
+        self.job.stage = "projects"
+        self.session.commit()
         tree, projects = target_projects(workspace)
 
         query = (

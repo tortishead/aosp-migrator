@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from aosp_migrator.prescan.mapping import (
     ROOT_PROJECT,
     DiffMapping,
     ProjectListMissing,
+    discover_projects,
     map_diff,
     path_hints,
     read_project_list,
@@ -40,6 +42,16 @@ def test_read_project_list_ignores_blank_lines_and_slashes(tmp_path: Path) -> No
 def test_missing_project_list(tmp_path: Path) -> None:
     with pytest.raises(ProjectListMissing, match="repo sync"):
         read_project_list(tmp_path)
+
+
+def test_discover_projects_finds_nested_git_dirs(tree: RepoTree) -> None:
+    shutil.rmtree(tree.root / ".repo")
+    (tree.root / "out" / "soong" / ".git").mkdir(parents=True)  # build output is skipped
+    (tree.root / "vendor" / "qcom").mkdir(parents=True)  # no .git: not a project
+    (tree.root / "link").symlink_to(tree.root / "system")  # symlinks are not followed
+    assert discover_projects(tree.root) == sorted(PROJECTS)
+    assert discover_projects(tree.root / "frameworks/base") == [ROOT_PROJECT, "packages/SystemUI"]
+    assert discover_projects(tree.root / "vendor") == [ROOT_PROJECT]
 
 
 def test_fixture_projects_are_git_repos_with_change_ids(tree: RepoTree) -> None:

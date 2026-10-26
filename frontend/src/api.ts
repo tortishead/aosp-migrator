@@ -280,7 +280,7 @@ export interface PrescanJob {
   issue_keys: string[];
   status: JobStatus;
   /** While running: `scan` (repo mapping, already-present check), then `graph`. */
-  stage: "scan" | "graph" | null;
+  stage: "projects" | "scan" | "graph" | null;
   done: number;
   total: number | null;
   errors: { key: string; message: string }[];
