@@ -419,6 +419,26 @@ describe("ItemPage pre-scan", () => {
     await waitFor(() => expect(calls.filter((c) => c.method === "GET" && c.path === "/workspaces/1/items/PROJ-101")).toHaveLength(2));
   });
 
+  it("narrows the project list with the search box", async () => {
+    itemApi({
+      "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem(),
+      "GET /workspaces/1/target-projects": () => ["frameworks/av", "hardware/interfaces", "system/core"],
+    });
+    renderRoute(URL);
+    const section = await screen.findByRole("region", { name: "Pre-scan" });
+    const select = await within(section).findByRole("combobox", { name: "Project for build.patch" });
+    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(4));
+    const search = within(section).getByRole("searchbox", { name: "Search projects for build.patch" });
+    await userEvent.type(search, "HARD");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Pick a project…", "hardware/interfaces"]);
+    // The current choice stays listed whatever the search.
+    await userEvent.selectOptions(select, "hardware/interfaces");
+    await userEvent.clear(search);
+    await userEvent.type(search, "core");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Pick a project…", "system/core", "hardware/interfaces"]);
+    expect(select).toHaveValue("hardware/interfaces");
+  });
+
   it("changes a mapped project or goes back to the automatic mapping", async () => {
     const manual = scannedItem({ diffs: [unmappedDiff({ project: "system/core", mapping_source: "manual", candidates: [] })] });
     const calls = itemApi({

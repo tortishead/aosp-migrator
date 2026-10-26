@@ -214,6 +214,7 @@ function ProjectPicker({ workspaceId, itemKey: key, diff, disabled }: { workspac
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [choice, setChoice] = useState("");
+  const [search, setSearch] = useState("");
   const shown = open || diff.project === null;
   const projects = useQuery({
     queryKey: ["targetProjects", workspaceId],
@@ -229,14 +230,27 @@ function ProjectPicker({ workspaceId, itemKey: key, diff, disabled }: { workspac
       void queryClient.invalidateQueries({ queryKey: itemKey(workspaceId, key) });
       setOpen(false);
       setChoice("");
+      setSearch("");
     },
   });
-  const others = (projects.data ?? []).filter((p) => !diff.candidates.includes(p));
+  // The current choice stays listed so the select never shows a hidden value.
+  const needle = search.trim().toLowerCase();
+  const matches = (p: string) => !needle || p === choice || p.toLowerCase().includes(needle);
+  const candidates = diff.candidates.filter(matches);
+  const others = (projects.data ?? []).filter((p) => !diff.candidates.includes(p) && matches(p));
 
   return (
     <div className="project-picker">
       {shown ? (
         <>
+          <input
+            type="search"
+            aria-label={`Search projects for ${diff.filename}`}
+            placeholder="Search projects"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            disabled={disabled || pick.isPending}
+          />
           <select
             aria-label={`Project for ${diff.filename}`}
             value={choice}
@@ -244,9 +258,9 @@ function ProjectPicker({ workspaceId, itemKey: key, diff, disabled }: { workspac
             disabled={disabled || pick.isPending}
           >
             <option value="">Pick a project…</option>
-            {diff.candidates.length > 0 && (
+            {candidates.length > 0 && (
               <optgroup label="Candidates">
-                {diff.candidates.map((p) => (
+                {candidates.map((p) => (
                   <option key={p}>{p}</option>
                 ))}
               </optgroup>
@@ -263,7 +277,12 @@ function ProjectPicker({ workspaceId, itemKey: key, diff, disabled }: { workspac
             Use project
           </button>
           {open && (
-            <button onClick={() => setOpen(false)}>
+            <button
+              onClick={() => {
+                setOpen(false);
+                setSearch("");
+              }}
+            >
               Cancel
             </button>
           )}
