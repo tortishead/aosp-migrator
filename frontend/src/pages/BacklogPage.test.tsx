@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { Cluster, Facets, ImportJob, Item, ItemPage, PrescanJob } from "../api";
+import type { Cluster, Facets, ImportJob, Item, ItemPage, PrescanJob, PrescanSummary, TriageLabel } from "../api";
 import { POLL_MS } from "../backlog/ImportPanel";
 import { mockApi, renderRoute, type ApiCall } from "../test-utils";
 
@@ -91,6 +91,11 @@ function prescanJob(overrides: Partial<PrescanJob> = {}): PrescanJob {
   };
 }
 
+function summary(labels: Partial<Record<TriageLabel, number>> = {}, unlabeled = 0, stale = 0): PrescanSummary {
+  const zeros = { error: 0, unmapped: 0, unknown: 0, conflicts: 0, partial: 0, "3way": 0, applies: 0, likely_present: 0, present: 0 };
+  return { labels: { ...zeros, ...labels }, unlabeled, stale };
+}
+
 function itemQueries(calls: ApiCall[]): URLSearchParams[] {
   return calls
     .filter((c) => c.method === "GET" && c.path.startsWith("/workspaces/1/items?"))
@@ -109,6 +114,7 @@ function backlogApi(handlers: Parameters<typeof mockApi>[0] = {}) {
     "GET /workspaces/1/items/facets": () => facets,
     "GET /workspaces/1/import-jobs": () => [],
     "GET /workspaces/1/prescan-jobs": () => [],
+    "GET /workspaces/1/prescan-summary": () => summary(),
     ...handlers,
   });
 }
@@ -483,5 +489,97 @@ describe("Backlog clusters", () => {
     await userEvent.click(screen.getByRole("button", { name: "Pre-scan selected" }));
     expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({ keys: ["PROJ-102"] });
     expect(await screen.findByText(/Pre-scanning… 0 \/ 1/)).toBeInTheDocument();
+  });
+});
+
+describe("Backlog pre-scan overview", () => {
+  it("shows the label with its reason and a stale marker", async () => {
+    backlogApi({
+      "GET /workspaces/1/items": () =>
+        page([
+          item("PROJ-101", { triage_label: "present", triage_reason: "Change-Id I1234 in abc1234" }),
+          item("PROJ-102", { triage_label: "conflicts", triage_reason: "0001.patch: Foo.java", stale: ["frameworks/base HEAD moved"] }),
+          item("PROJ-103", { diff_count: 0 }),
+        ]),
+    });
+    renderRoute("/workspaces/1");
+    const first = (await screen.findByRole("link", { name: "PROJ-101" })).closest("tr")!;
+    expect(within(first).getByText("Present")).toHaveAttribute("title", "Change-Id I1234 in abc1234");
+    expect(within(first).queryByText("stale")).not.toBeInTheDocument();
+    const second = screen.getByRole("link", { name: "PROJ-102" }).closest("tr")!;
+    expect(within(second).getByText("Conflicts")).toHaveClass("tag-error");
+    expect(within(second).getByText("stale")).toHaveAttribute("title", "Out of date: frameworks/base HEAD moved");
+    const third = screen.getByRole("link", { name: "PROJ-103" }).closest("tr")!;
+    expect(third.querySelectorAll(".tag")).toHaveLength(0);
+  });
+
+  it("counts items per label and filters by a click", async () => {
+    const calls = backlogApi({ "GET /workspaces/1/prescan-summary": () => summary({ present: 12, partial: 3, applies: 30 }, 4, 2) });
+    const { router } = renderRoute("/workspaces/1");
+    const bar = await screen.findByRole("group", { name: "Pre-scan counts" });
+    expect(within(bar).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "3 partially present",
+      "30 applies",
+      "12 present",
+      "4 not scanned",
+      "2 stale",
+    ]);
+
+    await userEvent.click(within(bar).getByRole("button", { name: "12 present" }));
+    expect(new URLSearchParams(router.state.location.search).getAll("triage")).toEqual(["present"]);
+    await waitFor(() => expect(lastItemQuery(calls).getAll("triage")).toEqual(["present"]));
+    expect(within(bar).getByRole("button", { name: "12 present" })).toHaveAttribute("aria-pressed", "true");
+
+    // Another label replaces it, the same one again clears it.
+    await userEvent.click(within(bar).getByRole("button", { name: "4 not scanned" }));
+    await waitFor(() => expect(lastItemQuery(calls).getAll("triage")).toEqual(["none"]));
+    await userEvent.click(within(bar).getByRole("button", { name: "4 not scanned" }));
+    await waitFor(() => expect(lastItemQuery(calls).has("triage")).toBe(false));
+
+    await userEvent.click(within(bar).getByRole("button", { name: "2 stale" }));
+    await waitFor(() => expect(lastItemQuery(calls).get("stale")).toBe("true"));
+    await userEvent.click(within(bar).getByRole("button", { name: "2 stale" }));
+    await waitFor(() => expect(lastItemQuery(calls).has("stale")).toBe(false));
+  });
+
+  it("hides the count bar until something is scanned", async () => {
+    backlogApi({ "GET /workspaces/1/prescan-summary": () => summary({}, 25) });
+    renderRoute("/workspaces/1");
+    await screen.findByRole("link", { name: "PROJ-101" });
+    expect(screen.queryByRole("group", { name: "Pre-scan counts" })).not.toBeInTheDocument();
+  });
+
+  it("filters by label and staleness", async () => {
+    const calls = backlogApi();
+    renderRoute("/workspaces/1");
+    await screen.findByRole("link", { name: "PROJ-101" });
+    await userEvent.click(screen.getByText("Pre-scan", { selector: "summary" }));
+    const labels = screen.getByRole("group", { name: "Pre-scan" });
+    await userEvent.click(within(labels).getByLabelText("Conflicts"));
+    await userEvent.click(within(labels).getByLabelText("Not scanned"));
+    await waitFor(() => expect(lastItemQuery(calls).getAll("triage")).toEqual(["conflicts", "none"]));
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Stale" }), "Not stale");
+    await waitFor(() => expect(lastItemQuery(calls).get("stale")).toBe("false"));
+  });
+
+  it("refreshes labels and counts while a pre-scan runs", async () => {
+    let polls = 0;
+    const calls = backlogApi({
+      "GET /workspaces/1/prescan-jobs": () => {
+        polls += 1;
+        return [polls === 1 ? prescanJob({ done: 1 }) : prescanJob({ status: "done", stage: null, done: 25 })];
+      },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderRoute("/workspaces/1");
+      await screen.findByText(/Pre-scanning… 1 \/ 25/);
+      const before = calls.filter((c) => c.path === "/workspaces/1/prescan-summary").length;
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      await screen.findByText(/Pre-scan done/);
+      await waitFor(() => expect(calls.filter((c) => c.path === "/workspaces/1/prescan-summary").length).toBeGreaterThan(before));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

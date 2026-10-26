@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { Link } from "react-router";
 
 import { api, type PrescanJob } from "../api";
-import { POLL_MS } from "../backlog/ImportPanel";
+import { itemsKey, POLL_MS } from "../backlog/ImportPanel";
 
 export const prescanJobsKey = (workspaceId: number) => ["prescanJobs", workspaceId];
 export const itemPrescanKey = (workspaceId: number, key?: string) =>
@@ -18,7 +18,7 @@ export function useStartPrescan(workspaceId: number) {
   });
 }
 
-/** The workspace's latest pre-scan job, polled while it runs. Results are refetched as it moves. */
+/** The workspace's latest pre-scan job, polled while it runs. Results and backlog labels are refetched as it moves. */
 export function useLatestPrescan(workspaceId: number) {
   const queryClient = useQueryClient();
   const jobs = useQuery({
@@ -33,6 +33,7 @@ export function useLatestPrescan(workspaceId: number) {
     if (progress === seen.current) return;
     seen.current = progress;
     void queryClient.invalidateQueries({ queryKey: itemPrescanKey(workspaceId) });
+    void queryClient.invalidateQueries({ queryKey: itemsKey(workspaceId) });
   }, [progress, queryClient, workspaceId]);
   return job;
 }
