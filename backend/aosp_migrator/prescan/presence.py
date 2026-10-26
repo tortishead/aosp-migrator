@@ -1,10 +1,11 @@
 """Already-present check: is a diff already in the mapped target project?
 
 First `git apply --reverse --check` per file, in the project's working tree; all files
-reversible means present, some means partial. When that is not conclusive and every
-commit of a format-patch is by an upstream author (Google/AOSP), the project history is
-searched for each commit by Change-Id, then subject, then `git patch-id`. A shallow or
-partial clone that cannot answer gives `unknown` ("history unavailable").
+reversible means present, some means partial. When that is not conclusive, the project
+history is searched for each format-patch commit by Change-Id, then subject, then
+`git patch-id`. The subject only counts for upstream authors (Google/AOSP): OEM subjects
+like "Fix crash" match too easily. A shallow or partial clone, or a plain tree, that
+cannot answer gives `unknown` ("history unavailable").
 Read-only: see `prescan.git`.
 """
 
@@ -35,7 +36,7 @@ _P1 = re.compile(r"^(?:diff --git a/|--- a/|\+\+\+ b/)", re.MULTILINE)
 class Presence:
     status: PresenceStatus
     # files: {path: present / not_present / unknown}; history: [{subject, match, sha}]
-    # per upstream commit (match/sha None when not found); reason when unknown.
+    # per format-patch commit (match/sha None when not found); reason when unknown.
     detail: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -52,14 +53,17 @@ def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable
         return Presence("present", detail)
     some_files = "present" in known
 
-    headers = [c for _, parsed in commits for c in parsed.commits]
-    if not headers or not all(_is_upstream(c.author, upstream_domains) for c in headers):
+    if not any(parsed.commits for _, parsed in commits):
         if not known:
             return Presence("unknown", {**detail, "reason": "no file could be checked"})
         return Presence("partial" if some_files else "not_present", detail)
 
     try:
-        history = [_find_in_history(project_dir, header, parsed.files) for (_, parsed) in commits for header in parsed.commits]
+        history = [
+            _find_in_history(project_dir, header, parsed.files, _is_upstream(header.author, upstream_domains))
+            for (_, parsed) in commits
+            for header in parsed.commits
+        ]
         shallow = is_shallow(project_dir)
     except GitError:
         return Presence("partial" if some_files else "unknown", {**detail, "reason": HISTORY_UNAVAILABLE})
@@ -125,13 +129,13 @@ def _is_upstream(author: str | None, domains: Iterable[str]) -> bool:
     return any(domain == d or domain.endswith("." + d) for d in (d.lower().strip() for d in domains) if d)
 
 
-def _find_in_history(project_dir: Path, commit: Commit, files: list[FileChange]) -> dict[str, Any]:
+def _find_in_history(project_dir: Path, commit: Commit, files: list[FileChange], upstream: bool) -> dict[str, Any]:
     subject = _PATCH_TAG.sub("", commit.subject)
     entry: dict[str, Any] = {"subject": subject, "match": None, "sha": None}
     lookups: list[tuple[HistoryMatch, Any]] = []
     if change_id := _CHANGE_ID.search(commit.message):
         lookups.append(("change_id", lambda: _by_grep(project_dir, f"Change-Id: {change_id.group(1)}")))
-    if subject:
+    if subject and upstream:
         lookups.append(("subject", lambda: _by_subject(project_dir, subject)))
     lookups.append(("patch_id", lambda: _by_patch_id(project_dir, files)))
     for match, lookup in lookups:

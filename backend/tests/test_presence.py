@@ -1,5 +1,6 @@
 import hashlib
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -66,12 +67,16 @@ def test_present(tree: RepoTree, project: Path) -> None:
 def test_not_present(tree: RepoTree, project: Path) -> None:
     patch = tree.format_patch(PROJECT, fix(tree))
     tree.git(PROJECT, "reset", "-q", "--hard", "HEAD~1")
-    assert check_presence(project, patch) == Presence("not_present", {"files": {CPP: "not_present", H: "not_present"}})
+    assert check_presence(project, patch) == Presence(
+        "not_present",
+        {"files": {CPP: "not_present", H: "not_present"}, "history": [{"subject": "camera: fix resume", "match": None, "sha": None}]},
+    )
 
 
 def test_partial(tree: RepoTree, project: Path) -> None:
     patch = tree.format_patch(PROJECT, fix(tree))
-    tree.commit(PROJECT, {H: lines("int resume();")}, "camera: revert header")
+    tree.git(PROJECT, "reset", "-q", "--hard", "HEAD~1")
+    tree.commit(PROJECT, {CPP: lines("int resume() {", "  if (!client) return -1;", "  return 0;", "}")}, "camera: cpp half only")
     result = check_presence(project, patch)
     assert result.status == "partial"
     assert result.detail["files"] == {CPP: "present", H: "not_present"}
@@ -115,28 +120,81 @@ def test_upstream_not_in_history(tree: RepoTree, project: Path) -> None:
     assert result.detail["history"] == [{"subject": "camera: fix resume", "match": None, "sha": None}]
 
 
-def test_oem_patch_skips_history(tree: RepoTree, project: Path) -> None:
+def other_fix(patch: str) -> str:
+    """Same subject and Change-Id, different change: only a subject lookup could match it."""
+    patch = re.sub(r"Change-Id: I\w+", "Change-Id: I" + "0" * 40, patch)
+    return patch.replace("return -1;", "return -9;")
+
+
+def test_oem_cherry_pick_found_by_change_id(tree: RepoTree, project: Path) -> None:
+    sha = fix(tree)
+    patch = tree.format_patch(PROJECT, sha)
+    drift(tree)
+    result = check_presence(project, patch)
+    assert result.status == "present"
+    assert result.detail["history"] == [{"subject": "camera: fix resume", "match": "change_id", "sha": sha}]
+
+
+def test_oem_patch_with_drifted_context_found_by_patch_id(tree: RepoTree, project: Path) -> None:
     patch = tree.format_patch(PROJECT, fix(tree))
+    tree.git(PROJECT, "reset", "-q", "--hard", "HEAD~1")
+    # Picked again after the files grew at the top: other line numbers, other Change-Id.
+    header = [f"// header {n}" for n in range(30)]
+    tree.commit(PROJECT, {CPP: "\n".join(header) + "\n" + lines("int resume() {", "  return 0;", "}"), H: "\n".join(header) + "\n" + lines("int resume();")}, "camera: license headers")
+    sha = tree.commit(
+        PROJECT,
+        {CPP: "\n".join(header) + "\n" + lines("int resume() {", "  if (!client) return -1;", "  return 0;", "}"), H: "\n".join(header) + "\n" + lines("int resume() const;")},
+        "camera: port resume fix",
+        OEM,
+    )
+    tree.commit(PROJECT, {CPP: "\n".join(header) + "\n" + lines("int resume() {", "  if (!client) return -2;", "  return 0;", "}"), H: "\n".join(header) + "\n" + lines("long resume() const;")}, "camera: drift")
+    result = check_presence(project, patch)
+    assert result.status == "present"
+    assert result.detail["history"] == [{"subject": "camera: fix resume", "match": "patch_id", "sha": sha}]
+
+
+def test_oem_subject_alone_is_not_a_match(tree: RepoTree, project: Path) -> None:
+    patch = other_fix(tree.format_patch(PROJECT, fix(tree)))
     drift(tree)
     result = check_presence(project, patch)
     assert result.status == "not_present"
-    assert "history" not in result.detail
+    assert result.detail["history"] == [{"subject": "camera: fix resume", "match": None, "sha": None}]
+
+
+def test_upstream_subject_match_kept(tree: RepoTree, project: Path) -> None:
+    sha = fix(tree, author=None)
+    patch = other_fix(tree.format_patch(PROJECT, sha))
+    drift(tree)
+    result = check_presence(project, patch)
+    assert result.status == "present"
+    assert result.detail["history"] == [{"subject": "camera: fix resume", "match": "subject", "sha": sha}]
 
 
 def test_upstream_domains_are_configurable(tree: RepoTree, project: Path) -> None:
     sha = fix(tree)
-    patch = tree.format_patch(PROJECT, sha)
+    patch = other_fix(tree.format_patch(PROJECT, sha))
     drift(tree)
     assert check_presence(project, patch, ["example.com"]).detail["history"][0]["sha"] == sha
-    assert "history" not in check_presence(project, patch, ["mple.com"]).detail
+    assert check_presence(project, patch, ["mple.com"]).detail["history"][0]["sha"] is None
 
 
-def test_shallow_history_unavailable(tree: RepoTree, tmp_path: Path) -> None:
-    patch = tree.format_patch(PROJECT, fix(tree, author=None))
+@pytest.mark.parametrize("author", [None, OEM])
+def test_shallow_history_unavailable(tree: RepoTree, tmp_path: Path, author: str | None) -> None:
+    patch = tree.format_patch(PROJECT, fix(tree, author=author))
     drift(tree)
     shallow = tmp_path / "shallow"
     subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{tree.root / PROJECT}", str(shallow)], check=True)
     result = check_presence(shallow, patch)
+    assert result.status == "unknown"
+    assert result.detail["reason"] == HISTORY_UNAVAILABLE
+
+
+def test_plain_tree_history_unavailable(tree: RepoTree, project: Path, tmp_path: Path) -> None:
+    patch = tree.format_patch(PROJECT, fix(tree))
+    drift(tree)
+    plain = tmp_path / "plain"
+    shutil.copytree(project, plain, ignore=shutil.ignore_patterns(".git"))
+    result = check_presence(plain, patch)
     assert result.status == "unknown"
     assert result.detail["reason"] == HISTORY_UNAVAILABLE
 
