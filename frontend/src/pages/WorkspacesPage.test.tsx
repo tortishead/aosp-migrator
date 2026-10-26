@@ -16,6 +16,9 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     source_tree: null,
     source_tree_type: null,
     link_types: [],
+    envsetup_path: null,
+    lunch_target: null,
+    build_timeout: 7200,
     created_at: "2026-10-25T19:00:00Z",
     updated_at: "2026-10-25T19:00:00Z",
     ...overrides,
@@ -68,6 +71,9 @@ describe("WorkspacesPage", () => {
       repo_root: "",
       source_tree: "",
       link_types: [],
+      envsetup_path: "",
+      lunch_target: "",
+      build_timeout: 7200,
     });
   });
 
@@ -109,6 +115,35 @@ describe("WorkspacesPage", () => {
       repo_root: "",
       source_tree: "",
       link_types: ["Relates", "is blocked by"],
+      envsetup_path: "",
+      lunch_target: "",
+      build_timeout: 7200,
+    });
+  });
+
+  it("edits the build settings", async () => {
+    const calls = mockApi({
+      "GET /workspaces": () => [workspace()],
+      "GET /workspaces/1": () => workspace({ lunch_target: "old-eng", build_timeout: 1800 }),
+      "PUT /workspaces/1": (body) => workspace(body as Partial<Workspace>),
+    });
+    renderRoute("/workspaces/1/edit");
+    const lunch = await screen.findByLabelText("lunch target");
+    expect(lunch).toHaveValue("old-eng");
+    const timeout = screen.getByLabelText("Build timeout (minutes)");
+    expect(timeout).toHaveValue(30);
+    await userEvent.clear(lunch);
+    await userEvent.type(lunch, "aosp_x86_64-trunk_staging-eng");
+    await userEvent.type(screen.getByLabelText("envsetup.sh path (optional)"), "/src/aosp15/build/envsetup.sh");
+    await userEvent.clear(timeout);
+    await userEvent.type(timeout, "90");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({
+      envsetup_path: "/src/aosp15/build/envsetup.sh",
+      lunch_target: "aosp_x86_64-trunk_staging-eng",
+      build_timeout: 5400,
     });
   });
 

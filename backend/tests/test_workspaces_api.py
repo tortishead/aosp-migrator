@@ -4,7 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aosp_migrator.app import create_app
+from aosp_migrator.build.env import build_root, envsetup_path
 from aosp_migrator.config import Config
+from aosp_migrator.db.models import Workspace
 from aosp_migrator.trees import detect_tree_type
 
 
@@ -125,6 +127,70 @@ def test_repo_root_validation(client: TestClient, trees: dict[str, Path]) -> Non
     assert (elsewhere.status_code, elsewhere.json()["detail"]) == (422, f".repo path does not contain the target tree: {trees['repo']}")
     missing = client.post("/api/workspaces", json=payload(trees["plain"], repo_root="/does/not/exist"))
     assert missing.json()["detail"] == ".repo path does not exist: /does/not/exist"
+
+
+def envsetup(tree: Path) -> Path:
+    path = tree / "build" / "envsetup.sh"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("lunch() { :; }\n")
+    return path
+
+
+def test_build_settings_defaults(client: TestClient, trees: dict[str, Path]) -> None:
+    body = client.post("/api/workspaces", json=payload(trees["repo"])).json()
+    assert (body["envsetup_path"], body["lunch_target"], body["build_timeout"]) == (None, None, 7200)
+
+
+def test_build_settings_saved(client: TestClient, trees: dict[str, Path]) -> None:
+    path = envsetup(trees["repo"] / "qssi")
+    body = client.post(
+        "/api/workspaces",
+        json=payload(trees["repo"], envsetup_path=f" {path} ", lunch_target=" aosp_x86_64-trunk_staging-eng ", build_timeout=600),
+    ).json()
+    assert (body["envsetup_path"], body["lunch_target"], body["build_timeout"]) == (str(path), "aosp_x86_64-trunk_staging-eng", 600)
+    # Empty clears them.
+    cleared = client.put(f"/api/workspaces/{body['id']}", json=payload(trees["repo"], envsetup_path="", lunch_target=" ")).json()
+    assert (cleared["envsetup_path"], cleared["lunch_target"], cleared["build_timeout"]) == (None, None, 7200)
+
+
+def test_envsetup_inside_the_repo_root(client: TestClient, trees: dict[str, Path]) -> None:
+    """With a repo root above the target tree, `envsetup.sh` may sit at the repo root."""
+    qssi = trees["repo"] / "qssi"
+    qssi.mkdir()
+    path = envsetup(trees["repo"])
+    body = client.post("/api/workspaces", json=payload(qssi, repo_root=str(trees["repo"]), envsetup_path=str(path))).json()
+    assert body["envsetup_path"] == str(path)
+    without_root = client.put(f"/api/workspaces/{body['id']}", json=payload(qssi, envsetup_path=str(path)))
+    assert (without_root.status_code, without_root.json()["detail"]) == (422, f"envsetup.sh path is not inside {qssi}: {path}")
+
+
+def test_envsetup_validation(client: TestClient, trees: dict[str, Path]) -> None:
+    def error(value: str, **overrides: object) -> object:
+        response = client.post("/api/workspaces", json=payload(trees["repo"], envsetup_path=value, **overrides))
+        assert response.status_code == 422
+        return response.json()["detail"]
+
+    assert error("build/envsetup.sh") == "envsetup.sh path must be an absolute path: build/envsetup.sh"
+    missing = trees["repo"] / "build" / "envsetup.sh"
+    assert error(str(missing)) == f"envsetup.sh path is not a file: {missing}"
+    nested = trees["repo"] / "build" / "make" / "envsetup.sh"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("")
+    assert error(str(nested)) == f"envsetup.sh path is not in a build/ directory: {nested}"
+    elsewhere = envsetup(trees["plain"])
+    assert error(str(elsewhere)) == f"envsetup.sh path is not inside {trees['repo']}: {elsewhere}"
+    assert error("", build_timeout=0) == "Build timeout must be positive"
+    assert client.get("/api/workspaces").json() == []
+
+
+def test_build_root() -> None:
+    target = Workspace(target_tree="/src/aosp15", repo_root=None, envsetup_path=None)
+    assert (envsetup_path(target), build_root(target)) == (Path("/src/aosp15/build/envsetup.sh"), Path("/src/aosp15"))
+    # Target tree below the repo root: the default is the repo root's.
+    below = Workspace(target_tree="/src/aosp15/qssi", repo_root="/src/aosp15", envsetup_path=None)
+    assert (envsetup_path(below), build_root(below)) == (Path("/src/aosp15/build/envsetup.sh"), Path("/src/aosp15"))
+    explicit = Workspace(target_tree="/src/aosp15/qssi", repo_root="/src/aosp15", envsetup_path="/src/aosp15/qssi/build/envsetup.sh")
+    assert build_root(explicit) == Path("/src/aosp15/qssi")
 
 
 def test_path_to_file_rejected(client: TestClient, tmp_path: Path) -> None:

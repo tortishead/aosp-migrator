@@ -5,6 +5,8 @@ import { useNavigate, useParams } from "react-router";
 import { api, type Workspace, type WorkspaceInput } from "../api";
 import { workspacesKey } from "../queryClient";
 
+const DEFAULT_TIMEOUT = 2 * 60 * 60;
+
 /** Create (`/workspaces/new`) or edit (`/workspaces/:id/edit`) a workspace. */
 export function WorkspaceFormPage() {
   const { workspaceId } = useParams();
@@ -24,14 +26,17 @@ export function WorkspaceFormPage() {
 function WorkspaceForm({ workspace }: { workspace?: Workspace }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [values, setValues] = useState<Omit<WorkspaceInput, "link_types">>({
+  const [values, setValues] = useState<Omit<WorkspaceInput, "link_types" | "build_timeout">>({
     name: workspace?.name ?? "",
     jql: workspace?.jql ?? "",
     target_tree: workspace?.target_tree ?? "",
     repo_root: workspace?.repo_root ?? "",
     source_tree: workspace?.source_tree ?? "",
+    envsetup_path: workspace?.envsetup_path ?? "",
+    lunch_target: workspace?.lunch_target ?? "",
   });
   const [linkTypes, setLinkTypes] = useState(workspace?.link_types.join(", ") ?? "");
+  const [timeoutMinutes, setTimeoutMinutes] = useState(String((workspace?.build_timeout ?? DEFAULT_TIMEOUT) / 60));
 
   const save = useMutation({
     mutationFn: (input: WorkspaceInput) =>
@@ -51,7 +56,11 @@ function WorkspaceForm({ workspace }: { workspace?: Workspace }) {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    save.mutate({ ...values, link_types: linkTypes.split(",").map((t) => t.trim()).filter(Boolean) });
+    save.mutate({
+      ...values,
+      link_types: linkTypes.split(",").map((t) => t.trim()).filter(Boolean),
+      build_timeout: Math.round(Number(timeoutMinutes) * 60),
+    });
   }
 
   function confirmDelete() {
@@ -100,6 +109,25 @@ function WorkspaceForm({ workspace }: { workspace?: Workspace }) {
           Comma-separated link type names or directions, e.g. "Relates, is blocked by". Only these linked tickets are
           imported and shown. Empty means all. Applies on the next import.
         </p>
+
+        <h2>Build</h2>
+        <label>
+          envsetup.sh path (optional)
+          <input placeholder="<.repo path or target tree>/build/envsetup.sh" {...field("envsetup_path")} />
+        </label>
+        <p className="hint">
+          Sourced before each build; m runs in the directory above its build/ dir. Must lie inside the .repo path or
+          the target tree. Empty: build/envsetup.sh there.
+        </p>
+        <label>
+          lunch target
+          <input placeholder="aosp_x86_64-trunk_staging-eng" {...field("lunch_target")} />
+        </label>
+        <p className="hint">Required to build.</p>
+        <label>
+          Build timeout (minutes)
+          <input type="number" min={1} required value={timeoutMinutes} onChange={(e) => setTimeoutMinutes(e.target.value)} />
+        </label>
 
         <div className="actions">
           <button type="submit" disabled={save.isPending}>

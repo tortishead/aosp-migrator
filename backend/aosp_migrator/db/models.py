@@ -48,6 +48,12 @@ class Workspace(Base):
     # Link types whose tickets are followed, matched against the type name ("Relates") or
     # the direction ("relates to", "is blocked by"), case-insensitive. Empty means all.
     link_types: Mapped[list[Any]] = mapped_column(default=list, server_default=text("'[]'"))
+    # None: `build/envsetup.sh` of the repo root or target tree (`build.env.envsetup_path`).
+    envsetup_path: Mapped[str | None] = mapped_column(String)
+    # Required to build.
+    lunch_target: Mapped[str | None] = mapped_column(String)
+    # Seconds.
+    build_timeout: Mapped[int] = mapped_column(default=7200, server_default=text("7200"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
