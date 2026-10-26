@@ -670,3 +670,13 @@ body {
 .cluster-files tr.overlap td {
   background: #fff8c5;
 }
+
+.prescan-files {
+  margin: 2px 0;
+  padding-left: 18px;
+  font-size: 0.9em;
+}
+
+.prescan-edges li {
+  margin: 2px 0;
+}

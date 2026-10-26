@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { Cluster, Facets, ImportJob, Item, ItemPage } from "../api";
+import type { Cluster, Facets, ImportJob, Item, ItemPage, PrescanJob } from "../api";
 import { POLL_MS } from "../backlog/ImportPanel";
 import { mockApi, renderRoute, type ApiCall } from "../test-utils";
 
@@ -69,6 +69,25 @@ function job(overrides: Partial<ImportJob> = {}): ImportJob {
   };
 }
 
+function prescanJob(overrides: Partial<PrescanJob> = {}): PrescanJob {
+  return {
+    id: 3,
+    workspace_id: 1,
+    scope: "all",
+    issue_keys: [],
+    status: "running",
+    stage: "scan",
+    done: 0,
+    total: 25,
+    errors: [],
+    error: null,
+    cancel_requested: false,
+    started_at: "2026-10-25T20:00:00Z",
+    finished_at: null,
+    ...overrides,
+  };
+}
+
 function itemQueries(calls: ApiCall[]): URLSearchParams[] {
   return calls
     .filter((c) => c.method === "GET" && c.path.startsWith("/workspaces/1/items?"))
@@ -86,6 +105,7 @@ function backlogApi(handlers: Parameters<typeof mockApi>[0] = {}) {
     "GET /workspaces/1/items": () => page([item("PROJ-101"), item("PROJ-102", { status: "In Progress" })]),
     "GET /workspaces/1/items/facets": () => facets,
     "GET /workspaces/1/import-jobs": () => [],
+    "GET /workspaces/1/prescan-jobs": () => [],
     ...handlers,
   });
 }
@@ -391,5 +411,77 @@ describe("Backlog clusters", () => {
       { keys: ["PROJ-102"], confirm_dissolve: false },
       { keys: ["PROJ-102"], confirm_dissolve: true },
     ]);
+  });
+
+  it("runs a pre-scan of the backlog and shows its progress and item errors", async () => {
+    let polls = 0;
+    const calls = backlogApi({
+      "POST /workspaces/1/prescan": () => ({ status: 202, body: prescanJob() }),
+      "GET /workspaces/1/prescan-jobs": () => {
+        polls += 1;
+        if (polls === 1) return [];
+        if (polls === 2) return [prescanJob({ done: 10 })];
+        if (polls === 3) return [prescanJob({ done: 25, stage: "graph" })];
+        return [
+          prescanJob({
+            status: "done",
+            stage: null,
+            done: 25,
+            finished_at: "2026-10-25T20:01:00Z",
+            errors: [{ key: "PROJ-105", message: "0001.patch: downloaded file is missing; reimport the ticket" }],
+          }),
+        ];
+      },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderRoute("/workspaces/1");
+      await userEvent.click(await screen.findByRole("button", { name: "Pre-scan backlog" }));
+      expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({});
+      expect(await screen.findByText(/Pre-scanning… 0 \/ 25/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Pre-scan backlog" })).toBeDisabled();
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(await screen.findByText(/Pre-scanning… 10 \/ 25/)).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(await screen.findByText(/building dependency graph/)).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(await screen.findByText(/Pre-scan done: 25 items/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+    await userEvent.click(screen.getByText("1 item failed to pre-scan"));
+    expect(screen.getByRole("link", { name: "PROJ-105" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-105");
+  });
+
+  it("cancels a running pre-scan and shows why one failed", async () => {
+    const calls = backlogApi({
+      "GET /workspaces/1/prescan-jobs": () => [prescanJob({ done: 5 })],
+      "POST /prescan-jobs/3/cancel": () => ({ status: 202, body: prescanJob({ done: 5, cancel_requested: true }) }),
+    });
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel pre-scan" }));
+    expect(calls.some((c) => c.method === "POST" && c.path === "/prescan-jobs/3/cancel")).toBe(true);
+    expect(await screen.findByText(/\(canceling\)/)).toBeInTheDocument();
+  });
+
+  it("shows a failed pre-scan", async () => {
+    backlogApi({
+      "GET /workspaces/1/prescan-jobs": () => [
+        prescanJob({ status: "failed", error: "/src/aosp15/.repo/project.list not found; run `repo sync` in the target tree" }),
+      ],
+    });
+    renderRoute("/workspaces/1");
+    expect(await screen.findByText(/Pre-scan failed: .*run `repo sync`/)).toBeInTheDocument();
+  });
+
+  it("pre-scans the selected items", async () => {
+    const calls = backlogApi({
+      "POST /workspaces/1/prescan": () => ({ status: 202, body: prescanJob({ scope: "keys", issue_keys: ["PROJ-102"], total: 1 }) }),
+    });
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select PROJ-102" }));
+    await userEvent.click(screen.getByRole("button", { name: "Pre-scan selected" }));
+    expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({ keys: ["PROJ-102"] });
+    expect(await screen.findByText(/Pre-scanning… 0 \/ 1/)).toBeInTheDocument();
   });
 });

@@ -33,8 +33,11 @@ JIRA_BASE_URL = Field("jira", "base_url", "AOSP_MIGRATOR_JIRA_BASE_URL", secret=
 JIRA_PAT = Field("jira", "pat", "AOSP_MIGRATOR_JIRA_PAT", secret=True)
 GITHUB_PAT = Field("github", "pat", "AOSP_MIGRATOR_GITHUB_PAT", secret=True)
 LAN_TOKEN = Field("server", "lan_token", "AOSP_MIGRATOR_LAN_TOKEN", secret=True)
+# Comma-separated author email domains whose patches are looked up in target history.
+UPSTREAM_DOMAINS = Field("prescan", "upstream_domains", "AOSP_MIGRATOR_UPSTREAM_DOMAINS", secret=False)
 
-FIELDS = (JIRA_BASE_URL, JIRA_PAT, GITHUB_PAT, LAN_TOKEN)
+FIELDS = (JIRA_BASE_URL, JIRA_PAT, GITHUB_PAT, LAN_TOKEN, UPSTREAM_DOMAINS)
+DEFAULT_UPSTREAM_DOMAINS = ("google.com", "android.com")
 
 
 def resolve_data_dir(cli_value: str | Path | None = None) -> Path:
@@ -96,6 +99,12 @@ class Config:
                 if not section:
                     del data[field.section]
         self._write_file(data)
+
+    def upstream_domains(self) -> list[str]:
+        value = self.get(UPSTREAM_DOMAINS)
+        if value is None:
+            return list(DEFAULT_UPSTREAM_DOMAINS)
+        return [d.strip().lower() for d in value.split(",") if d.strip()]
 
     def ensure_lan_token(self) -> str:
         token = self.get(LAN_TOKEN)

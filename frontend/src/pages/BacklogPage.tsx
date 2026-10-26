@@ -7,6 +7,7 @@ import { Filters } from "../backlog/Filters";
 import { facetsKey, ImportPanel, itemsKey, useStartImport } from "../backlog/ImportPanel";
 import { apiParams, currentPage, hasFilters, PAGE_SIZE, STATE_LABELS } from "../backlog/params";
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
+import { PrescanPanel, useStartPrescan } from "../prescan/PrescanPanel";
 import { workspacesKey } from "../queryClient";
 
 const SORTS: [string, string][] = [
@@ -92,6 +93,7 @@ export function BacklogPage() {
         )}
       </div>
       <ImportPanel workspaceId={workspaceId} />
+      <PrescanPanel workspaceId={workspaceId} />
       <Filters search={search} facets={facets.data} clusters={clusters.data} update={update} />
       <div className="backlog-toolbar">
         <select aria-label="Sort" value={search.get("sort") ?? "key"} onChange={(e) => update((next) => next.set("sort", e.target.value))}>
@@ -240,6 +242,7 @@ function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered 
     },
   });
   const reimport = useStartImport(workspaceId);
+  const prescan = useStartPrescan(workspaceId);
   const refreshClusters = useRefreshClusters(workspaceId);
   const [target, setTarget] = useState("");
   // No target cluster: a new one from the selection.
@@ -274,6 +277,9 @@ function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered 
       <button onClick={() => reimport.mutate(keys)} disabled={reimport.isPending}>
         Reimport selected
       </button>
+      <button onClick={() => prescan.mutate(keys)} disabled={prescan.isPending}>
+        Pre-scan selected
+      </button>
       <button
         onClick={() => cluster.mutate(null)}
         disabled={keys.length < 2 || cluster.isPending}
@@ -299,6 +305,7 @@ function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered 
       {changeState.isError && <span className="error">{changeState.error.message}</span>}
       {cluster.isError && <span className="error">{cluster.error.message}</span>}
       {reimport.isError && <span className="error">{reimport.error.message}</span>}
+      {prescan.isError && <span className="error">{prescan.error.message}</span>}
     </div>
   );
 }

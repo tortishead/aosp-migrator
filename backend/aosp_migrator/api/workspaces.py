@@ -12,6 +12,7 @@ from aosp_migrator.api.deps import get_session
 from aosp_migrator.config import Config
 from aosp_migrator.db.models import Workspace
 from aosp_migrator.importer.runner import running_job
+from aosp_migrator.prescan import runner as prescan_runner
 from aosp_migrator.trees import TreePathError, detect_tree_type, validate_tree_path
 
 router = APIRouter(prefix="/workspaces")
@@ -128,6 +129,8 @@ def delete_workspace(workspace_id: int, request: Request, session: SessionDep) -
     workspace = _get(session, workspace_id)
     if running_job(session, workspace_id) is not None:
         raise HTTPException(status_code=409, detail="An import is running for this workspace; cancel it first")
+    if prescan_runner.running_job(session, workspace_id) is not None:
+        raise HTTPException(status_code=409, detail="A pre-scan is running for this workspace; cancel it first")
     # Items, issues, jobs etc. go with it via ON DELETE CASCADE.
     session.delete(workspace)
     session.commit()

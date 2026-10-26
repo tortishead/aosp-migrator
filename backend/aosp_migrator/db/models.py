@@ -213,3 +213,61 @@ class ClusterEvent(Base):
     type: Mapped[str] = mapped_column(String)
     payload: Mapped[dict[str, Any]]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DiffScan(Base):
+    """Pre-scan results for one diff attachment: repo mapping and already-present check."""
+
+    __tablename__ = "diff_scan"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    attachment_id: Mapped[int] = mapped_column(ForeignKey("attachment.id", ondelete="CASCADE"), unique=True)
+    # Project path in the target tree, relative to its root; None while unmapped.
+    project: Mapped[str | None] = mapped_column(String)
+    mapping_source: Mapped[str | None] = mapped_column(String)  # hint / files / copilot / manual
+    # Projects to choose from when unmapped.
+    candidates: Mapped[list[Any]]
+    presence: Mapped[str | None] = mapped_column(String)  # present / not_present / partial / unknown
+    # Per-file reverse-apply results, or the upstream history match.
+    presence_detail: Mapped[dict[str, Any] | None]
+    # HEAD of the mapped project when scanned, to spot stale results.
+    target_head: Mapped[str | None] = mapped_column(String)
+    scanned_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DependencyEdge(Base):
+    """Candidate dependency between two backlog items, from the pre-scan graph (see `prescan.graph`)."""
+
+    __tablename__ = "dependency_edge"
+    __table_args__ = (UniqueConstraint("from_item_id", "to_item_id", "reason"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    # `from` depends on `to` when the detail says `directed`; otherwise lower item id first.
+    from_item_id: Mapped[int] = mapped_column(ForeignKey("item.id", ondelete="CASCADE"), index=True)
+    to_item_id: Mapped[int] = mapped_column(ForeignKey("item.id", ondelete="CASCADE"), index=True)
+    reason: Mapped[str] = mapped_column(String)  # files / hunks / link / series / symbol
+    detail: Mapped[dict[str, Any]]
+    copilot: Mapped[str | None] = mapped_column(String)  # confirmed / rejected; None until evaluated
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class PrescanJob(Base):
+    __tablename__ = "prescan_job"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    scope: Mapped[str] = mapped_column(String)  # all / keys
+    # Backlog items to scan when scope is `keys`.
+    issue_keys: Mapped[list[Any]]
+    status: Mapped[str] = mapped_column(String, default="running")
+    stage: Mapped[str | None] = mapped_column(String)  # scan / graph
+    done: Mapped[int] = mapped_column(default=0)
+    total: Mapped[int | None]
+    # [{key, message}] per failed item; the job itself carries on.
+    errors: Mapped[list[Any]]
+    # Why the whole job failed (no project list, target tree missing).
+    error: Mapped[str | None] = mapped_column(Text)
+    cancel_requested: Mapped[bool] = mapped_column(default=False)
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None]

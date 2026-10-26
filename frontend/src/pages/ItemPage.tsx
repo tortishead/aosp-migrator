@@ -9,6 +9,7 @@ import { confirmingDissolve, memberWarning, useRefreshClusters } from "../cluste
 import { DiffTabs } from "../item/DiffViewer";
 import { HistoryTimeline } from "../item/History";
 import { JiraHtml } from "../item/JiraHtml";
+import { PrescanSection } from "../prescan/PrescanSection";
 
 export const itemKey = (workspaceId: number, key: string) => ["item", workspaceId, key];
 
@@ -65,6 +66,7 @@ export function ItemPage() {
         <h2>Diffs</h2>
         <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
       </section>
+      <PrescanSection workspaceId={workspaceId} itemKey={key} />
       <OtherAttachments attachments={issue.attachments} />
       <Comments issue={issue} baseUrl={detail.jira_base_url} />
       <LinkedTickets workspaceId={workspaceId} detail={detail} />
