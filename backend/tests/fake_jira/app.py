@@ -40,11 +40,13 @@ def create_fake_jira(store: FakeJiraStore) -> FastAPI:
         if status is None and store.fail_next:
             status = store.fail_next.pop(0)
         if status is not None:
-            headers = {"Retry-After": "0"} if status == 429 else {}
+            headers = {"Retry-After": store.retry_after} if status == 429 and store.retry_after is not None else {}
             return JSONResponse({"errorMessages": [f"Injected failure {status}"]}, status_code=status, headers=headers)
         if request.headers.get("authorization") != f"Bearer {store.pat}":
             return JSONResponse({"errorMessages": ["You are not authenticated."], "errors": {}}, status_code=401)
-        return await call_next(request)
+        response = await call_next(request)
+        response.headers.update(store.response_headers)
+        return response
 
     @app.get("/rest/api/2/myself")
     def myself() -> dict:

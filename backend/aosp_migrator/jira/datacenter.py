@@ -4,7 +4,8 @@ import hashlib
 import os
 import time
 from collections.abc import Callable, Iterator
-from datetime import datetime
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -35,7 +36,8 @@ ISSUE_FIELDS = [
     "updated",
 ]
 
-RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+RETRY_STATUSES = frozenset({500, 502, 503, 504})
+# Longest single wait, whether Jira asked for it (Retry-After) or it is our own backoff.
 MAX_RETRY_AFTER = 60.0
 
 
@@ -48,12 +50,16 @@ class DataCenterClient:
         transport: httpx2.BaseTransport | None = None,
         timeout: float = 30,
         max_attempts: int = 4,
+        max_rate_limit_attempts: int = 8,
         backoff: float = 1.0,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.on_wait: Callable[[float], None] | None = None
         self._origin = _origin(self.base_url)
         self._max_attempts = max_attempts
+        # 429 gets its own, larger budget: waiting for the rate limit bucket to refill always works eventually.
+        self._max_rate_limit_attempts = max_rate_limit_attempts
         self._backoff = backoff
         self._sleep = sleep
         self._http = httpx2.Client(
@@ -147,35 +153,59 @@ class DataCenterClient:
 
     def _request(self, method: str, path_or_url: str, *, stream: bool = False, **kwargs: Any) -> httpx2.Response:
         url = path_or_url if "://" in path_or_url else self.base_url + path_or_url
-        attempt = 0
+        attempt = 0  # Transport errors and 5xx
+        limited = 0  # 429
         while True:
-            attempt += 1
-            last = attempt >= self._max_attempts
             try:
                 response = self._http.send(self._http.build_request(method, url, **kwargs), stream=stream)
             except httpx2.TransportError as exc:
-                if last:
+                attempt += 1
+                if attempt >= self._max_attempts:
                     raise JiraConnectionError(f"Cannot reach Jira: {exc}") from exc
                 self._sleep(self._delay(attempt, None))
                 continue
-            if response.status_code in RETRY_STATUSES and not last:
-                retry_after = response.headers.get("Retry-After")
-                response.close()
-                self._sleep(self._delay(attempt, retry_after))
-                continue
+            if response.status_code == 429:
+                limited += 1
+                if limited < self._max_rate_limit_attempts:
+                    delay = self._delay(limited, response.headers.get("Retry-After"))
+                    response.close()
+                    self._wait(delay)
+                    continue
+            elif response.status_code in RETRY_STATUSES:
+                attempt += 1
+                if attempt < self._max_attempts:
+                    delay = self._delay(attempt, response.headers.get("Retry-After"))
+                    response.close()
+                    self._sleep(delay)
+                    continue
             if response.is_success:
+                self._throttle(response)
                 return response
             if stream:
                 response.read()
             raise _error(response)
 
     def _delay(self, attempt: int, retry_after: str | None) -> float:
-        if retry_after is not None:
-            try:
-                return min(max(float(retry_after), 0.0), MAX_RETRY_AFTER)
-            except ValueError:
-                pass  # HTTP-date form; fall back to backoff
-        return self._backoff * 2 ** (attempt - 1)
+        seconds = _retry_after_seconds(retry_after) if retry_after is not None else None
+        if seconds is None:
+            seconds = self._backoff * 2 ** (attempt - 1)
+        return min(max(seconds, 0.0), MAX_RETRY_AFTER)
+
+    def _throttle(self, response: httpx2.Response) -> None:
+        """Jira DC rate limiting reports its token bucket. Once it is empty, wait for the next refill instead of taking a 429."""
+        try:
+            remaining = float(response.headers["X-RateLimit-Remaining"])
+            interval = float(response.headers.get("X-RateLimit-Interval-Seconds", "1"))
+        except (KeyError, ValueError):
+            return
+        if remaining <= 0:
+            self._wait(min(max(interval, 0.0), MAX_RETRY_AFTER))
+
+    def _wait(self, seconds: float) -> None:
+        """Sleep for Jira's rate limit, telling `on_wait` first."""
+        if self.on_wait is not None:
+            self.on_wait(seconds)
+        self._sleep(seconds)
 
     def _issue(self, raw: dict[str, Any]) -> Issue:
         fields = raw.get("fields") or {}
@@ -212,6 +242,21 @@ def parse_datetime(value: str) -> datetime:
         return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%f%z")
     except ValueError:
         return datetime.fromisoformat(value)
+
+
+def _retry_after_seconds(value: str) -> float | None:
+    """Retry-After is either delay seconds or an HTTP-date."""
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return (when - datetime.now(UTC)).total_seconds()
 
 
 def _link(raw: dict[str, Any]) -> IssueLink:

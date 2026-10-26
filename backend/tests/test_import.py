@@ -379,3 +379,34 @@ def test_jobs_running_at_startup_are_marked_failed(app: FastAPI, workspace_id: i
     restarted = create_app(jira_config)
     (job,) = TestClient(restarted).get(f"/api/workspaces/{workspace_id}/import-jobs").json()
     assert (job["status"], job["error"]) == ("failed", "Interrupted by a server restart")
+
+
+def test_rate_limit_wait_shows_on_job_and_cancel_ends_it(jira_config: Config, jira_url: str, fake_jira: FakeJiraStore, tmp_path: Path) -> None:
+    reached = threading.Event()
+    release = threading.Event()
+
+    def sleep(seconds: float) -> None:
+        if not reached.is_set():
+            reached.set()
+            assert release.wait(10)
+
+    # An empty bucket on every response: the client waits for the refill after each request.
+    fake_jira.response_headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Interval-Seconds": "30"}
+    app = create_app(jira_config, jira_client_factory=lambda: DataCenterClient(jira_url, DEFAULT_PAT, sleep=sleep))
+    client = TestClient(app)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    workspace_id = client.post("/api/workspaces", json={"name": "A15", "jql": "x", "target_tree": str(tree)}).json()["id"]
+
+    job = client.post(f"/api/workspaces/{workspace_id}/import", json={}).json()
+    assert reached.wait(10)
+    running = client.get(f"/api/import-jobs/{job['id']}").json()
+    assert 28 <= running["rate_limit_wait"] <= 30
+    assert "waiting_until" not in running
+
+    client.post(f"/api/import-jobs/{job['id']}/cancel")
+    release.set()
+    finished = wait(client, job["id"])
+    assert finished["status"] == "canceled"
+    assert finished["errors"] == []
+    assert finished["rate_limit_wait"] is None

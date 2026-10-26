@@ -166,6 +166,8 @@ class ImportJob(Base):
     # Why the whole job failed (Jira unreachable, auth, search error).
     error: Mapped[str | None] = mapped_column(Text)
     cancel_requested: Mapped[bool] = mapped_column(default=False)
+    # Set while the job waits out Jira's rate limit: when the wait ends.
+    waiting_until: Mapped[datetime | None]
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     finished_at: Mapped[datetime | None]
 

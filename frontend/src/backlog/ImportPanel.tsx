@@ -86,6 +86,7 @@ function JobSummary({ job }: { job: ImportJob }) {
         <span className="job-status" role="status">
           <progress value={job.done} max={job.total ?? undefined} aria-label="Import progress" />
           {what}ing… {job.done} / {job.total ?? "?"}
+          {job.rate_limit_wait !== null && ` (Jira rate limit, resuming in ${job.rate_limit_wait}s)`}
           {job.cancel_requested && " (canceling)"}
         </span>
       );

@@ -74,6 +74,10 @@ class FakeJiraStore:
     max_page_size: int = 50
     # Statuses to answer the next requests with, one per request, before normal handling.
     fail_next: list[int] = field(default_factory=list)
+    # Retry-After sent with an injected 429; None sends none.
+    retry_after: str | None = "0"
+    # Extra headers on every successful response, e.g. Jira's X-RateLimit-*.
+    response_headers: dict[str, str] = field(default_factory=dict)
     # Request path -> status, answered on every request to that path (a ticket that keeps failing).
     fail_paths: dict[str, int] = field(default_factory=dict)
     # "METHOD path?query" of every request, for assertions.

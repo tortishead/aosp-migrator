@@ -75,7 +75,7 @@ def test_jira(body: JiraTestRequest, request: Request) -> dict:
     base_url = normalize_base_url(base_url)
 
     # One attempt only: the user is waiting on the button.
-    client = DataCenterClient(base_url, pat, transport=request.app.state.http_transport, timeout=15, max_attempts=1)
+    client = DataCenterClient(base_url, pat, transport=request.app.state.http_transport, timeout=15, max_attempts=1, max_rate_limit_attempts=1)
     try:
         with client:
             user = client.myself()

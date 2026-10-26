@@ -4,7 +4,7 @@ The importer only sees these types, so a Jira Cloud adapter can be added
 next to the Data Center one without touching the importer.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -80,6 +80,9 @@ class SearchPage:
 
 class JiraClient(Protocol):
     base_url: str
+    # Called with the seconds the client is about to wait because of Jira's rate limit.
+    # May raise to abort the request instead.
+    on_wait: Callable[[float], None] | None
 
     def myself(self) -> str:
         """Display name of the authenticated user. Used as a connection check."""

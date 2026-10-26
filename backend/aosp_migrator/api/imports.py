@@ -1,16 +1,17 @@
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.config import JIRA_BASE_URL, JIRA_PAT, Config
-from aosp_migrator.db.models import Attachment, ImportJob, Item, JiraIssue, Workspace
+from aosp_migrator.db.models import Attachment, ImportJob, Item, JiraIssue, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.importer.runner import ImportRunner, JobConflictError
 
@@ -39,6 +40,16 @@ class ImportJobOut(BaseModel):
     cancel_requested: bool
     started_at: datetime
     finished_at: datetime | None
+    waiting_until: datetime | None = Field(default=None, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def rate_limit_wait(self) -> int | None:
+        """Seconds left while a running job waits out Jira's rate limit, counted here so browser clock skew does not matter."""
+        if self.status != "running" or self.waiting_until is None:
+            return None
+        left = math.ceil((self.waiting_until - utcnow()).total_seconds())
+        return left if left > 0 else None
 
 
 def _workspace(session: Session, workspace_id: int) -> Workspace:

@@ -24,6 +24,7 @@ function job(overrides: Partial<ImportJob> = {}): ImportJob {
     errors: [],
     error: null,
     cancel_requested: false,
+    rate_limit_wait: null,
     started_at: "2026-10-25T20:00:00Z",
     finished_at: null,
     ...overrides,

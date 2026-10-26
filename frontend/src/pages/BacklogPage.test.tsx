@@ -61,6 +61,7 @@ function job(overrides: Partial<ImportJob> = {}): ImportJob {
     errors: [],
     error: null,
     cancel_requested: false,
+    rate_limit_wait: null,
     started_at: "2026-10-25T20:00:00Z",
     finished_at: null,
     ...overrides,
@@ -299,6 +300,12 @@ describe("ImportPanel", () => {
     expect(calls.some((c) => c.method === "POST" && c.path === "/import-jobs/7/cancel")).toBe(true);
     expect(await screen.findByText(/\(canceling\)/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel import" })).toBeDisabled();
+  });
+
+  it("shows a running import waiting out Jira's rate limit", async () => {
+    backlogApi({ "GET /workspaces/1/import-jobs": () => [job({ done: 40, total: 120, rate_limit_wait: 12 })] });
+    renderRoute("/workspaces/1");
+    expect(await screen.findByText(/Importing… 40 \/ 120 \(Jira rate limit, resuming in 12s\)/)).toBeInTheDocument();
   });
 
   it("shows why the last import failed", async () => {

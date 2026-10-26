@@ -254,6 +254,8 @@ export interface ImportJob {
   cancel_requested: boolean;
   started_at: string;
   finished_at: string | null;
+  /** Seconds left while a running job waits out Jira's rate limit. */
+  rate_limit_wait: number | null;
 }
 
 export const api = {

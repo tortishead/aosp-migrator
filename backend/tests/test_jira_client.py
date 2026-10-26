@@ -1,6 +1,8 @@
 import hashlib
 import socket
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from pathlib import Path
 
 import pytest
@@ -151,9 +153,67 @@ def test_download_missing_attachment(client: DataCenterClient, jira_url: str, tm
 def test_retries_on_429_and_5xx(client: DataCenterClient, store: FakeJiraStore, sleeps: list[float]) -> None:
     store.fail_next = [503, 429, 502]
     assert client.myself() == "Jane Doe"
-    # Backoff 1s, then Retry-After: 0 from the 429, then backoff 4s.
-    assert sleeps == [1.0, 0.0, 4.0]
+    # Backoff 1s, then Retry-After: 0 from the 429, then backoff 2s: 429s do not use up the 5xx attempts.
+    assert sleeps == [1.0, 0.0, 2.0]
     assert len(store.requests) == 4
+
+
+def test_429_has_its_own_larger_budget(client: DataCenterClient, store: FakeJiraStore, sleeps: list[float]) -> None:
+    store.retry_after = None
+    store.fail_next = [429] * 7
+    assert client.myself() == "Jane Doe"
+    # Exponential backoff, each wait capped at 60s.
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0]
+
+
+def test_gives_up_after_rate_limit_attempts(client: DataCenterClient, store: FakeJiraStore) -> None:
+    store.fail_next = [429] * 10
+    with pytest.raises(JiraError) as exc_info:
+        client.myself()
+    assert exc_info.value.status == 429
+    assert len(store.requests) == 8
+
+
+def test_retry_after_as_http_date(client: DataCenterClient, store: FakeJiraStore, sleeps: list[float]) -> None:
+    now = datetime.now(UTC)
+    store.fail_next = [429]
+    store.retry_after = format_datetime(now + timedelta(seconds=30), usegmt=True)
+    client.myself()
+    store.fail_next = [429]
+    store.retry_after = format_datetime(now - timedelta(seconds=30), usegmt=True)
+    client.myself()
+    assert 28 <= sleeps[0] <= 30
+    assert sleeps[1] == 0.0
+
+
+def test_on_wait_reports_rate_limit_waits_only(client: DataCenterClient, store: FakeJiraStore, sleeps: list[float]) -> None:
+    waits: list[float] = []
+    client.on_wait = waits.append
+    store.retry_after = "5"
+    store.fail_next = [503, 429]
+    client.myself()
+    assert sleeps == [1.0, 5.0]
+    assert waits == [5.0]
+
+
+def test_on_wait_can_abort(client: DataCenterClient, store: FakeJiraStore, sleeps: list[float]) -> None:
+    def abort(seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    client.on_wait = abort
+    store.fail_next = [429]
+    with pytest.raises(KeyboardInterrupt):
+        client.myself()
+    assert sleeps == []
+
+
+def test_waits_for_refill_when_rate_limit_bucket_is_empty(client: DataCenterClient, store: FakeJiraStore, sleeps: list[float]) -> None:
+    store.response_headers = {"X-RateLimit-Remaining": "3", "X-RateLimit-Interval-Seconds": "2", "X-RateLimit-FillRate": "10"}
+    client.myself()
+    assert sleeps == []
+    store.response_headers["X-RateLimit-Remaining"] = "0"
+    client.myself()
+    assert sleeps == [2.0]
 
 
 def test_retry_mid_pagination(client: DataCenterClient, store: FakeJiraStore) -> None:

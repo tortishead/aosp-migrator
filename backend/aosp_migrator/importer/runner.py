@@ -11,6 +11,7 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -107,7 +108,9 @@ class ImportRunner:
                 self._finish(session, job, "failed", str(exc))
                 return
             try:
-                _Job(session, job, client, self._attachments_dir(job.workspace_id)).run()
+                runner = _Job(session, job, client, self._attachments_dir(job.workspace_id))
+                client.on_wait = runner.rate_limited
+                runner.run()
                 self._finish(session, job, "done")
             except _Canceled:
                 self._finish(session, job, "canceled")
@@ -167,12 +170,18 @@ class _Job:
         if self.job.cancel_requested:
             raise _Canceled
 
+    def rate_limited(self, seconds: float) -> None:
+        """The client is about to wait for Jira's rate limit: show it on the job, and let a cancel through first."""
+        self._check_cancel()
+        self.job.waiting_until = utcnow() + timedelta(seconds=seconds)
+        self.session.commit()
+
     def _import(self, key: str, issue: Issue | None, in_jql: bool | None) -> None:
         """Import one backlog ticket. `in_jql` True restores a dropped item; None leaves the flag alone."""
         try:
             fetched = self._fetch(issue or self.client.get_issue(key))
             linked = self._fetch_linked(fetched.issue)
-        except FATAL_ERRORS:
+        except (_Canceled, *FATAL_ERRORS):
             raise
         except Exception as exc:
             if not isinstance(exc, JiraError):
