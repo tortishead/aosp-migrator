@@ -9,7 +9,7 @@ import { apiParams, currentPage, hasFilters, PAGE_SIZE, STATE_LABELS } from "../
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
 import { PrescanPanel, useStartPrescan } from "../prescan/PrescanPanel";
 import { TriageBar } from "../prescan/TriageBar";
-import { TRIAGE_TEXT, triageClass } from "../prescan/triage";
+import { PRESENT_LABELS, TRIAGE_TEXT, triageClass } from "../prescan/triage";
 import { workspacesKey } from "../queryClient";
 
 const SORTS: [string, string][] = [
@@ -223,7 +223,7 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
       <td>{item.fix_versions.join(", ")}</td>
       <td>{item.diff_count || ""}</td>
       <td className="nowrap">
-        {item.triage_label && (
+        {item.triage_label && !(item.apply && PRESENT_LABELS.includes(item.triage_label)) && (
           <span className={triageClass(item.triage_label)} title={item.triage_reason ?? undefined}>
             {TRIAGE_TEXT[item.triage_label]}
           </span>
