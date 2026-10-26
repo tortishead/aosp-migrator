@@ -50,12 +50,63 @@ class DiffMapping:
 
 
 def read_project_list(tree: Path) -> list[str]:
-    """Project paths of a `repo` tree, relative to its root, in file order."""
+    """Project paths of a `repo` tree, relative to its root, in file order.
+
+    Projects of submanifests (`.repo/submanifests/<path>/project.list`, nested ones in
+    `<path>/submanifests/...`) follow, prefixed with the submanifest path.
+    """
+    projects = _read_repodir(tree / ".repo", "")
+    if projects is None:
+        raise ProjectListMissing(tree)
+    return projects
+
+
+# Entries of a repo metadata dir that are never submanifest paths.
+_REPODIR_INTERNALS = {"projects", "project-objects", "subprojects", "manifests", "manifests.git", "repo", "worktrees", "submanifests"}
+
+
+def _read_repodir(repodir: Path, prefix: str) -> list[str] | None:
+    """Projects listed by a repo metadata dir and its submanifests; None without any project list."""
     try:
-        text = (tree / PROJECT_LIST).read_text()
+        text = (repodir / "project.list").read_text()
     except FileNotFoundError:
-        raise ProjectListMissing(tree) from None
-    return [line.strip().strip("/") for line in text.splitlines() if line.strip()]
+        projects = None
+    else:
+        projects = [_join(prefix, line.strip().strip("/")) for line in text.splitlines() if line.strip()]
+    sub = _submanifests(repodir / "submanifests", prefix)
+    if sub is None:
+        return projects
+    return (projects or []) + sub
+
+
+def _submanifests(directory: Path, prefix: str, relative: str = "", in_repodir: bool = False) -> list[str] | None:
+    """Projects of the submanifests below `directory`, whose relative dirs are submanifest paths.
+
+    A submanifest's metadata dir may hold sibling submanifests whose path extends its own.
+    """
+    try:
+        entries = sorted((e for e in os.scandir(directory) if e.is_dir(follow_symlinks=False)), key=lambda e: e.name)
+    except OSError:
+        return None
+    found: list[str] | None = None
+    for entry in entries:
+        if entry.name.startswith(".") or (in_repodir and entry.name in _REPODIR_INTERNALS):
+            continue
+        path = _join(relative, entry.name)
+        child = Path(entry.path)
+        is_repodir = (child / "project.list").is_file() or (child / "submanifests").is_dir()
+        if is_repodir:
+            projects = _read_repodir(child, _join(prefix, path))
+            if projects is not None:
+                found = (found or []) + projects
+        projects = _submanifests(child, prefix, path, is_repodir)
+        if projects is not None:
+            found = (found or []) + projects
+    return found
+
+
+def _join(prefix: str, path: str) -> str:
+    return f"{prefix}/{path}" if prefix else path
 
 
 def projects_under(projects: Iterable[str], prefix: str) -> list[str]:

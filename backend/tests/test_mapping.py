@@ -46,6 +46,32 @@ def test_missing_project_list(tmp_path: Path) -> None:
         read_project_list(tmp_path)
 
 
+def test_read_project_list_includes_submanifests(tmp_path: Path) -> None:
+    repo = tmp_path / ".repo"
+
+    def project_list(directory: Path, *projects: str) -> None:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "project.list").write_text("".join(f"{p}\n" for p in projects))
+
+    project_list(repo, "aosp", "build")
+    project_list(repo / "submanifests" / "aosp" / "qssi" / "LINUX" / "android", "art", "frameworks/base")
+    (repo / "submanifests" / "aosp" / "qssi" / "LINUX" / "android" / "projects" / "art.git").mkdir(parents=True)
+    project_list(repo / "submanifests" / "aosp" / "kernel", "kernel_platform/common")
+    project_list(repo / "submanifests" / "aosp" / "kernel" / "submanifests" / "vendor", "qcom")
+    project_list(repo / "submanifests" / "aosp" / "kernel" / "extra", "tools")
+
+    assert read_project_list(tmp_path) == [
+        "aosp",
+        "build",
+        "aosp/kernel/kernel_platform/common",
+        "aosp/kernel/vendor/qcom",
+        "aosp/kernel/extra/tools",
+        "aosp/qssi/LINUX/android/art",
+        "aosp/qssi/LINUX/android/frameworks/base",
+    ]
+    assert projects_under(read_project_list(tmp_path), "aosp/qssi/LINUX/android") == ["art", "frameworks/base"]
+
+
 def test_projects_under_a_subdirectory_of_the_repo_checkout() -> None:
     assert projects_under(PROJECTS, ROOT_PROJECT) == PROJECTS
     assert projects_under(PROJECTS, "frameworks") == ["base", "base/packages/SystemUI", "av"]
