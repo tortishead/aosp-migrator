@@ -261,7 +261,7 @@ class PrescanJob(Base):
     # Backlog items to scan when scope is `keys`.
     issue_keys: Mapped[list[Any]]
     status: Mapped[str] = mapped_column(String, default="running")
-    stage: Mapped[str | None] = mapped_column(String)  # scan / graph
+    stage: Mapped[str | None] = mapped_column(String)  # projects / scan / graph
     done: Mapped[int] = mapped_column(default=0)
     total: Mapped[int | None]
     # [{key, message}] per failed item; the job itself carries on.

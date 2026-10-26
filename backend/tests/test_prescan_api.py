@@ -151,6 +151,23 @@ def test_missing_project_list_fails_the_job(client: TestClient, workspace_id: in
     assert "repo sync" in job["error"]
 
 
+def test_plain_tree_of_git_projects(client: TestClient, target: Path, fake_jira: FakeJiraStore) -> None:
+    """An AOSP checkout without `.repo`: projects are found by their `.git` dirs."""
+    shutil.rmtree(target / ".repo")
+    response = client.post("/api/workspaces", json={"name": "plain", "jql": "project = PROJ", "target_tree": str(target)})
+    assert response.json()["target_tree_type"] == "plain"
+    workspace_id = response.json()["id"]
+    assert run_import(client, workspace_id)["status"] == "done"
+
+    job = run_prescan(client, workspace_id)
+    assert (job["status"], job["errors"]) == ("done", [])
+    camera = prescan(client, workspace_id, "PROJ-101")["diffs"][0]
+    assert (camera["project"], camera["mapping_source"]) == ("frameworks/av", "hint")
+    assert prescan(client, workspace_id, "PROJ-103")["diffs"][0]["project"] == "frameworks/base"
+    upstream = prescan(client, workspace_id, "PROJ-109")["diffs"][0]
+    assert (upstream["presence"], upstream["presence_detail"]["history"][0]["match"]) == ("present", "change_id")
+
+
 @pytest.mark.parametrize("tree_type", ["git", "plain"])
 def test_git_or_plain_tree_is_one_project(client: TestClient, workspace_id: int, target: Path, tmp_path: Path, tree_type: str) -> None:
     tree = target / "frameworks/base"
