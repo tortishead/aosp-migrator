@@ -273,6 +273,63 @@ export interface ImportJob {
   rate_limit_wait: number | null;
 }
 
+export interface PrescanJob {
+  id: number;
+  workspace_id: number;
+  scope: "all" | "keys";
+  issue_keys: string[];
+  status: JobStatus;
+  /** While running: `scan` (repo mapping, already-present check), then `graph`. */
+  stage: "scan" | "graph" | null;
+  done: number;
+  total: number | null;
+  errors: { key: string; message: string }[];
+  error: string | null;
+  cancel_requested: boolean;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export type Presence = "present" | "not_present" | "partial" | "unknown";
+
+export interface DiffScan {
+  attachment_id: number;
+  jira_id: string;
+  filename: string;
+  /** Null while this diff version has not been scanned. */
+  scanned_at: string | null;
+  /** Target project path; null while unmapped. */
+  project: string | null;
+  mapping_source: "hint" | "files" | "copilot" | "manual" | null;
+  /** Projects to choose from while unmapped. */
+  candidates: string[];
+  presence: Presence | null;
+  presence_detail: {
+    files?: Record<string, "present" | "not_present" | "unknown">;
+    history?: { subject: string; match: "change_id" | "subject" | "patch_id" | null; sha: string | null }[];
+    reason?: string;
+  } | null;
+  target_head: string | null;
+}
+
+export interface DependencyEdge {
+  relation: "depends_on" | "depended_on_by" | "related";
+  key: string;
+  summary: string;
+  reason: "files" | "hunks" | "link" | "series" | "symbol";
+  detail: Record<string, unknown>;
+  copilot: "confirmed" | "rejected" | null;
+}
+
+export interface ItemPrescan {
+  scanned: boolean;
+  presence: Presence | null;
+  /** Why the results are out of date; empty when fresh. */
+  stale: string[];
+  diffs: DiffScan[];
+  edges: DependencyEdge[];
+}
+
 export const api = {
   authStatus: () => apiFetch<AuthStatus>("/auth/status"),
   login: (token: string) =>
@@ -350,4 +407,12 @@ export const api = {
     apiFetch<ImportJob[]>(`/workspaces/${workspaceId}/import-jobs?limit=${limit}`),
   importJob: (jobId: number) => apiFetch<ImportJob>(`/import-jobs/${jobId}`),
   cancelImport: (jobId: number) => apiFetch<ImportJob>(`/import-jobs/${jobId}/cancel`, { method: "POST" }),
+  // No keys: every backlog item that is not dropped.
+  startPrescan: (workspaceId: number, keys?: string[]) =>
+    apiFetch<PrescanJob>(`/workspaces/${workspaceId}/prescan`, { method: "POST", body: JSON.stringify({ keys }) }),
+  prescanJobs: (workspaceId: number, limit: number) =>
+    apiFetch<PrescanJob[]>(`/workspaces/${workspaceId}/prescan-jobs?limit=${limit}`),
+  cancelPrescan: (jobId: number) => apiFetch<PrescanJob>(`/prescan-jobs/${jobId}/cancel`, { method: "POST" }),
+  itemPrescan: (workspaceId: number, key: string) =>
+    apiFetch<ItemPrescan>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/prescan`),
 };

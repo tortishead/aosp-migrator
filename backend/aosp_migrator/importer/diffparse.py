@@ -33,6 +33,8 @@ class FileChange:
     binary: bool = False
     # Raw text of each hunk, `@@` header included. Left out of the stored JSON.
     hunks: list[str] = field(default_factory=list, compare=False)
+    # Raw text of this file's section, headers included, as `git apply` takes it. Not stored.
+    raw: str = field(default="", compare=False)
 
 
 @dataclass
@@ -57,6 +59,8 @@ class ParsedDiff:
         if not hunks:
             for change in data["files"]:
                 del change["hunks"]
+        for change in data["files"]:
+            del change["raw"]
         return data
 
 
@@ -85,15 +89,20 @@ def parse_diff(text: str) -> ParsedDiff:
     current: FileChange | None = None
     # True while `current` came from `diff --git` and its ---/+++ lines are still to come.
     git_sides_pending = False
+    # Line index where each file's section starts, and where sections are cut off.
+    starts: list[int] = []
+    cuts: list[int] = []
     i = 0
     while i < len(lines):
         line = lines[i]
         if _FROM_SHA.match(line):
             current, git_sides_pending = None, False  # Next commit of a series
             result.commits.append(_commit(lines, i))
+            cuts.append(i)
         elif line.startswith("diff --git "):
             current = _git_header(line[len("diff --git ") :])
             result.files.append(current)
+            starts.append(i)
             git_sides_pending = True
         elif line.startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
             old, new = _side_path(line[4:]), _side_path(lines[i + 1][4:])
@@ -103,6 +112,7 @@ def parse_diff(text: str) -> ParsedDiff:
                 # Plain unified diff: no `diff --git` header announced this file.
                 current = FileChange(path="")
                 result.files.append(current)
+                starts.append(i)
                 _apply_plain_paths(current, old, new)
             git_sides_pending = False
             i += 2
@@ -115,6 +125,10 @@ def parse_diff(text: str) -> ParsedDiff:
         elif current is not None:
             _git_extended_header(line, current)
         i += 1
+    boundaries = sorted({*starts, *cuts, len(lines)})
+    for change, start in zip(result.files, starts):
+        end = next(b for b in boundaries if b > start)
+        change.raw = "\n".join(lines[start:end]) + "\n"
     return result
 
 

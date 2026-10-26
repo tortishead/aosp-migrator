@@ -6,10 +6,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from aosp_migrator import db
-from aosp_migrator.api import auth, clusters, health, imports, items, settings, workspaces
+from aosp_migrator.api import auth, clusters, health, imports, items, prescan, settings, workspaces
 from aosp_migrator.config import Config, resolve_data_dir
 from aosp_migrator.importer.runner import ImportRunner, fail_interrupted_jobs
 from aosp_migrator.jira import JiraClient, client_from_config
+from aosp_migrator.prescan import runner as prescan_runner
 
 DEFAULT_STATIC_DIR = Path(__file__).parent / "static"
 
@@ -36,11 +37,13 @@ def create_app(
     app.state.sessionmaker = db.create_sessionmaker(engine)
     with app.state.sessionmaker() as session:
         fail_interrupted_jobs(session)
+        prescan_runner.fail_interrupted_jobs(session)
     app.state.import_runner = ImportRunner(
         app.state.sessionmaker,
         config.attachments_dir,
         jira_client_factory or (lambda: client_from_config(config, http_transport)),
     )
+    app.state.prescan_runner = prescan_runner.PrescanRunner(app.state.sessionmaker, config.upstream_domains)
 
     app.middleware("http")(auth.require_token)
     app.include_router(health.router, prefix="/api")
@@ -48,6 +51,7 @@ def create_app(
     app.include_router(settings.router, prefix="/api")
     app.include_router(workspaces.router, prefix="/api")
     app.include_router(imports.router, prefix="/api")
+    app.include_router(prescan.router, prefix="/api")
     app.include_router(items.router, prefix="/api")
     app.include_router(clusters.router, prefix="/api")
 

@@ -2,14 +2,21 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { HistoryEvent, ImportJob, ItemDetail, Note } from "../api";
+import type { HistoryEvent, ImportJob, ItemDetail, ItemPrescan, Note, PrescanJob } from "../api";
+import { POLL_MS } from "../backlog/ImportPanel";
 import { diffHandlers, itemDetail } from "../item/fixtures";
 import { mockApi, renderRoute } from "../test-utils";
 
 const URL = "/workspaces/1/items/PROJ-101";
 
 function itemApi(handlers: Parameters<typeof mockApi>[0] = {}) {
-  return mockApi({ "GET /workspaces/1/items/PROJ-101": () => itemDetail(), ...diffHandlers, ...handlers });
+  return mockApi({
+    "GET /workspaces/1/items/PROJ-101": () => itemDetail(),
+    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, presence: null, stale: [], diffs: [], edges: [] }),
+    "GET /workspaces/1/prescan-jobs": () => [],
+    ...diffHandlers,
+    ...handlers,
+  });
 }
 
 function job(overrides: Partial<ImportJob> = {}): ImportJob {
@@ -246,5 +253,116 @@ describe("ItemPage cluster", () => {
     const again = await screen.findByRole("region", { name: "Linked tickets" });
     expect(within(again).getByText("In this cluster")).toBeInTheDocument();
     expect(within(again).getByText("cluster: Camera")).toBeInTheDocument();
+  });
+});
+
+describe("ItemPage pre-scan", () => {
+  it("shows pre-scan results per diff, staleness and candidate dependencies", async () => {
+    const scanned: ItemPrescan = {
+      scanned: true,
+      presence: "partial",
+      stale: ["frameworks/av HEAD moved"],
+      diffs: [
+        {
+          attachment_id: 2,
+          jira_id: "11",
+          filename: "0001-camera-fix-null-deref.patch",
+          scanned_at: "2026-10-26T10:00:00Z",
+          project: "frameworks/av",
+          mapping_source: "hint",
+          candidates: [],
+          presence: "partial",
+          presence_detail: { files: { "CameraService.cpp": "present", "CameraService.h": "not_present" } },
+          target_head: "a".repeat(40),
+        },
+        {
+          attachment_id: 3,
+          jira_id: "12",
+          filename: "build.patch",
+          scanned_at: "2026-10-26T10:00:00Z",
+          project: null,
+          mapping_source: null,
+          candidates: ["system/core", "hardware/interfaces"],
+          presence: null,
+          presence_detail: null,
+          target_head: null,
+        },
+      ],
+      edges: [
+        {
+          relation: "depends_on",
+          key: "PROJ-107",
+          summary: "OEM camera config HAL",
+          reason: "symbol",
+          detail: { symbols: ["IOemCameraConfig"], directed: true },
+          copilot: null,
+        },
+        {
+          relation: "related",
+          key: "PROJ-108",
+          summary: "Enable OEM camera mode",
+          reason: "files",
+          detail: { projects: ["frameworks/av"], files: ["CameraService.cpp"], directed: false },
+          copilot: null,
+        },
+      ],
+    };
+    itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scanned });
+    renderRoute(URL);
+    const section = await screen.findByRole("region", { name: "Pre-scan" });
+    expect(await within(section).findByText("Stale: frameworks/av HEAD moved")).toBeInTheDocument();
+    const rows = within(section).getAllByRole("row").slice(1);
+    expect(rows[0]).toHaveTextContent("frameworks/av (path in description)");
+    expect(rows[0]).toHaveTextContent("CameraService.h: Not present");
+    expect(rows[1]).toHaveTextContent("Unmapped candidates: system/core, hardware/interfaces");
+    const deps = within(section).getByRole("list", { name: "Candidate dependencies" });
+    expect(deps).toHaveTextContent("Depends on PROJ-107 OEM camera config HAL symbol uses IOemCameraConfig");
+    expect(deps).toHaveTextContent("Related to PROJ-108 Enable OEM camera mode files same files: CameraService.cpp");
+    expect(within(deps).getByRole("link", { name: "PROJ-107" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-107");
+  });
+
+  it("re-runs the pre-scan for this item and refetches its results when done", async () => {
+    const running: PrescanJob = {
+      id: 4,
+      workspace_id: 1,
+      scope: "keys",
+      issue_keys: ["PROJ-101"],
+      status: "running",
+      stage: "scan",
+      done: 0,
+      total: 1,
+      errors: [],
+      error: null,
+      cancel_requested: false,
+      started_at: "2026-10-26T10:00:00Z",
+      finished_at: null,
+    };
+    let jobPolls = 0;
+    let resultFetches = 0;
+    const calls = itemApi({
+      "POST /workspaces/1/prescan": () => ({ status: 202, body: running }),
+      "GET /workspaces/1/prescan-jobs": () => {
+        jobPolls += 1;
+        return jobPolls === 1 ? [] : [{ ...running, status: "done", stage: null, done: 1, finished_at: "2026-10-26T10:00:05Z" }];
+      },
+      "GET /workspaces/1/items/PROJ-101/prescan": () => {
+        resultFetches += 1;
+        return { scanned: resultFetches > 1, presence: "present", stale: [], diffs: [], edges: [] };
+      },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderRoute(URL);
+      const section = await screen.findByRole("region", { name: "Pre-scan" });
+      expect(await within(section).findByText("Not pre-scanned yet.")).toBeInTheDocument();
+      await userEvent.click(within(section).getByRole("button", { name: "Pre-scan this item" }));
+      expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({ keys: ["PROJ-101"] });
+      expect(await within(section).findByText(/Pre-scanning… 0 \/ 1/)).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(await within(section).findByText(/Pre-scan done: 1 item/)).toBeInTheDocument();
+      expect(await within(section).findByText("Already present")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
