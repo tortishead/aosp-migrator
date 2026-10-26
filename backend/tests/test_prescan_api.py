@@ -321,21 +321,55 @@ def test_stale_after_new_diff_version_and_head_move(client: TestClient, workspac
     assert prescan(client, workspace_id, "PROJ-106")["stale"] == []
 
 
-def test_rescan_keeps_manual_mapping(app: FastAPI, client: TestClient, workspace_id: int) -> None:
+def pick(client: TestClient, workspace_id: int, key: str, attachment_id: int, project: str | None) -> Any:
+    return client.put(f"/api/workspaces/{workspace_id}/items/{key}/diffs/{attachment_id}/project", json={"project": project})
+
+
+def test_picked_project_is_scanned_and_survives_rerun(client: TestClient, workspace_id: int) -> None:
     run_prescan(client, workspace_id, ["PROJ-110"])
-    with session(app) as s:
-        scan = s.scalar(
-            select(DiffScan).join(Attachment, DiffScan.attachment_id == Attachment.id).join(JiraIssue, Attachment.issue_id == JiraIssue.id).where(JiraIssue.key == "PROJ-110")
-        )
-        assert scan is not None
-        scan.project, scan.mapping_source = "system/core", "manual"
-        s.commit()
+    diff = prescan(client, workspace_id, "PROJ-110")["diffs"][0]
+    assert diff["project"] is None and "system/core" in diff["candidates"]
+    assert "system/core" in client.get(f"/api/workspaces/{workspace_id}/target-projects").json()
+
+    response = pick(client, workspace_id, "PROJ-110", diff["attachment_id"], "system/core")
+    assert response.status_code == 200, response.text
+    picked = response.json()["diffs"][0]
+    # Scanned right away, no job needed.
+    assert (picked["project"], picked["mapping_source"], picked["presence"], picked["apply"]) == ("system/core", "manual", "not_present", "applies")
+    assert (response.json()["label"], response.json()["label_reason"]) == ("applies", "system/core: applies as is")
+    history = client.get(f"/api/workspaces/{workspace_id}/items/PROJ-110").json()["history"]
+    assert history[-1]["type"] == "project_picked"
+    assert history[-1]["payload"] == {"filename": diff["filename"], "old": None, "new": "system/core"}
+
     run_prescan(client, workspace_id, ["PROJ-110"])
-    result = prescan(client, workspace_id, "PROJ-110")
-    diff = result["diffs"][0]
-    assert (diff["project"], diff["mapping_source"], diff["presence"]) == ("system/core", "manual", "not_present")
-    # The label follows the re-run.
-    assert (result["label"], result["label_reason"]) == ("applies", "system/core: applies as is")
+    again = prescan(client, workspace_id, "PROJ-110")
+    assert (again["diffs"][0]["project"], again["diffs"][0]["mapping_source"], again["label"]) == ("system/core", "manual", "applies")
+
+    # Back to the automatic mapping.
+    reset = pick(client, workspace_id, "PROJ-110", diff["attachment_id"], None).json()
+    assert (reset["diffs"][0]["project"], reset["diffs"][0]["mapping_source"], reset["label"]) == (None, None, "unmapped")
+
+
+def test_pick_project_validation(app: FastAPI, client: TestClient, workspace_id: int) -> None:
+    diff = prescan(client, workspace_id, "PROJ-110")["diffs"][0]
+    # Not scanned before: picking creates the scan.
+    assert pick(client, workspace_id, "PROJ-110", diff["attachment_id"], "hardware/interfaces").json()["diffs"][0]["presence"] == "not_present"
+    unknown = pick(client, workspace_id, "PROJ-110", diff["attachment_id"], "no/such")
+    assert (unknown.status_code, unknown.json()["detail"]) == (422, "Not a project of the target tree: no/such")
+    other = prescan(client, workspace_id, "PROJ-105")["diffs"][0]
+    assert pick(client, workspace_id, "PROJ-110", other["attachment_id"], "system/core").status_code == 404
+    assert pick(client, workspace_id, "PROJ-999", diff["attachment_id"], "system/core").status_code == 404
+
+    app.state.prescan_runner = PrescanRunner(app.state.sessionmaker, lambda: [], executor=lambda _: None)
+    client.post(f"/api/workspaces/{workspace_id}/prescan", json={})
+    assert pick(client, workspace_id, "PROJ-110", diff["attachment_id"], "system/core").status_code == 409
+
+
+def test_target_projects_without_project_list(client: TestClient, workspace_id: int, target: Path) -> None:
+    (target / ".repo" / "project.list").unlink()
+    response = client.get(f"/api/workspaces/{workspace_id}/target-projects")
+    assert response.status_code == 422
+    assert "repo sync" in response.json()["detail"]
 
 
 def test_jobs_running_at_startup_are_marked_failed(app: FastAPI, client: TestClient, workspace_id: int, config: Config) -> None:

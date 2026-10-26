@@ -11,7 +11,7 @@ from aosp_migrator.api.deps import get_session
 from aosp_migrator.db.models import DiffScan, Item, JiraIssue, PrescanJob, Workspace
 from aosp_migrator.prescan.presence import combine
 from aosp_migrator.prescan.triage import ORDER
-from aosp_migrator.prescan.runner import JobConflictError, PrescanRunner, current_diffs, stale_items
+from aosp_migrator.prescan.runner import JobConflictError, PrescanError, PrescanRunner, current_diffs, stale_items, target_projects
 
 router = APIRouter()
 
@@ -67,6 +67,11 @@ class ItemPrescanOut(BaseModel):
     presence: str | None
     stale: list[str]
     diffs: list[DiffScanOut]
+
+
+class ProjectPick(BaseModel):
+    # None: back to the automatic mapping.
+    project: str | None
 
 
 class PrescanSummaryOut(BaseModel):
@@ -159,16 +164,49 @@ def get_prescan_summary(workspace_id: int, session: SessionDep) -> PrescanSummar
     )
 
 
-@router.get("/workspaces/{workspace_id}/items/{key}/prescan")
-def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPrescanOut:
-    """Pre-scan results of one backlog item: per current diff, whether they are stale, and its candidate edges."""
-    workspace = _workspace(session, workspace_id)
+@router.get("/workspaces/{workspace_id}/target-projects")
+def list_target_projects(workspace_id: int, session: SessionDep) -> list[str]:
+    """Projects of the target tree, for picking a diff's project by hand."""
+    try:
+        _, projects = target_projects(_workspace(session, workspace_id))
+    except PrescanError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return projects
+
+
+def _item(session: Session, workspace_id: int, key: str) -> tuple[Item, JiraIssue]:
     row = session.execute(
         select(Item, JiraIssue).join(JiraIssue, Item.issue_id == JiraIssue.id).where(Item.workspace_id == workspace_id, JiraIssue.key == key)
     ).one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail=f"Not in this workspace's backlog: {key}")
     item, issue = row
+    return item, issue
+
+
+@router.put("/workspaces/{workspace_id}/items/{key}/diffs/{attachment_id}/project")
+def pick_project(workspace_id: int, key: str, attachment_id: int, body: ProjectPick, request: Request, session: SessionDep) -> ItemPrescanOut:
+    """Map a current diff to a project by hand, kept across re-runs; the item is pre-scanned again right away."""
+    _workspace(session, workspace_id)
+    item, issue = _item(session, workspace_id, key)
+    if attachment_id not in {a.id for a in current_diffs(session, issue.id)}:
+        raise HTTPException(status_code=404, detail=f"Not a current diff of {key}")
+    runner: PrescanRunner = request.app.state.prescan_runner
+    try:
+        runner.pick_project(workspace_id, item.id, attachment_id, body.project)
+    except JobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PrescanError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    session.expire_all()
+    return get_item_prescan(workspace_id, key, session)
+
+
+@router.get("/workspaces/{workspace_id}/items/{key}/prescan")
+def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPrescanOut:
+    """Pre-scan results of one backlog item: per current diff, and whether they are stale."""
+    workspace = _workspace(session, workspace_id)
+    item, issue = _item(session, workspace_id, key)
 
     diffs: list[DiffScanOut] = []
     for attachment in current_diffs(session, issue.id):

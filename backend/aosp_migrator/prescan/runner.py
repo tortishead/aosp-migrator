@@ -18,7 +18,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aosp_migrator.db.models import Attachment, DiffScan, ImportJob, Item, JiraIssue, PrescanJob, Workspace, utcnow
+from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, PrescanJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import check_apply
@@ -100,10 +100,7 @@ class PrescanRunner:
     def start(self, workspace_id: int, keys: list[str] | None = None) -> PrescanJob:
         """Create the job and run it in the background. `keys` None scans the whole backlog."""
         with self._lock, self._sessions() as session:
-            if running_job(session, workspace_id) is not None:
-                raise JobConflictError("A pre-scan is already running for this workspace")
-            if session.scalar(select(ImportJob.id).where(ImportJob.workspace_id == workspace_id, ImportJob.status == "running")):
-                raise JobConflictError("An import is running for this workspace; pre-scan when it is done")
+            self._check_free(session, workspace_id)
             job = PrescanJob(
                 workspace_id=workspace_id,
                 scope="all" if keys is None else "keys",
@@ -115,6 +112,50 @@ class PrescanRunner:
             session.commit()
         self._executor(lambda: self.run(job.id))
         return job
+
+    def pick_project(self, workspace_id: int, item_id: int, attachment_id: int, project: str | None) -> None:
+        """Map one diff to `project` by hand (None: back to automatic mapping) and re-scan its item right away.
+
+        Runs under the start lock, so no job starts meanwhile. A failing scan keeps the pick and labels the item `error`.
+        """
+        with self._lock, self._sessions() as session:
+            self._check_free(session, workspace_id)
+            workspace = session.get(Workspace, workspace_id)
+            item = session.get(Item, item_id)
+            assert workspace is not None and item is not None
+            issue = session.get(JiraIssue, item.issue_id)
+            assert issue is not None
+            tree, projects = target_projects(workspace)
+            if project is not None and project not in projects:
+                raise PrescanError(f"Not a project of the target tree: {project}")
+            attachment = session.get(Attachment, attachment_id)
+            assert attachment is not None
+            scan = session.scalar(select(DiffScan).where(DiffScan.attachment_id == attachment_id))
+            if scan is None:
+                scan = DiffScan(attachment_id=attachment_id, candidates=[])
+                session.add(scan)
+            old = scan.project
+            # Without a kept source, the scan maps the diff again.
+            scan.project, scan.mapping_source = project, "manual" if project is not None else None
+            session.add(
+                HistoryEvent(item_id=item.id, type="project_picked", payload={"filename": attachment.filename, "old": old, "new": project})
+            )
+            session.flush()
+            try:
+                with session.begin_nested():
+                    scan_item(session, issue, tree, projects, self._upstream_domains())
+                    triage_item(session, item, issue)
+            except Exception as exc:
+                log.exception("Pre-scan of %s failed", issue.key)
+                item.triage_label, item.triage_reason, item.triaged_at = "error", str(exc), utcnow()
+            session.commit()
+
+    @staticmethod
+    def _check_free(session: Session, workspace_id: int) -> None:
+        if running_job(session, workspace_id) is not None:
+            raise JobConflictError("A pre-scan is already running for this workspace")
+        if session.scalar(select(ImportJob.id).where(ImportJob.workspace_id == workspace_id, ImportJob.status == "running")):
+            raise JobConflictError("An import is running for this workspace; pre-scan when it is done")
 
     def run(self, job_id: int) -> None:
         with self._sessions() as session:
