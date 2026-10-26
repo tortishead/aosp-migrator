@@ -254,9 +254,10 @@ History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`
 - Test: component tests for each label, picker saves and survives re-run.
 - As built: `PrescanRunner.pick_project(workspace_id, item_id, attachment_id, project)` under the start lock (refused while a pre-scan or import runs): sets `project` + `mapping_source` `manual` (None: clears both, so the scan maps again), logs history `project_picked` `{filename, old, new}`, then re-scans and re-labels the item right away in a savepoint (a failing scan keeps the pick and labels the item `error`). API: `GET /workspaces/{id}/target-projects` (422 with the `repo sync` hint, or missing tree), `PUT /workspaces/{id}/items/{key}/diffs/{attachment_id}/project {project|null}` -> item pre-scan (404 not a current diff, 409 job running, 422 not a project of the tree). Item "Pre-scan" section: header shows the triage label and its reason instead of the combined presence; "Line evidence" list per heuristic file (found/total added, gone/total removed, missing and remaining lines); per diff a project picker (select: candidates, then all projects, loaded on demand; "Use project"), always shown while unmapped, behind "Change" when mapped, "Map automatically" for manual picks; disabled while a pre-scan runs. A pick refreshes the backlog labels and the item history ("Target project for f: p").
 
-**2.11 End-to-end and acceptance**
+**2.11 End-to-end and acceptance** — Playwright done; manual acceptance pending
 - Playwright: import, pre-scan, count bar filter, open item, pick a project, close present items.
 - Manual acceptance by user against a real `repo` tree and real tickets.
+- As built: `e2e/tests/prescan.spec.ts` against a second fake Jira (port 8793, `--prescan-tree e2e/.prescan/aosp`, rebuilt every run): settings, workspace on the `repo` tree, import, "Pre-scan backlog", count bar texts, "1 unmapped" filter, PROJ-110 picks `system/core` (label Applies, history entry), full re-run keeps the pick, "2 present" filter, select page, bulk Closed. The smoke spec no longer expects an empty workspace list (specs share one app; `prescan` runs first).
 
 ## MS2-2 — Copilot on demand, dependencies, clusters
 

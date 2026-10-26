@@ -9,8 +9,8 @@ const TARGET_TREE = path.resolve(import.meta.dirname, "../.data/tree");
 
 test("import from fake Jira, triage an item, reimport keeps local state", async ({ page }) => {
   // Workspace.
+  // Other specs may have made workspaces already.
   await page.goto("/");
-  await expect(page.getByText("No workspaces yet")).toBeVisible();
   await page.getByRole("link", { name: "New workspace" }).click();
   await page.getByLabel("Name").fill("Android 15 OEM");
   await page.getByLabel("JQL").fill("project = PROJ AND labels = oem-patch");
