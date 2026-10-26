@@ -3,10 +3,10 @@ import type { LocalState } from "../api";
 export const PAGE_SIZE = 50;
 
 /** Multi-value filters: repeated URL params, e.g. `?label=a&label=b`. */
-export const LIST_FILTERS = ["state", "status", "label", "component", "fix_version", "triage"] as const;
+export const LIST_FILTERS = ["status", "label", "triage"] as const;
 export type ListFilter = (typeof LIST_FILTERS)[number];
 
-const FILTERS = [...LIST_FILTERS, "q", "dropped", "has_diff", "has_error", "cluster", "stale"];
+const FILTERS = [...LIST_FILTERS, "q", "has_error", "cluster", "stale"];
 // URL params the items API understands; `page` is turned into offset/limit.
 const API_PARAMS = [...FILTERS, "sort"];
 

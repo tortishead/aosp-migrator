@@ -153,24 +153,24 @@ describe("BacklogPage", () => {
 
   it("reads filters from the URL into the controls and the API query", async () => {
     const calls = backlogApi({ "GET /workspaces/1/items": () => page([], 0) });
-    renderRoute("/workspaces/1?q=camera&label=camera&label=oem-patch&state=closed&has_diff=true&sort=-updated&page=3&junk=1");
+    renderRoute("/workspaces/1?q=camera&label=camera&label=oem-patch&has_error=true&sort=-updated&page=3&junk=1&state=closed");
     expect(await screen.findByText("No items match the filters.")).toBeInTheDocument();
 
     const query = lastItemQuery(calls);
     expect(query.get("q")).toBe("camera");
     expect(query.getAll("label")).toEqual(["camera", "oem-patch"]);
-    expect(query.getAll("state")).toEqual(["closed"]);
-    expect(query.get("has_diff")).toBe("true");
+    expect(query.get("has_error")).toBe("true");
     expect(query.get("sort")).toBe("-updated");
     expect([query.get("offset"), query.get("limit")]).toEqual(["100", "50"]);
-    expect(query.has("page") || query.has("junk")).toBe(false);
+    expect(query.has("page") || query.has("junk") || query.has("state")).toBe(false);
 
     expect(screen.getByRole("searchbox", { name: "Search" })).toHaveValue("camera");
     expect(screen.getByText("Labels (2)")).toBeInTheDocument();
     const labels = screen.getByRole("group", { name: "Labels" });
     expect(within(labels).getByRole("checkbox", { name: "camera" })).toBeChecked();
-    expect(within(screen.getByRole("group", { name: "State" })).getByRole("checkbox", { name: "Closed" })).toBeChecked();
-    expect(screen.getByRole("combobox", { name: "Diff" })).toHaveValue("true");
+    expect(screen.getByRole("combobox", { name: "Import error" })).toHaveValue("true");
+    for (const name of ["State", "Components", "Fix version"]) expect(screen.queryByRole("group", { name })).toBeNull();
+    for (const name of ["Diff", "Dropped"]) expect(screen.queryByRole("combobox", { name })).toBeNull();
     expect(screen.getByRole("combobox", { name: "Sort" })).toHaveValue("-updated");
   });
 
@@ -187,15 +187,15 @@ describe("BacklogPage", () => {
     expect(url().has("page")).toBe(false);
 
     await userEvent.click(within(screen.getByRole("group", { name: "Jira status" })).getByRole("checkbox", { name: "Open" }));
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Dropped" }), "Not dropped");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Import error" }), "Without import error");
     expect(url().getAll("status")).toEqual(["In Progress"]);
-    expect(url().get("dropped")).toBe("false");
+    expect(url().get("has_error")).toBe("false");
 
     await userEvent.type(screen.getByRole("searchbox", { name: "Search" }), "CameraService.cpp");
     await waitFor(() => expect(url().get("q")).toBe("CameraService.cpp"));
     await waitFor(() => expect(lastItemQuery(calls).get("q")).toBe("CameraService.cpp"));
     expect(lastItemQuery(calls).getAll("status")).toEqual(["In Progress"]);
-    expect(lastItemQuery(calls).get("dropped")).toBe("false");
+    expect(lastItemQuery(calls).get("has_error")).toBe("false");
 
     // The URL alone restores the same view.
     router.navigate(`/workspaces/1?${url()}`);

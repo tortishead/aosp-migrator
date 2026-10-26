@@ -58,7 +58,9 @@ test("import from fake Jira, triage an item, reimport keeps local state", async 
   await expect(description.getByRole("cell", { name: "Pixel 8" })).toBeVisible();
   await expect(description.locator("pre")).toContainText("client->notifyResume();");
 
-  // Diff viewer: current version, both layouts.
+  // Diff viewer: current version, both layouts, on the Patches tab.
+  await page.getByRole("tab", { name: /^Patches/ }).click();
+  await expect(page).toHaveURL(/tab=patches/);
   const diffs = page.getByRole("region", { name: "Diffs" });
   await expect(diffs.getByRole("tab", { name: /0001-camera-fix-null-deref\.patch/ })).toBeVisible();
   await expect(diffs.getByRole("navigation", { name: "Changed files" })).toContainText("CameraService.h");
@@ -69,6 +71,7 @@ test("import from fake Jira, triage an item, reimport keeps local state", async 
   await diffs.getByRole("button", { name: "Unified" }).click();
 
   // Note and state.
+  await page.getByRole("tab", { name: "Overview" }).click();
   const notes = page.getByRole("region", { name: "Notes" });
   await notes.getByLabel("New note").fill("Fixed upstream in Android 15, nothing to migrate.");
   await notes.getByRole("button", { name: "Add note" }).click();
@@ -84,17 +87,12 @@ test("import from fake Jira, triage an item, reimport keeps local state", async 
   await expect(page.getByRole("combobox", { name: "State" })).toHaveValue("not_relevant");
   await expect(notes.getByText("Fixed upstream in Android 15, nothing to migrate.")).toBeVisible();
 
-  // Backlog shows the state; the search is still in the URL.
+  // Backlog shows the state.
   await page.getByRole("link", { name: "← Backlog" }).click();
-  await expect(page.locator("table.backlog tbody tr")).toHaveCount(25);
-  await page.locator("summary", { hasText: "State" }).click();
-  await page.getByRole("group", { name: "State" }).getByLabel("Not relevant").click();
-  await expect(rows).toHaveCount(1);
-  await expect(rows).toContainText("PROJ-101");
+  await expect(rows).toHaveCount(25);
+  await expect(rows.filter({ hasText: "PROJ-101" })).toContainText("Not relevant");
 
   // Cluster two related items; default order is oldest diff first (PROJ-102), then reorder.
-  await page.getByRole("button", { name: "Clear filters" }).click();
-  await expect(rows).toHaveCount(25);
   await page.getByRole("checkbox", { name: "Select PROJ-101" }).click();
   await page.getByRole("checkbox", { name: "Select PROJ-102" }).click();
   await page.getByRole("button", { name: "New cluster from selected" }).click();

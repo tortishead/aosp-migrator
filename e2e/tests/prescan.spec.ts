@@ -40,6 +40,7 @@ test("pre-scan the backlog, pick a project by hand, close present items", async 
 
   // Item page: pick the project; the item is scanned again right away.
   await rows.getByRole("link", { name: "PROJ-110" }).click();
+  await page.getByRole("tab", { name: /^Patches/ }).click();
   const section = page.getByRole("region", { name: "Pre-scan" });
   await expect(section).toContainText("Label: Unmapped");
   const picker = section.getByRole("combobox", { name: "Project for 0001-Build-with-OEM-flag.patch" });
@@ -48,6 +49,7 @@ test("pre-scan the backlog, pick a project by hand, close present items", async 
   await section.getByRole("button", { name: "Use project" }).click();
   await expect(section).toContainText("Label: Applies");
   await expect(section.getByRole("row").nth(1)).toContainText("system/core (picked by hand)");
+  await page.getByRole("tab", { name: "Overview" }).click();
   await expect(page.getByRole("region", { name: "History" })).toContainText("Target project for 0001-Build-with-OEM-flag.patch: system/core");
 
   // A full re-run keeps the pick.

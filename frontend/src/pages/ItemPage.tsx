@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 
 import { api, type Attachment, type Issue, type IssueLink, type ItemDetail, type LocalState } from "../api";
 import { facetsKey, itemsKey, POLL_MS } from "../backlog/ImportPanel";
@@ -10,6 +10,11 @@ import { DiffTabs } from "../item/DiffViewer";
 import { HistoryTimeline } from "../item/History";
 import { JiraHtml } from "../item/JiraHtml";
 import { PrescanSection } from "../prescan/PrescanSection";
+
+type Tab = "overview" | "patches";
+
+// Diffs and their pre-scan results live in their own tab, apart from the ticket itself.
+const TABS: Record<Tab, string> = { overview: "Overview", patches: "Patches" };
 
 export const itemKey = (workspaceId: number, key: string) => ["item", workspaceId, key];
 
@@ -23,6 +28,20 @@ export function ItemPage() {
   const workspaceId = Number(useParams().workspaceId);
   const key = useParams().itemKey ?? "";
   const item = useQuery({ queryKey: itemKey(workspaceId, key), queryFn: () => api.item(workspaceId, key) });
+  const [search, setSearch] = useSearchParams();
+  const tab: Tab = search.get("tab") === "patches" ? "patches" : "overview";
+
+  function selectTab(next: Tab) {
+    setSearch(
+      (current) => {
+        const params = new URLSearchParams(current);
+        if (next === "overview") params.delete("tab");
+        else params.set("tab", next);
+        return params;
+      },
+      { replace: true },
+    );
+  }
 
   if (!item.data) {
     return (
@@ -34,6 +53,7 @@ export function ItemPage() {
   }
   const detail = item.data;
   const issue = detail.issue;
+  const diffCount = new Set(issue.attachments.filter((a) => a.kind === "diff").map((a) => a.filename)).size;
 
   return (
     <article className="item">
@@ -58,23 +78,48 @@ export function ItemPage() {
       <ItemActions workspaceId={workspaceId} detail={detail} />
       <ClusterBox workspaceId={workspaceId} detail={detail} />
 
-      <section aria-label="Description">
-        <h2>Description</h2>
-        <JiraHtml html={issue.description_html} baseUrl={detail.jira_base_url} />
-      </section>
-      <section aria-label="Diffs">
-        <h2>Diffs</h2>
-        <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
-      </section>
-      <PrescanSection workspaceId={workspaceId} itemKey={key} />
-      <OtherAttachments attachments={issue.attachments} />
-      <Comments issue={issue} baseUrl={detail.jira_base_url} />
-      <LinkedTickets workspaceId={workspaceId} detail={detail} />
-      <Notes workspaceId={workspaceId} itemKey={key} detail={detail} />
-      <section aria-label="History">
-        <h2>History</h2>
-        <HistoryTimeline events={detail.history} />
-      </section>
+      <div className="tab-bar page-tabs" role="tablist" aria-label="Item sections">
+        {(Object.entries(TABS) as [Tab, string][]).map(([value, label]) => (
+          <button
+            key={value}
+            role="tab"
+            id={`tab-${value}`}
+            aria-selected={tab === value}
+            aria-controls={`panel-${value}`}
+            className={tab === value ? "tab active" : "tab"}
+            onClick={() => selectTab(value)}
+          >
+            {label}
+            {value === "patches" && <span className="count">{diffCount}</span>}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === "overview" ? (
+          <>
+            <section aria-label="Description">
+              <h2>Description</h2>
+              <JiraHtml html={issue.description_html} baseUrl={detail.jira_base_url} />
+            </section>
+            <OtherAttachments attachments={issue.attachments} />
+            <Comments issue={issue} baseUrl={detail.jira_base_url} />
+            <LinkedTickets workspaceId={workspaceId} detail={detail} />
+            <Notes workspaceId={workspaceId} itemKey={key} detail={detail} />
+            <section aria-label="History">
+              <h2>History</h2>
+              <HistoryTimeline events={detail.history} />
+            </section>
+          </>
+        ) : (
+          <>
+            <PrescanSection workspaceId={workspaceId} itemKey={key} />
+            <section aria-label="Diffs">
+              <h2>Diffs</h2>
+              <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
+            </section>
+          </>
+        )}
+      </div>
     </article>
   );
 }
