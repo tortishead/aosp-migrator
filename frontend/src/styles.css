@@ -510,6 +510,39 @@ p.tag {
   font-weight: 600;
 }
 
+.backlog tbody tr:nth-child(even) td {
+  background: var(--bg-subtle);
+}
+
+.backlog tbody tr:hover td {
+  background: var(--bg-hover);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  font-size: 0.8em;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.badge-active {
+  border-color: rgba(9, 105, 218, 0.25);
+  background: var(--accent-subtle);
+  color: #0550ae;
+}
+
+.badge-done {
+  border-color: rgba(26, 127, 55, 0.25);
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
 .backlog tr.dropped td {
   color: var(--fg-muted);
 }

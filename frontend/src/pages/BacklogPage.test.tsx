@@ -138,6 +138,9 @@ describe("BacklogPage", () => {
     expect(screen.getByRole("link", { name: "PROJ-101" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-101");
     expect(within(first).getByText("Not relevant")).toBeInTheDocument();
     expect(within(first).getByText("camera, oem-patch")).toBeInTheDocument();
+    expect(within(first).getByText("Open")).toHaveClass("badge");
+    expect(screen.queryByRole("columnheader", { name: "Components" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Fix version" })).toBeNull();
     expect(within(first).getByText("[PATCH] camera: fix null deref on resume")).toBeInTheDocument();
     const second = screen.getByRole("link", { name: "PROJ-102" }).closest("tr")!;
     expect(within(second).getByText("dropped")).toBeInTheDocument();

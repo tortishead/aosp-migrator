@@ -8,7 +8,6 @@ import { diffHandlers, itemDetail } from "../item/fixtures";
 import { mockApi, renderRoute } from "../test-utils";
 
 const URL = "/workspaces/1/items/PROJ-101";
-const PATCHES = `${URL}?tab=patches`;
 
 function itemApi(handlers: Parameters<typeof mockApi>[0] = {}) {
   return mockApi({
@@ -47,7 +46,10 @@ describe("ItemPage", () => {
     expect(screen.getByRole("link", { name: "PROJ-101" })).toHaveAttribute("href", "https://jira.example.com/browse/PROJ-101");
     expect(screen.getByText("oem-patch, camera")).toBeInTheDocument();
 
+    // The pre-scan verdict leads the overview, above the description.
+    const prescan = screen.getByRole("region", { name: "Pre-scan" });
     const description = screen.getByRole("region", { name: "Description" });
+    expect(prescan.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(description).getByRole("table")).toBeInTheDocument();
     expect(within(description).getByRole("cell", { name: "Pixel 8" })).toBeInTheDocument();
     expect(description.querySelector("script")).toBeNull();
@@ -57,7 +59,7 @@ describe("ItemPage", () => {
     expect(within(comments).getByText("Raj Patel")).toBeInTheDocument();
     expect(within(comments).getByText("AP2A").tagName).toBe("B");
 
-    // Diffs and pre-scan sit on the Patches tab; everything else is listed with size and a Jira link.
+    // Diffs sit on the Patches tab; everything else is listed with size and a Jira link.
     expect(screen.queryByRole("region", { name: "Diffs" })).toBeNull();
     const others = screen.getByRole("region", { name: "Other attachments" });
     expect(within(others).getAllByRole("row").map((r) => r.firstChild!.textContent)).toEqual(["screenshot.png", "logs.zip"]);
@@ -75,7 +77,7 @@ describe("ItemPage", () => {
     expect(within(links).queryByRole("link", { name: "Open backlog item" })).toBeNull();
   });
 
-  it("shows diffs and pre-scan on the Patches tab, kept in the URL", async () => {
+  it("shows diffs on the Patches tab, kept in the URL", async () => {
     itemApi();
     const { router } = renderRoute(URL);
     const patches = await screen.findByRole("tab", { name: /^Patches/ });
@@ -84,7 +86,7 @@ describe("ItemPage", () => {
     expect(router.state.location.search).toBe("?tab=patches");
     expect(patches).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("region", { name: "services/camera/libcameraservice/CameraService.cpp" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Pre-scan" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Pre-scan" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Description" })).toBeNull();
 
     await userEvent.click(screen.getByRole("tab", { name: "Overview" }));
@@ -342,7 +344,7 @@ describe("ItemPage pre-scan", () => {
       ],
     };
     itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scanned });
-    renderRoute(PATCHES);
+    renderRoute(URL);
     const section = await screen.findByRole("region", { name: "Pre-scan" });
     expect(await within(section).findByText("Stale: frameworks/av HEAD moved")).toBeInTheDocument();
     expect(within(section).getByText(/^Label:/)).toHaveTextContent("Label: Conflicts");
@@ -356,7 +358,7 @@ describe("ItemPage pre-scan", () => {
 
   it.each(TRIAGE_LABELS)("shows the %s label with its reason", async (label) => {
     itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem({ label, label_reason: `why ${label}` }) });
-    renderRoute(PATCHES);
+    renderRoute(URL);
     const section = await screen.findByRole("region", { name: "Pre-scan" });
     expect(await within(section).findByText(`why ${label}`)).toBeInTheDocument();
     expect(within(section).getByText(/^Label:/)).toHaveTextContent(/^Label: \S/);
@@ -376,7 +378,7 @@ describe("ItemPage pre-scan", () => {
       },
     });
     itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem({ label: "likely_present", diffs: [likely] }) });
-    renderRoute(PATCHES);
+    renderRoute(URL);
     const evidence = await screen.findByRole("list", { name: "Line evidence" });
     expect(evidence).toHaveTextContent("Power.java: 2 of 3 added lines found, 1 of 1 removed lines gone");
     expect(within(evidence).getByText("if (lock == null) return;").tagName).toBe("CODE");
@@ -393,7 +395,7 @@ describe("ItemPage pre-scan", () => {
       "GET /workspaces/1/target-projects": () => ["frameworks/av", "hardware/interfaces", "system/core"],
       "PUT /workspaces/1/items/PROJ-101/diffs/3/project": () => picked,
     });
-    renderRoute(PATCHES);
+    renderRoute(URL);
     const section = await screen.findByRole("region", { name: "Pre-scan" });
     const select = await within(section).findByRole("combobox", { name: "Project for build.patch" });
     // Candidates first, then the rest of the tree.
@@ -424,7 +426,7 @@ describe("ItemPage pre-scan", () => {
       "GET /workspaces/1/target-projects": () => ["hardware/interfaces", "system/core"],
       "PUT /workspaces/1/items/PROJ-101/diffs/3/project": () => scannedItem(),
     });
-    renderRoute(PATCHES);
+    renderRoute(URL);
     const section = await screen.findByRole("region", { name: "Pre-scan" });
     await userEvent.click(await within(section).findByRole("button", { name: "Change" }));
     expect(await within(section).findByRole("option", { name: "hardware/interfaces" })).toBeInTheDocument();
@@ -442,7 +444,7 @@ describe("ItemPage pre-scan", () => {
       "GET /workspaces/1/target-projects": () => ["system/core"],
       "PUT /workspaces/1/items/PROJ-101/diffs/3/project": () => ({ status: 409, body: { detail: "A pre-scan is already running for this workspace" } }),
     });
-    renderRoute(PATCHES);
+    renderRoute(URL);
     const section = await screen.findByRole("region", { name: "Pre-scan" });
     await userEvent.selectOptions(await within(section).findByRole("combobox", { name: "Project for build.patch" }), "system/core");
     await userEvent.click(within(section).getByRole("button", { name: "Use project" }));
@@ -480,7 +482,7 @@ describe("ItemPage pre-scan", () => {
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      renderRoute(PATCHES);
+      renderRoute(URL);
       const section = await screen.findByRole("region", { name: "Pre-scan" });
       expect(await within(section).findByText("Not pre-scanned yet.")).toBeInTheDocument();
       await userEvent.click(within(section).getByRole("button", { name: "Pre-scan this item" }));

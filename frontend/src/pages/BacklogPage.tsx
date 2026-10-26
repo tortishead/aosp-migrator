@@ -150,8 +150,6 @@ export function BacklogPage() {
               <th>Jira status</th>
               <th>State</th>
               <th>Labels</th>
-              <th>Components</th>
-              <th>Fix version</th>
               <th>Diffs</th>
               <th>Pre-scan</th>
               <th>Cluster</th>
@@ -180,6 +178,14 @@ export function BacklogPage() {
       )}
     </>
   );
+}
+
+// Jira only hands us the status name, so colour by the usual workflow words.
+function statusClass(status: string): string {
+  const name = status.toLowerCase();
+  if (/done|closed|resolved|fixed|merged/.test(name)) return "badge badge-done";
+  if (/progress|review|testing|verify/.test(name)) return "badge badge-active";
+  return "badge";
 }
 
 interface RowProps {
@@ -216,11 +222,11 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
           </div>
         ))}
       </td>
-      <td>{item.status}</td>
+      <td className="nowrap">
+        <span className={statusClass(item.status)}>{item.status}</span>
+      </td>
       <td className="nowrap">{STATE_LABELS[item.local_state]}</td>
       <td>{item.labels.join(", ")}</td>
-      <td>{item.components.join(", ")}</td>
-      <td>{item.fix_versions.join(", ")}</td>
       <td>{item.diff_count || ""}</td>
       <td className="nowrap">
         <TriageTags item={item} />

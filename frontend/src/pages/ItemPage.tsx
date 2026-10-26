@@ -13,7 +13,7 @@ import { PrescanSection } from "../prescan/PrescanSection";
 
 type Tab = "overview" | "patches";
 
-// Diffs and their pre-scan results live in their own tab, apart from the ticket itself.
+// Diffs live in their own tab, apart from the ticket itself; the pre-scan verdict leads the overview.
 const TABS: Record<Tab, string> = { overview: "Overview", patches: "Patches" };
 
 export const itemKey = (workspaceId: number, key: string) => ["item", workspaceId, key];
@@ -97,6 +97,7 @@ export function ItemPage() {
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "overview" ? (
           <>
+            <PrescanSection workspaceId={workspaceId} itemKey={key} />
             <section aria-label="Description">
               <h2>Description</h2>
               <JiraHtml html={issue.description_html} baseUrl={detail.jira_base_url} />
@@ -111,13 +112,10 @@ export function ItemPage() {
             </section>
           </>
         ) : (
-          <>
-            <PrescanSection workspaceId={workspaceId} itemKey={key} />
-            <section aria-label="Diffs">
-              <h2>Diffs</h2>
-              <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
-            </section>
-          </>
+          <section aria-label="Diffs">
+            <h2>Diffs</h2>
+            <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
+          </section>
         )}
       </div>
     </article>
