@@ -51,6 +51,9 @@ class DiffScanOut(BaseModel):
     candidates: list[str]
     presence: str | None
     presence_detail: dict[str, Any] | None
+    # None when present or unmapped.
+    apply: str | None
+    apply_detail: dict[str, Any] | None
     target_head: str | None
 
 
@@ -152,6 +155,8 @@ def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPr
                 candidates=scan.candidates if scan else [],
                 presence=scan.presence if scan else None,
                 presence_detail=scan.presence_detail if scan else None,
+                apply=scan.apply if scan else None,
+                apply_detail=scan.apply_detail if scan else None,
                 target_head=scan.target_head if scan else None,
             )
         )

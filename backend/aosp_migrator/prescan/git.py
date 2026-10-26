@@ -19,7 +19,7 @@ class GitError(Exception):
     pass
 
 
-def git(cwd: Path, *args: str, input: str | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+def git(cwd: Path, *args: str, input: str | None = None, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
             ["git", *args],
@@ -27,7 +27,7 @@ def git(cwd: Path, *args: str, input: str | None = None, check: bool = True) -> 
             input=input,
             # Never discover a repository above `cwd`: a `plain` tree inside some checkout
             # would otherwise apply and log against that checkout.
-            env={**os.environ, **_ENV, "GIT_CEILING_DIRECTORIES": str(cwd.resolve().parent)},
+            env={**os.environ, **_ENV, "GIT_CEILING_DIRECTORIES": str(cwd.resolve().parent), **(env or {})},
             capture_output=True,
             text=True,
             errors="replace",

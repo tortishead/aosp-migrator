@@ -53,8 +53,8 @@ class Presence:
 
 
 def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable[str] = DEFAULT_UPSTREAM_DOMAINS) -> Presence:
-    commits = _split_commits(diff_text)
-    sections = _file_sections(commits)
+    commits = split_commits(diff_text)
+    sections = file_sections(commits)
     files = _reverse_check_files(project_dir, sections)
     detail: dict[str, Any] = {"files": files}
     known = [r for r in files.values() if r != "unknown"]
@@ -106,7 +106,7 @@ def combine(statuses: Iterable[PresenceStatus]) -> PresenceStatus:
     return "not_present"
 
 
-def _split_commits(text: str) -> list[tuple[str, Any]]:
+def split_commits(text: str) -> list[tuple[str, Any]]:
     """[(text, ParsedDiff)] per format-patch commit; a plain diff is one entry."""
     starts = [m.start() for m in _FROM_SHA.finditer(text)] or [0]
     starts[0] = 0
@@ -114,7 +114,7 @@ def _split_commits(text: str) -> list[tuple[str, Any]]:
     return [(chunk, parse_diff(chunk)) for chunk in chunks]
 
 
-def _file_sections(commits: list[tuple[str, Any]]) -> dict[str, list[FileChange]]:
+def file_sections(commits: list[tuple[str, Any]]) -> dict[str, list[FileChange]]:
     """Each file's changes from every commit of a series, in series order; renames follow the file."""
     sections: dict[str, list[FileChange]] = {}
     for _, parsed in commits:
@@ -132,17 +132,21 @@ def _reverse_check_files(project_dir: Path, sections: dict[str, list[FileChange]
     results: dict[str, FileResult] = {}
     for changes in sections.values():
         path = changes[-1].path
-        if _is_binary(changes):
+        if is_binary(changes):
             results[path] = "unknown"  # "Binary files differ": nothing to apply
             continue
         patch = "".join(c.raw for c in changes)
-        strip = "-p1" if _P1.search(patch) else "-p0"
-        result = git(project_dir, "apply", "--reverse", "--check", strip, "-", input=patch, check=False)
+        result = git(project_dir, "apply", "--reverse", "--check", strip_option(patch), "-", input=patch, check=False)
         results[path] = "present" if result.returncode == 0 else "not_present"
     return results
 
 
-def _is_binary(changes: list[FileChange]) -> bool:
+def strip_option(patch: str) -> str:
+    """`-p1` for `a/` and `b/` prefixed paths, else `-p0`."""
+    return "-p1" if _P1.search(patch) else "-p0"
+
+
+def is_binary(changes: list[FileChange]) -> bool:
     return any(c.binary and "GIT binary patch" not in c.raw for c in changes)
 
 
@@ -155,7 +159,7 @@ def _heuristic(project_dir: Path, sections: dict[str, list[FileChange]], files: 
     evidence: dict[str, Any] = {}
     for changes in sections.values():
         path = changes[-1].path
-        if files.get(path) != "not_present" or _is_binary(changes):
+        if files.get(path) != "not_present" or is_binary(changes):
             continue
         added, removed = _net_lines(changes)
         if not added and not removed:

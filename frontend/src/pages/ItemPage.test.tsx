@@ -273,6 +273,8 @@ describe("ItemPage pre-scan", () => {
           candidates: [],
           presence: "partial",
           presence_detail: { files: { "CameraService.cpp": "present", "CameraService.h": "not_present" } },
+          apply: "conflicts",
+          apply_detail: { files: { "CameraService.h": "conflicts" }, errors: { "CameraService.h": "3-way merge conflicts" } },
           target_head: "a".repeat(40),
         },
         {
@@ -285,6 +287,8 @@ describe("ItemPage pre-scan", () => {
           candidates: ["system/core", "hardware/interfaces"],
           presence: null,
           presence_detail: null,
+          apply: null,
+          apply_detail: null,
           target_head: null,
         },
       ],
@@ -296,6 +300,7 @@ describe("ItemPage pre-scan", () => {
     const rows = within(section).getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("frameworks/av (path in description)");
     expect(rows[0]).toHaveTextContent("CameraService.h: Not present");
+    expect(rows[0]).toHaveTextContent("ConflictsCameraService.h: Conflicts (3-way merge conflicts)");
     expect(rows[1]).toHaveTextContent("Unmapped candidates: system/core, hardware/interfaces");
   });
 

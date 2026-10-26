@@ -291,6 +291,7 @@ export interface PrescanJob {
 }
 
 export type Presence = "present" | "likely_present" | "not_present" | "partial" | "unknown";
+export type ApplyResult = "applies" | "3way" | "conflicts";
 
 export interface DiffScan {
   attachment_id: number;
@@ -314,6 +315,10 @@ export interface DiffScan {
     >;
     reason?: string;
   } | null;
+  /** Null when present, unmapped or not checked. */
+  apply: ApplyResult | null;
+  /** Per checked file; `errors` says why each conflicting file conflicts. */
+  apply_detail: { files: Record<string, ApplyResult>; errors?: Record<string, string> } | null;
   target_head: string | null;
 }
 

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { api, type DiffScan, type Presence } from "../api";
+import { api, type ApplyResult, type DiffScan, type Presence } from "../api";
 import { itemPrescanKey, PrescanStatus, useLatestPrescan, useStartPrescan } from "./PrescanPanel";
 
 export const PRESENCE_LABELS: Record<Presence, string> = {
@@ -9,6 +9,12 @@ export const PRESENCE_LABELS: Record<Presence, string> = {
   not_present: "Not present",
   partial: "Partially present",
   unknown: "Unknown",
+};
+
+export const APPLY_LABELS: Record<ApplyResult, string> = {
+  applies: "Applies",
+  "3way": "Applies with 3-way merge",
+  conflicts: "Conflicts",
 };
 
 const MAPPING_LABELS: Record<NonNullable<DiffScan["mapping_source"]>, string> = {
@@ -22,6 +28,10 @@ function presenceClass(presence: Presence | null): string {
   if (presence === "present") return "tag";
   if (presence === "likely_present" || presence === "partial" || presence === "unknown") return "tag tag-warn";
   return "tag tag-error";
+}
+
+function applyClass(apply: ApplyResult): string {
+  return { applies: "tag", "3way": "tag tag-warn", conflicts: "tag tag-error" }[apply];
 }
 
 /** Read-only pre-scan results for one item, with a re-run button. */
@@ -62,6 +72,7 @@ export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; 
                 <th>Diff</th>
                 <th>Target project</th>
                 <th>Already present?</th>
+                <th>Applies?</th>
               </tr>
             </thead>
             <tbody>
@@ -81,13 +92,14 @@ function DiffRow({ diff }: { diff: DiffScan }) {
     return (
       <tr>
         <td className="mono">{diff.filename}</td>
-        <td colSpan={2} className="hint">
+        <td colSpan={3} className="hint">
           Not scanned (new version since the last pre-scan)
         </td>
       </tr>
     );
   }
   const detail = diff.presence_detail;
+  const applied = diff.apply_detail;
   return (
     <tr>
       <td className="mono">{diff.filename}</td>
@@ -134,6 +146,19 @@ function DiffRow({ diff }: { diff: DiffScan }) {
                 ) : (
                   "not found in history"
                 )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </td>
+      <td>
+        {diff.apply && <span className={applyClass(diff.apply)}>{APPLY_LABELS[diff.apply]}</span>}
+        {applied && diff.apply !== "applies" && (
+          <ul className="prescan-files">
+            {Object.entries(applied.files).map(([path, status]) => (
+              <li key={path}>
+                <span className="mono">{path}</span>: {APPLY_LABELS[status]}
+                {applied.errors?.[path] && <span className="hint"> ({applied.errors[path]})</span>}
               </li>
             ))}
           </ul>
