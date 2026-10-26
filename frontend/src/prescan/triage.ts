@@ -16,8 +16,16 @@ export const TRIAGE_TEXT: Record<TriageLabel, string> = {
   present: "Present",
 };
 
+export type TriageTone = "error" | "warn" | "info" | "ok";
+
+export function triageTone(label: TriageLabel): TriageTone {
+  if (label === "error" || label === "conflicts") return "error";
+  if (label === "present") return "ok";
+  if (label === "applies") return "info";
+  return "warn";
+}
+
 export function triageClass(label: TriageLabel): string {
-  if (label === "error" || label === "conflicts") return "tag tag-error";
-  if (label === "applies" || label === "present") return "tag";
-  return "tag tag-warn";
+  const tone = triageTone(label);
+  return tone === "info" ? "tag" : `tag tag-${tone}`;
 }

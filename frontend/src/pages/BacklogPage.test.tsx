@@ -335,7 +335,10 @@ describe("ImportPanel", () => {
     expect(screen.getByRole("button", { name: "Import from Jira" })).toBeDisabled();
 
     const before = itemQueries(calls).length;
-    expect(await screen.findByText(/Import done: 25 tickets/, {}, { timeout: POLL_MS * 4 })).toBeInTheDocument();
+    const done = await screen.findByText(/Import done: 25 tickets/, {}, { timeout: POLL_MS * 4 });
+    // The finish time sits in the tooltip, not the line.
+    expect(done).toHaveTextContent(/^Import done: 25 tickets$/);
+    expect(done).toHaveAttribute("title", `Finished ${new Date("2026-10-25T20:01:00Z").toLocaleString()}`);
     await waitFor(() => expect(itemQueries(calls).length).toBeGreaterThan(before));
     expect(screen.getByRole("button", { name: "Import from Jira" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Cancel import" })).not.toBeInTheDocument();

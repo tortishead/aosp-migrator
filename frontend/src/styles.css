@@ -345,6 +345,12 @@ button.danger:hover:not(:disabled) {
   color: var(--danger);
 }
 
+.tag-ok {
+  border-color: rgba(26, 127, 55, 0.25);
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
 p.tag {
   display: inline-block;
   margin: 0 0 8px;
@@ -355,11 +361,51 @@ p.tag {
 }
 
 /* Backlog */
-.import-panel {
+.header-jobs {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  margin-left: auto;
+}
+
+.import-panel {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.header-jobs .job-status {
+  color: var(--fg-muted);
+  font-size: 0.9em;
+}
+
+.header-jobs .job-status.error {
+  color: var(--danger);
+}
+
+.header-jobs .import-errors summary {
+  color: var(--danger);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+/* Opens over the page instead of pushing the header apart. */
+.header-jobs .import-errors[open] ul {
+  position: absolute;
+  right: 0;
+  z-index: 5;
+  max-width: 480px;
+  max-height: 320px;
+  margin-top: 4px;
+  padding: 8px 12px 8px 28px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
 }
 
 .job-status {
@@ -459,27 +505,67 @@ p.tag {
   margin-bottom: 12px;
 }
 
-.triage-bar .link-button {
+.chip {
+  --chip-fg: var(--fg-muted);
+  --chip-bg: var(--bg);
+  --chip-border: var(--border);
+  --chip-solid: var(--fg-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 2px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--chip-border);
   border-radius: 999px;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--chip-bg);
+  color: var(--chip-fg);
+  font-size: 0.9em;
+  line-height: 18px;
 }
 
-.triage-bar .link-button:hover {
-  background: var(--bg-hover);
+.chip strong {
+  font-variant-numeric: tabular-nums;
 }
 
-.triage-bar button[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent);
+.chip:hover:not(:disabled) {
+  border-color: var(--chip-solid);
+  background: var(--chip-bg);
+  filter: brightness(0.97);
+}
+
+.chip[aria-pressed="true"],
+.chip[aria-pressed="true"]:hover:not(:disabled) {
+  border-color: var(--chip-solid);
+  background: var(--chip-solid);
   color: var(--accent-fg);
-  font-weight: 600;
+  filter: none;
 }
 
-.triage-bar button[aria-pressed="true"]:hover {
-  background: var(--accent);
+.chip-info {
+  --chip-fg: #0550ae;
+  --chip-bg: var(--accent-subtle);
+  --chip-border: rgba(9, 105, 218, 0.25);
+  --chip-solid: var(--accent);
+}
+
+.chip-ok {
+  --chip-fg: var(--success);
+  --chip-bg: var(--success-subtle);
+  --chip-border: rgba(26, 127, 55, 0.3);
+  --chip-solid: var(--success);
+}
+
+.chip-warn {
+  --chip-fg: var(--warn);
+  --chip-bg: var(--warn-subtle);
+  --chip-border: rgba(154, 103, 0, 0.3);
+  --chip-solid: var(--warn);
+}
+
+.chip-error {
+  --chip-fg: var(--danger);
+  --chip-bg: var(--danger-subtle);
+  --chip-border: rgba(209, 36, 47, 0.3);
+  --chip-solid: var(--danger);
 }
 
 .backlog-toolbar {

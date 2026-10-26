@@ -79,7 +79,8 @@ export function ImportPanel({ workspaceId }: { workspaceId: number }) {
 
 function JobSummary({ job }: { job: ImportJob }) {
   const what = job.scope === "all" ? "Import" : "Reimport";
-  const when = job.finished_at ? ` on ${new Date(job.finished_at).toLocaleString()}` : "";
+  // The finish time only in the tooltip: it would double the line in the backlog header.
+  const when = job.finished_at ? `Finished ${new Date(job.finished_at).toLocaleString()}` : undefined;
   switch (job.status) {
     case "running":
       return (
@@ -92,16 +93,14 @@ function JobSummary({ job }: { job: ImportJob }) {
       );
     case "done":
       return (
-        <span className="job-status" role="status">
+        <span className="job-status" role="status" title={when}>
           {what} done: {job.done} {job.done === 1 ? "ticket" : "tickets"}
-          {when}
         </span>
       );
     case "canceled":
       return (
-        <span className="job-status" role="status">
+        <span className="job-status" role="status" title={when}>
           {what} canceled after {job.done} of {job.total ?? "?"}
-          {when}
         </span>
       );
     case "failed":

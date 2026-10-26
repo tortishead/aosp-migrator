@@ -82,7 +82,8 @@ export function PrescanPanel({ workspaceId }: { workspaceId: number }) {
 }
 
 export function PrescanStatus({ job }: { job: PrescanJob }) {
-  const when = job.finished_at ? ` on ${new Date(job.finished_at).toLocaleString()}` : "";
+  // The finish time only in the tooltip: it would double the line in the backlog header.
+  const when = job.finished_at ? `Finished ${new Date(job.finished_at).toLocaleString()}` : undefined;
   const items = (n: number) => `${n} ${n === 1 ? "item" : "items"}`;
   switch (job.status) {
     case "running":
@@ -97,16 +98,14 @@ export function PrescanStatus({ job }: { job: PrescanJob }) {
       );
     case "done":
       return (
-        <span className="job-status" role="status">
+        <span className="job-status" role="status" title={when}>
           Pre-scan done: {items(job.done)}
-          {when}
         </span>
       );
     case "canceled":
       return (
-        <span className="job-status" role="status">
+        <span className="job-status" role="status" title={when}>
           Pre-scan canceled after {job.done} of {job.total ?? "?"}
-          {when}
         </span>
       );
     case "failed":

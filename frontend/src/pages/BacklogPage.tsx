@@ -93,9 +93,11 @@ export function BacklogPage() {
             <Link to={`/workspaces/${workspaceId}/edit`}>Edit workspace</Link>
           </>
         )}
+        <div className="header-jobs">
+          <ImportPanel workspaceId={workspaceId} />
+          <PrescanPanel workspaceId={workspaceId} />
+        </div>
       </div>
-      <ImportPanel workspaceId={workspaceId} />
-      <PrescanPanel workspaceId={workspaceId} />
       <TriageBar workspaceId={workspaceId} search={search} update={update} />
       <Filters search={search} facets={facets.data} clusters={clusters.data} update={update} />
       <div className="backlog-toolbar">
