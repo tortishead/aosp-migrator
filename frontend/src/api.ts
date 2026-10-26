@@ -279,8 +279,8 @@ export interface PrescanJob {
   scope: "all" | "keys";
   issue_keys: string[];
   status: JobStatus;
-  /** While running: `scan` (repo mapping, already-present check), then `graph`. */
-  stage: "projects" | "scan" | "graph" | null;
+  /** While running: `projects` (git/plain trees only), then `scan` (repo mapping, already-present check). */
+  stage: "projects" | "scan" | null;
   done: number;
   total: number | null;
   errors: { key: string; message: string }[];
@@ -312,22 +312,12 @@ export interface DiffScan {
   target_head: string | null;
 }
 
-export interface DependencyEdge {
-  relation: "depends_on" | "depended_on_by" | "related";
-  key: string;
-  summary: string;
-  reason: "files" | "hunks" | "link" | "series" | "symbol";
-  detail: Record<string, unknown>;
-  copilot: "confirmed" | "rejected" | null;
-}
-
 export interface ItemPrescan {
   scanned: boolean;
   presence: Presence | null;
   /** Why the results are out of date; empty when fresh. */
   stale: string[];
   diffs: DiffScan[];
-  edges: DependencyEdge[];
 }
 
 export const api = {

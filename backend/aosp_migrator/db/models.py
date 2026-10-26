@@ -235,23 +235,6 @@ class DiffScan(Base):
     scanned_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-class DependencyEdge(Base):
-    """Candidate dependency between two backlog items, from the pre-scan graph (see `prescan.graph`)."""
-
-    __tablename__ = "dependency_edge"
-    __table_args__ = (UniqueConstraint("from_item_id", "to_item_id", "reason"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
-    # `from` depends on `to` when the detail says `directed`; otherwise lower item id first.
-    from_item_id: Mapped[int] = mapped_column(ForeignKey("item.id", ondelete="CASCADE"), index=True)
-    to_item_id: Mapped[int] = mapped_column(ForeignKey("item.id", ondelete="CASCADE"), index=True)
-    reason: Mapped[str] = mapped_column(String)  # files / hunks / link / series / symbol
-    detail: Mapped[dict[str, Any]]
-    copilot: Mapped[str | None] = mapped_column(String)  # confirmed / rejected; None until evaluated
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
-
-
 class PrescanJob(Base):
     __tablename__ = "prescan_job"
 
@@ -261,7 +244,7 @@ class PrescanJob(Base):
     # Backlog items to scan when scope is `keys`.
     issue_keys: Mapped[list[Any]]
     status: Mapped[str] = mapped_column(String, default="running")
-    stage: Mapped[str | None] = mapped_column(String)  # projects / scan / graph
+    stage: Mapped[str | None] = mapped_column(String)  # projects / scan
     done: Mapped[int] = mapped_column(default=0)
     total: Mapped[int | None]
     # [{key, message}] per failed item; the job itself carries on.

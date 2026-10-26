@@ -90,9 +90,7 @@ export function PrescanStatus({ job }: { job: PrescanJob }) {
           <progress value={job.done} max={job.total ?? undefined} aria-label="Pre-scan progress" />
           {job.stage === "projects"
             ? "Pre-scan: finding target projects…"
-            : job.stage === "graph"
-              ? "Pre-scan: building dependency graph…"
-              : `Pre-scanning… ${job.done} / ${job.total ?? "?"}`}
+            : `Pre-scanning… ${job.done} / ${job.total ?? "?"}`}
           {job.cancel_requested && " (canceling)"}
         </span>
       );

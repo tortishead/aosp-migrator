@@ -4,11 +4,11 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
-from aosp_migrator.db.models import DependencyEdge, DiffScan, Item, JiraIssue, PrescanJob, Workspace
+from aosp_migrator.db.models import DiffScan, Item, JiraIssue, PrescanJob, Workspace
 from aosp_migrator.prescan.presence import combine
 from aosp_migrator.prescan.runner import JobConflictError, PrescanRunner, current_diffs, stale_reasons
 
@@ -54,23 +54,12 @@ class DiffScanOut(BaseModel):
     target_head: str | None
 
 
-class EdgeOut(BaseModel):
-    # `depends_on`: this item depends on `key`; `depended_on_by`: the reverse; `related`: no direction.
-    relation: str
-    key: str
-    summary: str
-    reason: str
-    detail: dict[str, Any]
-    copilot: str | None
-
-
 class ItemPrescanOut(BaseModel):
     scanned: bool
     # Combined over the mapped diffs; None until scanned.
     presence: str | None
     stale: list[str]
     diffs: list[DiffScanOut]
-    edges: list[EdgeOut]
 
 
 def _workspace(session: Session, workspace_id: int) -> Workspace:
@@ -172,21 +161,5 @@ def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPr
         presence=combine(d.presence or "unknown" for d in scanned) if scanned else None,  # type: ignore[misc]
         stale=stale_reasons(session, issue, Path(workspace.target_tree)),
         diffs=diffs,
-        edges=_edges(session, item.id),
     )
 
-
-def _edges(session: Session, item_id: int) -> list[EdgeOut]:
-    edges = session.scalars(
-        select(DependencyEdge).where(or_(DependencyEdge.from_item_id == item_id, DependencyEdge.to_item_id == item_id)).order_by(DependencyEdge.id)
-    )
-    out: list[EdgeOut] = []
-    for edge in edges:
-        other_id = edge.to_item_id if edge.from_item_id == item_id else edge.from_item_id
-        other = session.execute(select(JiraIssue.key, JiraIssue.summary).join(Item, Item.issue_id == JiraIssue.id).where(Item.id == other_id)).one()
-        if not edge.detail.get("directed"):
-            relation = "related"
-        else:
-            relation = "depends_on" if edge.from_item_id == item_id else "depended_on_by"
-        out.append(EdgeOut(relation=relation, key=other.key, summary=other.summary, reason=edge.reason, detail=edge.detail, copilot=edge.copilot))
-    return out

@@ -17,7 +17,7 @@ from test_import import run_import, session
 
 from aosp_migrator.app import create_app
 from aosp_migrator.config import JIRA_BASE_URL, JIRA_PAT, Config
-from aosp_migrator.db.models import Attachment, DependencyEdge, DiffScan, Item, JiraIssue
+from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue
 from aosp_migrator.jira.datacenter import DataCenterClient
 from aosp_migrator.prescan.runner import PrescanRunner
 
@@ -76,10 +76,6 @@ def prescan(client: TestClient, workspace_id: int, key: str) -> dict[str, Any]:
     return response.json()
 
 
-def edges(client: TestClient, workspace_id: int, key: str) -> set[tuple[str, str, str]]:
-    return {(e["relation"], e["key"], e["reason"]) for e in prescan(client, workspace_id, key)["edges"]}
-
-
 def test_job_over_fixture_workspace(client: TestClient, workspace_id: int, target: Path) -> None:
     job = run_prescan(client, workspace_id)
     assert (job["status"], job["scope"], job["stage"], job["done"], job["total"], job["errors"]) == ("done", "all", None, 25, 25, [])
@@ -112,23 +108,6 @@ def test_job_over_fixture_workspace(client: TestClient, workspace_id: int, targe
     assert sorted(unmapped["candidates"]) == ["hardware/interfaces", "packages/apps/Settings", "system/core"]
     filler = prescan(client, workspace_id, "PROJ-111")
     assert (filler["scanned"], filler["presence"], filler["diffs"]) == (False, None, [])
-
-    assert edges(client, workspace_id, "PROJ-101") == {
-        ("depended_on_by", "PROJ-102", "link"),
-        ("related", "PROJ-108", "files"),
-    }
-    assert edges(client, workspace_id, "PROJ-106") == {
-        ("depends_on", "PROJ-105", "series"),
-        ("depends_on", "PROJ-105", "symbol"),
-        ("related", "PROJ-105", "hunks"),
-    }
-    assert edges(client, workspace_id, "PROJ-108") == {
-        ("depends_on", "PROJ-107", "link"),
-        ("depends_on", "PROJ-107", "symbol"),
-        ("related", "PROJ-101", "files"),
-    }
-    symbol = next(e for e in prescan(client, workspace_id, "PROJ-108")["edges"] if e["reason"] == "symbol")
-    assert symbol["detail"]["symbols"] == ["IOemCameraConfig", "setOemMode"]
 
 
 def test_single_item_and_validation(client: TestClient, workspace_id: int) -> None:
@@ -274,30 +253,6 @@ def test_rescan_keeps_manual_mapping(app: FastAPI, client: TestClient, workspace
     run_prescan(client, workspace_id, ["PROJ-110"])
     diff = prescan(client, workspace_id, "PROJ-110")["diffs"][0]
     assert (diff["project"], diff["mapping_source"], diff["presence"]) == ("system/core", "manual", "not_present")
-
-
-def test_rebuild_replaces_unconfirmed_edges(app: FastAPI, client: TestClient, workspace_id: int, fake_jira: FakeJiraStore) -> None:
-    run_prescan(client, workspace_id)
-
-    def link_edge(s: Any, key: str) -> DependencyEdge | None:
-        item_id = s.scalar(select(Item.id).join(JiraIssue, Item.issue_id == JiraIssue.id).where(JiraIssue.key == key))
-        return s.scalar(select(DependencyEdge).where(DependencyEdge.from_item_id == item_id, DependencyEdge.reason == "link"))
-
-    with session(app) as s:
-        confirmed = link_edge(s, "PROJ-108")
-        assert confirmed is not None and link_edge(s, "PROJ-102") is not None
-        confirmed.copilot = "confirmed"
-        s.commit()
-
-    fake_jira.links.clear()
-    assert run_import(client, workspace_id, ["PROJ-101", "PROJ-102", "PROJ-107", "PROJ-108"])["status"] == "done"
-    run_prescan(client, workspace_id, ["PROJ-101"])
-    with session(app) as s:
-        assert link_edge(s, "PROJ-102") is None
-        kept = link_edge(s, "PROJ-108")
-        assert kept is not None and kept.copilot == "confirmed"
-    # Other edges are rebuilt as before.
-    assert ("depends_on", "PROJ-107", "symbol") in edges(client, workspace_id, "PROJ-108")
 
 
 def test_jobs_running_at_startup_are_marked_failed(app: FastAPI, client: TestClient, workspace_id: int, config: Config) -> None:
