@@ -358,7 +358,6 @@ export interface ItemPrescan {
   scanned: boolean;
   label: TriageLabel | null;
   label_reason: string | null;
-  presence: Presence | null;
   /** Why the results are out of date; empty when fresh. */
   stale: string[];
   diffs: DiffScan[];

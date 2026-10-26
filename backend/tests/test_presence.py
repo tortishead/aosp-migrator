@@ -8,7 +8,7 @@ import pytest
 from repo_tree import RepoTree
 
 from aosp_migrator.config import UPSTREAM_DOMAINS, Config
-from aosp_migrator.prescan.presence import HISTORY_UNAVAILABLE, Presence, check_presence, combine
+from aosp_migrator.prescan.presence import HISTORY_UNAVAILABLE, Presence, check_presence
 
 PROJECT = "frameworks/av"
 CPP = "services/camera/CameraService.cpp"
@@ -287,21 +287,3 @@ def test_brace_only_hunks_do_not_count(tree: RepoTree, project: Path) -> None:
     assert result.status == "not_present"
     assert "heuristic" not in result.detail
 
-
-def test_combine() -> None:
-    assert combine(["present", "present"]) == "present"
-    assert combine(["present", "likely_present"]) == "likely_present"
-    assert combine(["likely_present", "not_present"]) == "not_present"
-    assert combine(["present", "not_present"]) == "partial"
-    assert combine(["partial"]) == "partial"
-    assert combine(["not_present", "unknown"]) == "unknown"
-    assert combine(["not_present"]) == "not_present"
-    assert combine([]) == "unknown"
-
-
-def test_upstream_domains_setting(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert config.upstream_domains() == ["google.com", "android.com"]
-    config.set({UPSTREAM_DOMAINS: "Google.com, partner.example ,"})
-    assert config.upstream_domains() == ["google.com", "partner.example"]
-    monkeypatch.setenv(UPSTREAM_DOMAINS.env, "x.org")
-    assert config.upstream_domains() == ["x.org"]

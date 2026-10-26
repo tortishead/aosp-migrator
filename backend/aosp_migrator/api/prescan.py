@@ -8,10 +8,24 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
-from aosp_migrator.db.models import DiffScan, Item, JiraIssue, PrescanJob, Workspace
-from aosp_migrator.prescan.presence import combine
+from aosp_migrator.db.models import (
+    Attachment,
+    DiffScan,
+    Item,
+    JiraIssue,
+    PrescanJob,
+    Workspace,
+)
+from aosp_migrator.prescan.runner import (
+    JobConflictError,
+    PrescanError,
+    PrescanRunner,
+    current_diffs,
+    diff_scan,
+    stale_items,
+    target_projects,
+)
 from aosp_migrator.prescan.triage import ORDER
-from aosp_migrator.prescan.runner import JobConflictError, PrescanError, PrescanRunner, current_diffs, stale_items, target_projects
 
 router = APIRouter()
 
@@ -57,14 +71,29 @@ class DiffScanOut(BaseModel):
     apply_detail: dict[str, Any] | None
     target_head: str | None
 
+    @classmethod
+    def of(cls, attachment: Attachment, scan: DiffScan | None) -> "DiffScanOut":
+        return cls(
+            attachment_id=attachment.id,
+            jira_id=attachment.jira_id,
+            filename=attachment.filename,
+            scanned_at=scan.scanned_at if scan else None,
+            project=scan.project if scan else None,
+            mapping_source=scan.mapping_source if scan else None,
+            candidates=scan.candidates if scan else [],
+            presence=scan.presence if scan else None,
+            presence_detail=scan.presence_detail if scan else None,
+            apply=scan.apply if scan else None,
+            apply_detail=scan.apply_detail if scan else None,
+            target_head=scan.target_head if scan else None,
+        )
+
 
 class ItemPrescanOut(BaseModel):
     scanned: bool
     # Triage label of the item and why; None until scanned, and for items without diffs.
     label: str | None
     label_reason: str | None
-    # Combined over the mapped diffs; None until scanned.
-    presence: str | None
     stale: list[str]
     diffs: list[DiffScanOut]
 
@@ -208,31 +237,11 @@ def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPr
     workspace = _workspace(session, workspace_id)
     item, issue = _item(session, workspace_id, key)
 
-    diffs: list[DiffScanOut] = []
-    for attachment in current_diffs(session, issue.id):
-        scan = session.scalar(select(DiffScan).where(DiffScan.attachment_id == attachment.id))
-        diffs.append(
-            DiffScanOut(
-                attachment_id=attachment.id,
-                jira_id=attachment.jira_id,
-                filename=attachment.filename,
-                scanned_at=scan.scanned_at if scan else None,
-                project=scan.project if scan else None,
-                mapping_source=scan.mapping_source if scan else None,
-                candidates=scan.candidates if scan else [],
-                presence=scan.presence if scan else None,
-                presence_detail=scan.presence_detail if scan else None,
-                apply=scan.apply if scan else None,
-                apply_detail=scan.apply_detail if scan else None,
-                target_head=scan.target_head if scan else None,
-            )
-        )
-    scanned = [d for d in diffs if d.scanned_at is not None]
+    diffs = [DiffScanOut.of(attachment, diff_scan(session, attachment.id)) for attachment in current_diffs(session, issue.id)]
     return ItemPrescanOut(
-        scanned=bool(scanned),
+        scanned=any(d.scanned_at is not None for d in diffs),
         label=item.triage_label,
         label_reason=item.triage_reason,
-        presence=combine(d.presence or "unknown" for d in scanned) if scanned else None,  # type: ignore[misc]
         stale=stale_items(session, workspace_id, Path(workspace.target_tree), [item.id]).get(item.id, []),
         diffs=diffs,
     )

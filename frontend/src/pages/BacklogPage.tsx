@@ -9,7 +9,7 @@ import { apiParams, currentPage, hasFilters, PAGE_SIZE, STATE_LABELS } from "../
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
 import { PrescanPanel, useStartPrescan } from "../prescan/PrescanPanel";
 import { TriageBar } from "../prescan/TriageBar";
-import { PRESENT_LABELS, TRIAGE_TEXT, triageClass } from "../prescan/triage";
+import { TriageTags } from "../prescan/TriageTags";
 import { workspacesKey } from "../queryClient";
 
 const SORTS: [string, string][] = [
@@ -223,21 +223,7 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
       <td>{item.fix_versions.join(", ")}</td>
       <td>{item.diff_count || ""}</td>
       <td className="nowrap">
-        {item.triage_label && !(item.apply && PRESENT_LABELS.includes(item.triage_label)) && (
-          <span className={triageClass(item.triage_label)} title={item.triage_reason ?? undefined}>
-            {TRIAGE_TEXT[item.triage_label]}
-          </span>
-        )}
-        {item.apply && item.apply !== item.triage_label && (
-          <span className={triageClass(item.apply)} title="Apply check of the diffs not already in the target">
-            {TRIAGE_TEXT[item.apply]}
-          </span>
-        )}
-        {item.stale.length > 0 && (
-          <span className="tag tag-warn" title={`Out of date: ${item.stale.join("; ")}`}>
-            stale
-          </span>
-        )}
+        <TriageTags item={item} />
       </td>
       <td>{item.cluster && <Link to={`/workspaces/${workspaceId}/clusters/${item.cluster.id}`}>{item.cluster.name}</Link>}</td>
       <td className="nowrap">{new Date(item.jira_updated).toLocaleDateString()}</td>

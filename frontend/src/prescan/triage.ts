@@ -16,9 +16,6 @@ export const TRIAGE_TEXT: Record<TriageLabel, string> = {
   present: "Present",
 };
 
-// Labels saying the diffs are (partly) in the target already; an apply result says more.
-export const PRESENT_LABELS: TriageLabel[] = ["partial", "likely_present", "present"];
-
 export function triageClass(label: TriageLabel): string {
   if (label === "error" || label === "conflicts") return "tag tag-error";
   if (label === "applies" || label === "present") return "tag";

@@ -259,6 +259,11 @@ History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`
 - Manual acceptance by user against a real `repo` tree and real tickets.
 - As built: `e2e/tests/prescan.spec.ts` against a second fake Jira (port 8793, `--prescan-tree e2e/.prescan/aosp`, rebuilt every run): settings, workspace on the `repo` tree, import, "Pre-scan backlog", count bar texts, "1 unmapped" filter, PROJ-110 picks `system/core` (label Applies, history entry), full re-run keeps the pick, "2 present" filter, select page, bulk Closed. The smoke spec no longer expects an empty workspace list (specs share one app; `prescan` runs first).
 
+**2.12 Apply result in the backlog, cleanup** — done
+- Backlog "Pre-scan" column shows the item's worst apply result next to the label (items API `apply`); it replaces a `partial` / `likely_present` / `present` label (`prescan/TriageTags.tsx`).
+- Triage fix: `unknown` presence gives way to `applies` / `3way` (a patch that applies is not in the working tree, whatever the history could not tell); reason "<project>: applies as is; presence unknown: <why>". `unknown` + `conflicts` stays `unknown` (it may conflict because it is in). `relabel_items` at startup labels every scanned item again from its stored scans (`error` kept), so a triage rule change needs no re-scan.
+- Cleanup: `prescan/patch.py` (`Patch.parse`: commits, per-file `FileSections` with `patch` and `binary`; `strip_option`) shared by presence and apply; `git.apply()`; `apply.ORDER` / `apply.worst` (items API uses them); `triage.worst`; runner `diff_scan` lookup and one error-label path; `Presence.files(result)`. Item-level combined `presence` and `presence.combine` removed (unused since 2.10: the item page shows the label).
+
 ## MS2-2 — Copilot on demand, dependencies, clusters
 
 Needs grilling. Input from the first MS2 plan, to revisit:

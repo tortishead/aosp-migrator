@@ -14,26 +14,26 @@ Read-only: see `prescan.git`.
 
 import re
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 from aosp_migrator.config import DEFAULT_UPSTREAM_DOMAINS
-from aosp_migrator.importer.diffparse import Commit, FileChange, parse_diff
-from aosp_migrator.prescan.git import GitError, git, is_shallow
+from aosp_migrator.importer.diffparse import Commit, FileChange
+from aosp_migrator.prescan import git
+from aosp_migrator.prescan.patch import FileSections, Patch
 
 PresenceStatus = Literal["present", "likely_present", "not_present", "partial", "unknown"]
 FileResult = Literal["present", "likely_present", "not_present", "unknown"]
 HistoryMatch = Literal["change_id", "subject", "patch_id"]
 
 HISTORY_UNAVAILABLE = "history unavailable"
+NOTHING_CHECKABLE = "no file could be checked"
 
-_FROM_SHA = re.compile(r"^From [0-9a-f]{40} ", re.MULTILINE)
 _CHANGE_ID = re.compile(r"^Change-Id:\s*(I[0-9a-f]{40})\s*$", re.MULTILINE)
 _PATCH_TAG = re.compile(r"^\[PATCH[^\]]*\]\s*")
 _EMAIL = re.compile(r"<([^>]+)>")
-_P1 = re.compile(r"^(?:diff --git a/|--- a/|\+\+\+ b/)", re.MULTILINE)
 _SIGNIFICANT = re.compile(r"\w")
 EVIDENCE_LINES = 5
 
@@ -47,15 +47,13 @@ class Presence:
     # history was unavailable or nothing could be checked.
     detail: dict[str, Any] = field(default_factory=dict)
 
-    @classmethod
-    def unknown(cls, reason: str) -> "Presence":
-        return cls("unknown", {"reason": reason})
+    def files(self, result: FileResult) -> list[str]:
+        return [path for path, value in self.detail.get("files", {}).items() if value == result]
 
 
 def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable[str] = DEFAULT_UPSTREAM_DOMAINS) -> Presence:
-    commits = split_commits(diff_text)
-    sections = file_sections(commits)
-    files = _reverse_check_files(project_dir, sections)
+    patch = Patch.parse(diff_text)
+    files = _reverse_check_files(project_dir, patch.files)
     detail: dict[str, Any] = {"files": files}
     known = [r for r in files.values() if r != "unknown"]
     if known and all(r == "present" for r in known):
@@ -63,15 +61,14 @@ def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable
     some_files = "present" in known
 
     found = 0
-    if any(parsed.commits for _, parsed in commits):
+    if patch.headers:
         try:
             history = [
-                _find_in_history(project_dir, header, parsed.files, _is_upstream(header.author, upstream_domains))
-                for (_, parsed) in commits
-                for header in parsed.commits
+                _find_in_history(project_dir, header, changes, _is_upstream(header.author, upstream_domains))
+                for header, changes in patch.headers
             ]
-            shallow = is_shallow(project_dir)
-        except GitError:
+            shallow = git.is_shallow(project_dir)
+        except git.GitError:
             detail["reason"] = HISTORY_UNAVAILABLE
         else:
             detail["history"] = history
@@ -81,87 +78,44 @@ def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable
             if shallow:
                 detail["reason"] = HISTORY_UNAVAILABLE
 
-    if heuristic := _heuristic(project_dir, sections, files):
+    if heuristic := _heuristic(project_dir, patch.files, files):
         detail["heuristic"] = heuristic
         if all(r in ("present", "likely_present") for r in files.values() if r != "unknown"):
             return Presence("likely_present", detail)
     if found or some_files:
         return Presence("partial", detail)
     if not known:
-        return Presence("unknown", {"reason": "no file could be checked", **detail})
+        return Presence("unknown", {"reason": NOTHING_CHECKABLE, **detail})
     return Presence("unknown" if "reason" in detail else "not_present", detail)
 
 
-def combine(statuses: Iterable[PresenceStatus]) -> PresenceStatus:
-    """Item-level presence: present only when every diff is present; likely only proves nothing."""
-    statuses = list(statuses)
-    if statuses and all(s == "present" for s in statuses):
-        return "present"
-    if statuses and all(s in ("present", "likely_present") for s in statuses):
-        return "likely_present"
-    if any(s in ("present", "partial") for s in statuses):
-        return "partial"
-    if not statuses or "unknown" in statuses:
-        return "unknown"
-    return "not_present"
-
-
-def split_commits(text: str) -> list[tuple[str, Any]]:
-    """[(text, ParsedDiff)] per format-patch commit; a plain diff is one entry."""
-    starts = [m.start() for m in _FROM_SHA.finditer(text)] or [0]
-    starts[0] = 0
-    chunks = [text[a:b] for a, b in zip(starts, [*starts[1:], len(text)])]
-    return [(chunk, parse_diff(chunk)) for chunk in chunks]
-
-
-def file_sections(commits: list[tuple[str, Any]]) -> dict[str, list[FileChange]]:
-    """Each file's changes from every commit of a series, in series order; renames follow the file."""
-    sections: dict[str, list[FileChange]] = {}
-    for _, parsed in commits:
-        for change in parsed.files:
-            key = change.old_path if change.old_path in sections else change.path
-            sections.setdefault(key, []).append(change)
-    return sections
-
-
-def _reverse_check_files(project_dir: Path, sections: dict[str, list[FileChange]]) -> dict[str, FileResult]:
+def _reverse_check_files(project_dir: Path, sections: list[FileSections]) -> dict[str, FileResult]:
     """Reverse-apply each file on its own, with its sections from every commit of a series.
 
     Sections go in series order: `git apply --reverse` undoes them newest first itself.
     """
     results: dict[str, FileResult] = {}
-    for changes in sections.values():
-        path = changes[-1].path
-        if is_binary(changes):
-            results[path] = "unknown"  # "Binary files differ": nothing to apply
+    for section in sections:
+        if section.binary:
+            results[section.path] = "unknown"
             continue
-        patch = "".join(c.raw for c in changes)
-        result = git(project_dir, "apply", "--reverse", "--check", strip_option(patch), "-", input=patch, check=False)
-        results[path] = "present" if result.returncode == 0 else "not_present"
+        reverses = git.apply(project_dir, section.patch, "--reverse", "--check").returncode == 0
+        results[section.path] = "present" if reverses else "not_present"
     return results
 
 
-def strip_option(patch: str) -> str:
-    """`-p1` for `a/` and `b/` prefixed paths, else `-p0`."""
-    return "-p1" if _P1.search(patch) else "-p0"
-
-
-def is_binary(changes: list[FileChange]) -> bool:
-    return any(c.binary and "GIT binary patch" not in c.raw for c in changes)
-
-
-def _heuristic(project_dir: Path, sections: dict[str, list[FileChange]], files: dict[str, FileResult]) -> dict[str, Any]:
+def _heuristic(project_dir: Path, sections: list[FileSections], files: dict[str, FileResult]) -> dict[str, Any]:
     """Content check of each `not_present` file; marks it `likely_present` in `files`, returns evidence.
 
     Lines compare with whitespace runs collapsed. Only lines with a letter or digit count, so brace-only hunks
     prove nothing; a file without such lines is left as it is.
     """
     evidence: dict[str, Any] = {}
-    for changes in sections.values():
-        path = changes[-1].path
-        if files.get(path) != "not_present" or is_binary(changes):
+    for section in sections:
+        path = section.path
+        if files.get(path) != "not_present" or section.binary:
             continue
-        added, removed = _net_lines(changes)
+        added, removed = _net_lines(section.changes)
         if not added and not removed:
             continue
         target = project_dir / path
@@ -214,7 +168,7 @@ def _is_upstream(author: str | None, domains: Iterable[str]) -> bool:
 def _find_in_history(project_dir: Path, commit: Commit, files: list[FileChange], upstream: bool) -> dict[str, Any]:
     subject = _PATCH_TAG.sub("", commit.subject)
     entry: dict[str, Any] = {"subject": subject, "match": None, "sha": None}
-    lookups: list[tuple[HistoryMatch, Any]] = []
+    lookups: list[tuple[HistoryMatch, Callable[[], str | None]]] = []
     if change_id := _CHANGE_ID.search(commit.message):
         lookups.append(("change_id", lambda: _by_grep(project_dir, f"Change-Id: {change_id.group(1)}")))
     if subject and upstream:
@@ -228,12 +182,12 @@ def _find_in_history(project_dir: Path, commit: Commit, files: list[FileChange],
 
 
 def _by_grep(project_dir: Path, text: str) -> str | None:
-    out = git(project_dir, "log", "HEAD", "-F", f"--grep={text}", "--format=%H", "-n", "1").stdout
+    out = git.git(project_dir, "log", "HEAD", "-F", f"--grep={text}", "--format=%H", "-n", "1").stdout
     return out.strip() or None
 
 
 def _by_subject(project_dir: Path, subject: str) -> str | None:
-    out = git(project_dir, "log", "HEAD", "-F", f"--grep={subject}", "--format=%H%x00%s").stdout
+    out = git.git(project_dir, "log", "HEAD", "-F", f"--grep={subject}", "--format=%H%x00%s").stdout
     for line in out.splitlines():
         sha, _, found = line.partition("\0")
         if found == subject:
@@ -248,7 +202,7 @@ def _by_patch_id(project_dir: Path, files: list[FileChange]) -> str | None:
         return None
     paths = sorted({p for c in files for p in (c.path, c.old_path) if p})
     # Only commits touching the same files, so this stays cheap on big histories.
-    log = git(project_dir, "log", "HEAD", "-p", "--no-color", "--no-ext-diff", "--format=commit %H", "--", *paths).stdout
+    log = git.git(project_dir, "log", "HEAD", "-p", "--no-color", "--no-ext-diff", "--format=commit %H", "--", *paths).stdout
     for patch_id, sha in _patch_id_pairs(project_dir, log):
         if patch_id in wanted:
             return sha
@@ -262,6 +216,6 @@ def _patch_ids(project_dir: Path, patch: str) -> set[str]:
 def _patch_id_pairs(project_dir: Path, text: str) -> list[tuple[str, str]]:
     if not text.strip():
         return []
-    out = git(project_dir, "patch-id", "--stable", input=text).stdout
+    out = git.git(project_dir, "patch-id", "--stable", input=text).stdout
     pairs = [line.split() for line in out.splitlines()]
     return [(pair[0], pair[1]) for pair in pairs if len(pair) == 2]

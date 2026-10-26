@@ -4,6 +4,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from aosp_migrator.prescan.patch import strip_option
+
 # No lazy blob fetches in partial clones, no credential prompts, no opportunistic
 # index refreshes (git status and friends would otherwise rewrite .git/index).
 _ENV = {
@@ -49,3 +51,8 @@ def is_shallow(cwd: Path) -> bool:
     # The `shallow` file, not `--is-shallow-repository`: git before 2.15 echoes that flag back.
     path = Path(git(cwd, "rev-parse", "--git-path", "shallow").stdout.strip())
     return (path if path.is_absolute() else cwd / path).is_file()
+
+
+def apply(cwd: Path, patch: str, *options: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    """`git apply` of `patch` from stdin with `options`; the caller reads the return code."""
+    return git(cwd, "apply", *options, strip_option(patch), "-", input=patch, check=False, env=env)

@@ -1,10 +1,11 @@
 """Triage label: one machine verdict per item from its diff scans, worst diff first.
 
 A diff's label comes from its mapping, presence and apply results. `likely_present`
-and `unknown` stand on their own (their apply result says little: a patch already in
-conflicts, and unknown ranks above conflicts anyway); `partial` takes the worse of
-itself and the apply result of the files still missing. The reason is a short text
-for the backlog tooltip.
+stands on its own: a patch already in would only conflict. `unknown` presence gives way
+to a clean apply result: when the patch applies, it is not in the working tree, whatever
+the history could not tell. An `unknown` diff that conflicts stays `unknown`: it may
+conflict because it is already in. `partial` takes the worse of itself and the apply
+result of the files still missing. The reason is a short text for the backlog tooltip.
 """
 
 from collections.abc import Iterable
@@ -37,6 +38,10 @@ def _paths(detail: dict | None, key: str, result: str) -> list[str]:
     return [path for path, value in (detail or {}).get(key, {}).items() if value == result]
 
 
+def worst(triages: Iterable[Triage]) -> Triage | None:
+    return min(triages, key=lambda t: ORDER.index(t.label), default=None)
+
+
 def diff_triage(scan: DiffScan, filename: str) -> Triage:
     if scan.project is None:
         if scan.candidates:
@@ -48,10 +53,12 @@ def diff_triage(scan: DiffScan, filename: str) -> Triage:
         return Triage("present", f"{scan.project}: in commit {_names(matched)}" if matched else f"{scan.project}: every file reverse-applies")
     if scan.presence == "likely_present":
         return Triage("likely_present", f"{scan.project}: lines of {_names(_paths(presence, 'files', 'likely_present'))} found in the target")
+    apply = _apply_triage(scan)
     if scan.presence == "unknown":
         reason = presence.get("reason") or f"cannot check {_names(_paths(presence, 'files', 'unknown'))}"
+        if apply.label in ("applies", "3way"):
+            return Triage(apply.label, f"{apply.reason}; presence unknown: {reason}")
         return Triage("unknown", f"{scan.project}: {reason}")
-    apply = _apply_triage(scan)
     if scan.presence == "partial":
         partial = Triage("partial", f"{scan.project}: {_names(_paths(presence, 'files', 'present'))} already in")
         return min(partial, apply, key=lambda t: ORDER.index(t.label))
@@ -71,8 +78,8 @@ def _apply_triage(scan: DiffScan) -> Triage:
 def item_triage(diffs: Iterable[Triage]) -> Triage | None:
     """The worst diff's label; reasons of every diff with that label. None without diffs."""
     diffs = list(diffs)
-    if not diffs:
+    label = worst(diffs)
+    if label is None:
         return None
-    worst = min(diffs, key=lambda t: ORDER.index(t.label))
-    reasons = list(dict.fromkeys(t.reason for t in diffs if t.label == worst.label))
-    return Triage(worst.label, "; ".join(reasons))
+    reasons = dict.fromkeys(t.reason for t in diffs if t.label == label.label)
+    return Triage(label.label, "; ".join(reasons))

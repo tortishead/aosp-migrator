@@ -12,7 +12,7 @@ const URL = "/workspaces/1/items/PROJ-101";
 function itemApi(handlers: Parameters<typeof mockApi>[0] = {}) {
   return mockApi({
     "GET /workspaces/1/items/PROJ-101": () => itemDetail(),
-    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, label: null, label_reason: null, presence: null, stale: [], diffs: [] }),
+    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, label: null, label_reason: null, stale: [], diffs: [] }),
     "GET /workspaces/1/prescan-jobs": () => [],
     ...diffHandlers,
     ...handlers,
@@ -279,7 +279,6 @@ function scannedItem(overrides: Partial<ItemPrescan> = {}): ItemPrescan {
     scanned: true,
     label: "unmapped",
     label_reason: "build.patch: one of system/core, hardware/interfaces",
-    presence: "unknown",
     stale: [],
     diffs: [unmappedDiff()],
     ...overrides,
@@ -292,7 +291,6 @@ describe("ItemPage pre-scan", () => {
       scanned: true,
       label: "conflicts",
       label_reason: "frameworks/av: icon.png conflict",
-      presence: "partial",
       stale: ["frameworks/av HEAD moved"],
       diffs: [
         {
@@ -370,7 +368,6 @@ describe("ItemPage pre-scan", () => {
     const picked = scannedItem({
       label: "applies",
       label_reason: "system/core: applies as is",
-      presence: "not_present",
       diffs: [unmappedDiff({ project: "system/core", mapping_source: "manual", presence: "not_present", apply: "applies", target_head: "b".repeat(40) })],
     });
     const calls = itemApi({
@@ -460,7 +457,7 @@ describe("ItemPage pre-scan", () => {
       },
       "GET /workspaces/1/items/PROJ-101/prescan": () => {
         resultFetches += 1;
-        return { scanned: resultFetches > 1, label: "present", label_reason: "every file reverse-applies", presence: "present", stale: [], diffs: [] };
+        return { scanned: resultFetches > 1, label: "present", label_reason: "every file reverse-applies", stale: [], diffs: [] };
       },
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
