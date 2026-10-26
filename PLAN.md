@@ -180,7 +180,7 @@ History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`
 - **Trees:** `repo` target trees: projects come from `.repo/project.list`; missing file fails the job with a hint to run `repo sync`. A `git` or `plain` tree has no project list: its projects are the directories holding a `.git` (nested ones included, `.` for the root; hidden dirs, symlinks and root `out/` skipped), found in job stage `projects`; with none, the tree is one project `.`. A diff with only new files maps to the only project of a single-project tree. A `plain` tree has no history, so HEAD is null and history lookups give `unknown` ("history unavailable"). Git never discovers a repository above the scanned directory.
 - **Never mutate user trees:** no fetch, no deepen, no checkout, no writes to the index or object store. Checks that need git to write use a temp index and a temp object directory.
 - **Repo mapping (per diff, not per item):**
-  - Hint: paths in the description (`{VAR}/…`, `${VAR}/…`, `$VAR/…`, bare `frameworks/base/...`), longest project-list prefix wins. Built-in pattern, no per-workspace regex.
+  - Hint: paths in the description (`{VAR}/…`, `${VAR}/…`, `$VAR/…`, bare `frameworks/base/...`), longest project-list prefix wins. Built-in pattern, no per-workspace regex. Without any path hint, the description's `Repository: frameworks_opt_car_services` field is the hint (`_` → `/`, matched against the project list), so new-files-only diffs still map.
   - Check: a project matches when the diff's touched files (non-new) exist under it. Hint is verified the same way.
   - Exactly one match: mapped. Zero or several: `unmapped`, the user picks the project by hand on the item page (kept across re-runs).
   - A ticket may map to several repos.
@@ -227,6 +227,7 @@ History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`
 **2.5 History lookup for every author** — done
 - Change-Id and patch-id lookup for every format-patch commit; subject only for upstream domains. Runs only after reverse-apply fails.
 - Test: OEM patch already cherry-picked found by Change-Id, OEM patch with drifted context found by patch-id, OEM subject alone not a match, upstream subject match kept, shallow clone and plain tree `unknown`.
+- As built: a diff that only adds files (every file's first change is `added`, none deleted at the end) skips the presence check: `not_present` with `reason` "new files only, presence not checked", then apply-checked as usual.
 - As built: `check_presence` searches history whenever the diff has format-patch headers and not every checkable file reverse-applies; `_find_in_history(..., upstream)` skips the subject lookup for non-upstream authors. A plain diff without headers still gets no history lookup. A plain tree (no `.git`) fails `git log` and gives `unknown` "history unavailable". `history` in `presence_detail` now lists every commit, not only upstream ones. A history match still wins over the files: a commit found in history whose change was later partly reverted shows `present`.
 
 **2.6 Likely-present heuristic** — done

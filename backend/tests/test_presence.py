@@ -8,7 +8,7 @@ import pytest
 from repo_tree import RepoTree
 
 from aosp_migrator.config import UPSTREAM_DOMAINS, Config
-from aosp_migrator.prescan.presence import HISTORY_UNAVAILABLE, Presence, check_presence
+from aosp_migrator.prescan.presence import HISTORY_UNAVAILABLE, NEW_FILES_ONLY, Presence, check_presence
 
 PROJECT = "frameworks/av"
 CPP = "services/camera/CameraService.cpp"
@@ -222,6 +222,27 @@ def test_new_deleted_and_renamed_files(tree: RepoTree, project: Path) -> None:
     assert result.status == "present", result.detail
     tree.git(PROJECT, "reset", "-q", "--hard", "HEAD~1")
     assert check_presence(project, patch).status == "not_present"
+
+
+def test_only_new_files_skips_the_check(tree: RepoTree, project: Path) -> None:
+    sha = tree.commit(PROJECT, {"NEW.md": "hello\n", "docs/NEW2.md": "world\n"}, "camera: add docs", OEM)
+    patch = tree.format_patch(PROJECT, sha)
+    # Already in the tree, yet not checked.
+    assert check_presence(project, patch) == Presence("not_present", {"reason": NEW_FILES_ONLY})
+    tree.git(PROJECT, "reset", "-q", "--hard", "HEAD~1")
+    assert check_presence(project, patch) == Presence("not_present", {"reason": NEW_FILES_ONLY})
+
+
+def test_new_file_modified_later_in_series_skips_the_check(tree: RepoTree, project: Path) -> None:
+    tree.commit(PROJECT, {"NEW.md": "hello\n"}, "camera: add docs", OEM)
+    tree.commit(PROJECT, {"NEW.md": "hello\nworld\n"}, "camera: extend docs", OEM)
+    patch = tree.format_patch(PROJECT, "HEAD~2..HEAD")
+    assert check_presence(project, patch).detail == {"reason": NEW_FILES_ONLY}
+
+
+def test_new_file_with_a_modified_one_is_still_checked(tree: RepoTree, project: Path) -> None:
+    sha = tree.commit(PROJECT, {"NEW.md": "hello\n", H: lines("int resume() const;")}, "camera: add docs and tweak", OEM)
+    assert check_presence(project, tree.format_patch(PROJECT, sha)).status == "present"
 
 
 def test_tree_unchanged_after_scan(tree: RepoTree, project: Path) -> None:

@@ -22,7 +22,7 @@ from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJo
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import check_apply
-from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list
+from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list, repository_hints
 from aosp_migrator.prescan.presence import check_presence
 from aosp_migrator.prescan.triage import Triage, diff_triage, item_triage
 
@@ -250,14 +250,16 @@ def read_diff_text(attachment: Attachment) -> str | None:
 
 def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:
     """Map, presence- and apply-check each current diff of `issue`; results replace its earlier diff scans."""
-    hints = path_hints(f"{issue.summary}\n{issue.description_raw}", projects)
+    description = f"{issue.summary}\n{issue.description_raw}"
+    hints = path_hints(description, projects)
+    repository = repository_hints(description, projects)
     for attachment in current_diffs(session, issue.id):
         text = read_diff_text(attachment)
         if text is None:
             raise PrescanError(f"{attachment.filename}: downloaded file is missing; reimport the ticket")
         scan = _scan_row(session, attachment.id)
         if scan.mapping_source not in KEPT_SOURCES or scan.project is None:
-            mapping = map_diff(tree, projects, parse_diff(text).files, hints)
+            mapping = map_diff(tree, projects, parse_diff(text).files, hints, repository)
             scan.project, scan.mapping_source, scan.candidates = mapping.project, mapping.source, mapping.candidates
         if scan.project is None:
             scan.presence = scan.presence_detail = scan.apply = scan.apply_detail = scan.target_head = None

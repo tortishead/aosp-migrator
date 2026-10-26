@@ -13,6 +13,7 @@ from aosp_migrator.prescan.mapping import (
     map_diff,
     path_hints,
     read_project_list,
+    repository_hints,
 )
 
 PROJECTS = [
@@ -87,6 +88,49 @@ def test_hint_needs_whole_path_segment() -> None:
 def test_hint_deduplicates_and_ignores_unknown_paths() -> None:
     text = "system/core/init/a.cpp, system/core/init/b.cpp, vendor/acme/thing.c, http://x"
     assert path_hints(text, PROJECTS) == ["system/core"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Repository: frameworks_opt_car_services",
+        "*Repository:* frameworks_opt_car_services\nBranch: main",
+        "*Repository*: `frameworks_opt_car_services`",
+        "|Repository|frameworks_opt_car_services|",
+        "repository = frameworks/opt/car/services",
+    ],
+)
+def test_repository_hint_variants(text: str) -> None:
+    projects = [*PROJECTS, "frameworks/opt/car/services", "frameworks/opt/car"]
+    assert repository_hints(text, projects) == ["frameworks/opt/car/services"]
+
+
+def test_repository_hint_unknown_or_absent() -> None:
+    assert repository_hints("Repository: vendor_acme_thing", PROJECTS) == []
+    assert repository_hints("No such field; repository frameworks_av", PROJECTS) == []
+
+
+def test_repository_hint_maps_new_files_only_diff(tree: RepoTree) -> None:
+    files = [FileChange("src/New.java", status="added")]
+    repository = repository_hints("Repository: hardware_interfaces", PROJECTS)
+    assert map_diff(tree.root, PROJECTS, files, repository=repository) == DiffMapping("hardware/interfaces", "hint")
+
+
+def test_repository_maps_diff_whose_files_are_in_no_project_yet(tree: RepoTree) -> None:
+    # A patch on top of a file another ticket adds: the file is not in the tree.
+    files = [FileChange("src/New.java", status="modified")]
+    assert map_diff(tree.root, PROJECTS, files) == DiffMapping(None, None, [])
+    assert map_diff(tree.root, PROJECTS, files, repository=["frameworks/av"]) == DiffMapping("frameworks/av", "hint")
+
+
+def test_repository_resolves_ambiguous_file_matches(tree: RepoTree) -> None:
+    files = [FileChange("Android.bp")]
+    assert map_diff(tree.root, PROJECTS, files, repository=["hardware/interfaces"]) == DiffMapping("hardware/interfaces", "hint")
+
+
+def test_repository_does_not_override_file_match(tree: RepoTree) -> None:
+    files = [FileChange("init/init.cpp")]
+    assert map_diff(tree.root, PROJECTS, files, repository=["frameworks/av"]) == DiffMapping("system/core", "files")
 
 
 def test_unique_file_match(tree: RepoTree) -> None:

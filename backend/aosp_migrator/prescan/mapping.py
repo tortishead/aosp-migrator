@@ -7,6 +7,8 @@ Diff paths are relative to the project root. A project matches a diff when the f
 the diff expects to exist (modified, deleted, rename/copy sources) exist under it.
 Paths in the ticket description (`{AOSP_HOME}/frameworks/base/...`) are hints: the
 longest project-list prefix wins, and a hinted project must match the same way.
+The ticket's `Repository:` field is the fallback hint: it also maps a diff whose files
+are in no project yet (a patch on top of another ticket's new file).
 Read-only: nothing here touches git.
 """
 
@@ -30,6 +32,8 @@ MappingSource = Literal["hint", "files", "copilot", "manual"]
 # A path-like token: `{VAR}/a/b`, `${VAR}/a/b`, `$VAR/a/b` or a bare `a/b/...`.
 _PATH_TOKEN = re.compile(r"(?:\$?\{\w+\}/|\$\w+/)?[\w.+\-]+(?:/[\w.+\-]+)+/?")
 _VAR_PREFIX = re.compile(r"^(?:\$?\{\w+\}|\$\w+)/")
+# `Repository: frameworks_opt_car_services`, also with wiki markup (`*Repository:* x`, `|Repository|x|`).
+_REPOSITORY_FIELD = re.compile(r"\bRepository\b[\s*_]*[:|=][\s*_|`]*([\w.+\-/]+)", re.IGNORECASE)
 
 
 class ProjectListMissing(Exception):
@@ -89,15 +93,47 @@ def path_hints(text: str, projects: Iterable[str]) -> list[str]:
     return hints
 
 
-def map_diff(tree: Path, projects: Iterable[str], files: Iterable[FileChange], hints: Iterable[str] = ()) -> DiffMapping:
-    """Map one diff to a project of `tree`. A verified hint beats a file-only match."""
+def repository_hints(text: str, projects: Iterable[str]) -> list[str]:
+    """Projects named by `Repository:` fields in `text`, in order of appearance.
+
+    The value is a project path with `/` replaced by `_` (`frameworks_opt_car_services` is
+    `frameworks/opt/car/services`); it is matched against the project list, as directory
+    names may hold underscores themselves.
+    """
+    by_name: dict[str, str] = {}
+    for project in projects:
+        by_name.setdefault(project.replace("/", "_"), project)
+    hints: list[str] = []
+    for value in _REPOSITORY_FIELD.findall(text):
+        value = value.strip("/")
+        project = by_name.get(value.replace("/", "_"))
+        if project is not None and project not in hints:
+            hints.append(project)
+    return hints
+
+
+def map_diff(
+    tree: Path,
+    projects: Iterable[str],
+    files: Iterable[FileChange],
+    hints: Iterable[str] = (),
+    repository: Iterable[str] = (),
+) -> DiffMapping:
+    """Map one diff to a project of `tree`. A verified hint beats a file-only match.
+
+    `repository` (from the ticket's `Repository:` field) is the fallback when nothing else
+    decides, even if the diff's files are not in the project yet: the ticket says where it goes.
+    """
     projects = list(projects)
+    hints = list(hints)
+    repository = list(repository)
     evidence = _evidence(files)
     if not evidence:
         # Only new files: nothing to check, so a hint (or the only project) is taken on trust.
-        hints = list(hints)
         if len(hints) == 1:
             return DiffMapping(hints[0], "hint")
+        if len(repository) == 1:
+            return DiffMapping(repository[0], "hint")
         if not hints and len(projects) == 1:
             return DiffMapping(projects[0], "files")
         return DiffMapping(None, None, hints)
@@ -107,6 +143,11 @@ def map_diff(tree: Path, projects: Iterable[str], files: Iterable[FileChange], h
         return DiffMapping(hinted[0], "hint")
     if len(matches) == 1:
         return DiffMapping(matches[0], "files")
+    in_repository = [p for p in repository if p in matches]
+    if len(in_repository) == 1:
+        return DiffMapping(in_repository[0], "hint")
+    if not matches and len(repository) == 1:
+        return DiffMapping(repository[0], "hint")
     return DiffMapping(None, None, hinted or matches)
 
 

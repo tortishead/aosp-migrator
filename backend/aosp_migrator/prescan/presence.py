@@ -9,6 +9,7 @@ catches context drift: a file is likely present when its added lines are in the 
 file and its removed lines are gone (lines without letters or digits ignored). Evidence
 only, never proof. A shallow or partial clone, or a plain tree, whose history cannot
 answer gives `unknown` ("history unavailable") unless the heuristic says likely.
+A diff that only adds files skips all of this: it is `not_present` without a check.
 Read-only: see `prescan.git`.
 """
 
@@ -30,6 +31,7 @@ HistoryMatch = Literal["change_id", "subject", "patch_id"]
 
 HISTORY_UNAVAILABLE = "history unavailable"
 NOTHING_CHECKABLE = "no file could be checked"
+NEW_FILES_ONLY = "new files only, presence not checked"
 
 _CHANGE_ID = re.compile(r"^Change-Id:\s*(I[0-9a-f]{40})\s*$", re.MULTILINE)
 _PATCH_TAG = re.compile(r"^\[PATCH[^\]]*\]\s*")
@@ -53,6 +55,8 @@ class Presence:
 
 def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable[str] = DEFAULT_UPSTREAM_DOMAINS) -> Presence:
     patch = Patch.parse(diff_text)
+    if _only_adds_files(patch.files):
+        return Presence("not_present", {"reason": NEW_FILES_ONLY})
     files = _reverse_check_files(project_dir, patch.files)
     detail: dict[str, Any] = {"files": files}
     known = [r for r in files.values() if r != "unknown"]
@@ -87,6 +91,11 @@ def check_presence(project_dir: Path, diff_text: str, upstream_domains: Iterable
     if not known:
         return Presence("unknown", {"reason": NOTHING_CHECKABLE, **detail})
     return Presence("unknown" if "reason" in detail else "not_present", detail)
+
+
+def _only_adds_files(sections: list[FileSections]) -> bool:
+    """True when every file is created by the diff (a series may modify it after creating it)."""
+    return bool(sections) and all(s.changes[0].status == "added" and s.changes[-1].status != "deleted" for s in sections)
 
 
 def _reverse_check_files(project_dir: Path, sections: list[FileSections]) -> dict[str, FileResult]:
