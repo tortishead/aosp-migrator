@@ -31,7 +31,7 @@ def test_format_patch_commit_header() -> None:
             sha="9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a",
             author="Jane Doe <jane.doe@example.com>",
             date="2026-09-25T16:40:00+02:00",
-            subject="camera: fix null deref on resume",
+            subject="[PATCH] camera: fix null deref on resume",
             message="Log the missing client and return NO_INIT instead of crashing.\n\nBug: PROJ-101",
         )
     ]
@@ -52,7 +52,7 @@ def test_commit_header_folded_encoded_subject() -> None:
             sha="3f2a9c1d4e5b6a7c8d9e0f1a2b3c4d5e6f7a8b9c",
             author="Jörg <j@example.com>",
             date="not a date",
-            subject="audio: a subject folded over two lines",
+            subject="[PATCH v2 1/3] audio: a subject folded over two lines",
         )
     ]
 

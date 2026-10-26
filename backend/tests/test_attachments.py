@@ -96,7 +96,7 @@ def test_format_patch_versions_and_embedded_image(client: DataCenterClient, tmp_
                 "sha": "9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a",
                 "author": "Jane Doe <jane.doe@example.com>",
                 "date": "2026-09-25T16:40:00+02:00",
-                "subject": "camera: fix null deref on resume",
+                "subject": "[PATCH] camera: fix null deref on resume",
                 "message": "Log the missing client and return NO_INIT instead of crashing.\n\nBug: PROJ-101",
             }
         ],

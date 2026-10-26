@@ -20,8 +20,6 @@ FileStatus = Literal["modified", "added", "deleted", "renamed", "copied"]
 
 _FROM_SHA = re.compile(r"^From [0-9a-f]{40} ")
 _HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
-# `[PATCH]`, `[PATCH v2 1/3]`, `[RFC PATCH]`: stripped from the subject like `git am` does.
-_PATCH_PREFIX = re.compile(r"^(?:\[[^\]]*PATCH[^\]]*\]\s*)+", re.IGNORECASE)
 _C_ESCAPES = {"n": "\n", "t": "\t", '"': '"', "\\": "\\", "a": "\a", "b": "\b", "f": "\f", "r": "\r", "v": "\v"}
 
 
@@ -44,7 +42,7 @@ class Commit:
     sha: str
     author: str | None = None  # `Name <email>`
     date: str | None = None  # ISO 8601 with offset, as written in the patch
-    subject: str = ""
+    subject: str = ""  # As written, `[PATCH n/m]` tag included
     message: str = ""  # Body of the commit message, without the subject
 
 
@@ -135,7 +133,7 @@ def _commit(lines: list[str], i: int) -> Commit:
             commit.date = parsedate_to_datetime(str(date)).isoformat()
         except (TypeError, ValueError):
             commit.date = str(date)
-    commit.subject = _PATCH_PREFIX.sub("", str(headers.get("Subject", ""))).strip()
+    commit.subject = str(headers.get("Subject", "")).strip()
     body: list[str] = []
     for line in lines[i + 1 :]:
         if line == "---" or line.startswith("diff --git ") or _FROM_SHA.match(line):

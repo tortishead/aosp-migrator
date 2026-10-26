@@ -42,7 +42,7 @@ describe("DiffTabs", () => {
     const cpp = await screen.findByRole("region", { name: CPP });
     // The format-patch mail header sits above the files.
     const commit = screen.getByRole("region", { name: "Commit" });
-    expect(within(commit).getByRole("heading", { name: "camera: fix null deref on resume" })).toBeInTheDocument();
+    expect(within(commit).getByRole("heading", { name: "[PATCH] camera: fix null deref on resume" })).toBeInTheDocument();
     expect(within(commit).getByText("Jane Doe <jane.doe@example.com>")).toBeInTheDocument();
     expect(within(commit).getByText("9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a")).toBeInTheDocument();
     expect(within(commit).getByText(/Log the missing client/)).toBeInTheDocument();
