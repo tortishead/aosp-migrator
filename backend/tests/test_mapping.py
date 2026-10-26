@@ -5,6 +5,7 @@ from repo_tree import RepoTree, default_repo_tree
 
 from aosp_migrator.importer.diffparse import FileChange
 from aosp_migrator.prescan.mapping import (
+    ROOT_PROJECT,
     DiffMapping,
     ProjectListMissing,
     map_diff,
@@ -129,6 +130,13 @@ def test_only_new_files_take_single_hint_on_trust(tree: RepoTree) -> None:
     files = [FileChange("brand/new.c", status="added")]
     assert map_diff(tree.root, PROJECTS, files, ["system/core"]) == DiffMapping("system/core", "hint")
     assert map_diff(tree.root, PROJECTS, files) == DiffMapping(None, None, [])
+
+
+def test_single_project_tree(tree: RepoTree) -> None:
+    root = tree.root / "system/core"
+    assert map_diff(root, [ROOT_PROJECT], [FileChange("init/init.cpp")]) == DiffMapping(ROOT_PROJECT, "files")
+    assert map_diff(root, [ROOT_PROJECT], [FileChange("brand/new.c", status="added")]) == DiffMapping(ROOT_PROJECT, "files")
+    assert map_diff(root, [ROOT_PROJECT], [FileChange("missing.c")]) == DiffMapping(None, None, [])
 
 
 def test_parent_escape_is_ignored(tree: RepoTree) -> None:
