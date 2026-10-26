@@ -9,12 +9,14 @@ import { confirmingDissolve, memberWarning, useRefreshClusters } from "../cluste
 import { DiffTabs } from "../item/DiffViewer";
 import { HistoryTimeline } from "../item/History";
 import { JiraHtml } from "../item/JiraHtml";
+import { MigrationTab } from "../item/MigrationTab";
 import { PrescanSection } from "../prescan/PrescanSection";
 
-type Tab = "overview" | "patches";
+type Tab = "overview" | "patches" | "migration";
 
 // Diffs live in their own tab, apart from the ticket itself; the pre-scan verdict leads the overview.
-const TABS: Record<Tab, string> = { overview: "Overview", patches: "Patches" };
+// Migration holds what a build applies: the patches the pre-scan made from the diffs.
+const TABS: Record<Tab, string> = { overview: "Overview", patches: "Patches", migration: "Migration" };
 
 export const itemKey = (workspaceId: number, key: string) => ["item", workspaceId, key];
 
@@ -29,7 +31,8 @@ export function ItemPage() {
   const key = useParams().itemKey ?? "";
   const item = useQuery({ queryKey: itemKey(workspaceId, key), queryFn: () => api.item(workspaceId, key) });
   const [search, setSearch] = useSearchParams();
-  const tab: Tab = search.get("tab") === "patches" ? "patches" : "overview";
+  const requested = search.get("tab");
+  const tab: Tab = requested === "patches" || requested === "migration" ? requested : "overview";
 
   function selectTab(next: Tab) {
     setSearch(
@@ -111,10 +114,15 @@ export function ItemPage() {
               <HistoryTimeline events={detail.history} />
             </section>
           </>
-        ) : (
+        ) : tab === "patches" ? (
           <section aria-label="Diffs">
             <h2>Diffs</h2>
             <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
+          </section>
+        ) : (
+          <section aria-label="Migration patches">
+            <h2>Migration patches</h2>
+            <MigrationTab workspaceId={workspaceId} itemKey={key} />
           </section>
         )}
       </div>

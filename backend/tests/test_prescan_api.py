@@ -404,6 +404,33 @@ def test_migration_patch_kept_per_diff(app: FastAPI, client: TestClient, workspa
     assert prescan(client, workspace_id, "PROJ-101")["diffs"][0]["patch"]["base_head"] == moved
 
 
+def test_item_patches_newest_first_with_current_flag(client: TestClient, workspace_id: int, target: Path) -> None:
+    tree = RepoTree(target)
+    assert client.get(f"/api/workspaces/{workspace_id}/items/PROJ-101/patches").json() == []
+    assert run_prescan(client, workspace_id)["status"] == "done"
+    head = tree.git("frameworks/av", "rev-parse", "HEAD").strip()
+    moved = tree.commit("frameworks/av", {"README": "av\n"}, "Add README")
+    assert run_prescan(client, workspace_id, ["PROJ-101"])["status"] == "done"
+
+    patches = client.get(f"/api/workspaces/{workspace_id}/items/PROJ-101/patches").json()
+    camera = prescan(client, workspace_id, "PROJ-101")["diffs"][0]
+    assert [(p["base_head"], p["current"]) for p in patches] == [(moved, True), (head, False)]
+    assert {(p["level"], p["source"], p["project"], p["attachment_id"], p["jira_id"], p["filename"]) for p in patches} == {
+        ("plain", "original", "frameworks/av", camera["attachment_id"], camera["jira_id"], camera["filename"])
+    }
+    assert "diff" not in patches[0]
+
+    parsed = client.get(f"/api/workspaces/{workspace_id}/patches/{patches[0]['id']}").json()
+    assert parsed["files"] and all(f["hunks"] for f in parsed["files"])
+    assert [f["path"] for f in parsed["files"]] == [f["path"] for f in client.get(f"/api/workspaces/{workspace_id}/diffs/{camera['jira_id']}").json()["files"]]
+
+    # Conflicting items have none; unknown items, patches and workspaces are 404.
+    assert client.get(f"/api/workspaces/{workspace_id}/items/PROJ-104/patches").json() == []
+    assert client.get(f"/api/workspaces/{workspace_id}/items/NOPE-1/patches").status_code == 404
+    assert client.get(f"/api/workspaces/{workspace_id}/patches/9999").status_code == 404
+    assert client.get(f"/api/workspaces/9999/patches/{patches[0]['id']}").status_code == 404
+
+
 def pick(client: TestClient, workspace_id: int, key: str, attachment_id: int, project: str | None) -> Any:
     return client.put(f"/api/workspaces/{workspace_id}/items/{key}/diffs/{attachment_id}/project", json={"project": project})
 

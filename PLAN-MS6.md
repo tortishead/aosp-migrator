@@ -32,10 +32,11 @@ Comes before MS2-2: the whole path import → pre-scan → patch → build works
 - Test: `applies` stores the non-present sections; `3way` stores a merged diff that `git apply --check`s on HEAD; `conflicts` stores none; re-scan without change adds no row; user tree and object store unchanged.
 - Done as: `ApplyCheck.patch`; the 3-way patch is a fresh temp index with every checked file merged in, `git diff --cached --binary -M HEAD` with fixed prefixes. `Patch.author` / `Patch.message` (first author; messages of a series in order, `[PATCH n/m]` dropped). The current patch (`current_patch`) is the diff's newest row when its last scan applies and the row matches the scan's project and HEAD; after a HEAD move it stays until the re-scan, the item shows stale meanwhile.
 
-**6.2 Migration tab on the item page**
+**6.2 Migration tab on the item page** — done
 - API: item patches (newest first) with level, source, project, base HEAD, current flag; later its build runs.
 - UI: item tab "Migration" listing patches; each opens in the existing diff viewer.
 - Test: component tests for plain and 3-way patches, empty state for conflicts.
+- Done as: `api/migration.py`: `GET …/items/{key}/patches` (no patch text; `current` = the current diff version's `current_patch`) and `GET …/patches/{id}` (parsed with hunks, like the diff endpoint). `DiffBody` takes an id, query key and loader; `useViewType` / `ViewToggle` shared. The tab (`?tab=migration`) opens the current patch first, superseded ones on click.
 
 **6.3 Build settings per workspace**
 - Migration adds `envsetup_path`, `lunch_target`, `build_timeout` to `workspace`. Validation: `envsetup.sh` is a file inside the target tree or repo root. Workspace form fields.
