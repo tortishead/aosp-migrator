@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -305,3 +306,19 @@ def test_jobs_running_at_startup_are_marked_failed(app: FastAPI, client: TestCli
     restarted = TestClient(create_app(config))
     job = restarted.get(f"/api/prescan-jobs/{job['id']}").json()
     assert (job["status"], job["error"]) == ("failed", "Interrupted by a server restart")
+
+
+def test_plain_tree_with_shallow_project(client: TestClient, target: Path, fake_jira: FakeJiraStore, tmp_path: Path) -> None:
+    """The upstream commit is cut off by the shallow clone: unknown, not not_present."""
+    shutil.rmtree(target / ".repo")
+    full = tmp_path / "full-base"
+    shutil.move(target / "frameworks/base", full)
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{full}", str(target / "frameworks/base")], check=True)
+    shutil.move(full / "packages/SystemUI", target / "frameworks/base/packages/SystemUI")
+    workspace_id = client.post("/api/workspaces", json={"name": "plain", "jql": "project = PROJ", "target_tree": str(target)}).json()["id"]
+    assert run_import(client, workspace_id)["status"] == "done"
+
+    assert run_prescan(client, workspace_id)["status"] == "done"
+    item = prescan(client, workspace_id, "PROJ-109")
+    assert item["diffs"][0]["project"] == "frameworks/base"
+    assert (item["presence"], item["diffs"][0]["presence_detail"]["reason"]) == ("unknown", "history unavailable")
