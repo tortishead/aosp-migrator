@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { HistoryEvent, ImportJob, ItemDetail, ItemPrescan, Note, PrescanJob } from "../api";
+import { type DiffScan, type HistoryEvent, type ImportJob, type ItemDetail, type ItemPrescan, type Note, type PrescanJob, TRIAGE_LABELS } from "../api";
 import { POLL_MS } from "../backlog/ImportPanel";
 import { diffHandlers, itemDetail } from "../item/fixtures";
 import { mockApi, renderRoute } from "../test-utils";
@@ -12,7 +12,7 @@ const URL = "/workspaces/1/items/PROJ-101";
 function itemApi(handlers: Parameters<typeof mockApi>[0] = {}) {
   return mockApi({
     "GET /workspaces/1/items/PROJ-101": () => itemDetail(),
-    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, presence: null, stale: [], diffs: [] }),
+    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, label: null, label_reason: null, presence: null, stale: [], diffs: [] }),
     "GET /workspaces/1/prescan-jobs": () => [],
     ...diffHandlers,
     ...handlers,
@@ -256,8 +256,38 @@ describe("ItemPage cluster", () => {
   });
 });
 
+function unmappedDiff(overrides: Partial<DiffScan> = {}): DiffScan {
+  return {
+    attachment_id: 3,
+    jira_id: "12",
+    filename: "build.patch",
+    scanned_at: "2026-10-26T10:00:00Z",
+    project: null,
+    mapping_source: null,
+    candidates: ["system/core", "hardware/interfaces"],
+    presence: null,
+    presence_detail: null,
+    apply: null,
+    apply_detail: null,
+    target_head: null,
+    ...overrides,
+  };
+}
+
+function scannedItem(overrides: Partial<ItemPrescan> = {}): ItemPrescan {
+  return {
+    scanned: true,
+    label: "unmapped",
+    label_reason: "build.patch: one of system/core, hardware/interfaces",
+    presence: "unknown",
+    stale: [],
+    diffs: [unmappedDiff()],
+    ...overrides,
+  };
+}
+
 describe("ItemPage pre-scan", () => {
-  it("shows pre-scan results per diff, staleness and candidate dependencies", async () => {
+  it("shows pre-scan results per diff, staleness and candidate projects", async () => {
     const scanned: ItemPrescan = {
       scanned: true,
       label: "conflicts",
@@ -299,11 +329,109 @@ describe("ItemPage pre-scan", () => {
     renderRoute(URL);
     const section = await screen.findByRole("region", { name: "Pre-scan" });
     expect(await within(section).findByText("Stale: frameworks/av HEAD moved")).toBeInTheDocument();
+    expect(within(section).getByText(/^Label:/)).toHaveTextContent("Label: Conflicts");
+    expect(within(section).getByText("frameworks/av: icon.png conflict")).toBeInTheDocument();
     const rows = within(section).getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("frameworks/av (path in description)");
     expect(rows[0]).toHaveTextContent("CameraService.h: Not present");
     expect(rows[0]).toHaveTextContent("ConflictsCameraService.h: Conflicts (3-way merge conflicts)");
     expect(rows[1]).toHaveTextContent("Unmapped candidates: system/core, hardware/interfaces");
+  });
+
+  it.each(TRIAGE_LABELS)("shows the %s label with its reason", async (label) => {
+    itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem({ label, label_reason: `why ${label}` }) });
+    renderRoute(URL);
+    const section = await screen.findByRole("region", { name: "Pre-scan" });
+    expect(await within(section).findByText(`why ${label}`)).toBeInTheDocument();
+    expect(within(section).getByText(/^Label:/)).toHaveTextContent(/^Label: \S/);
+  });
+
+  it("shows the line evidence of a likely present diff", async () => {
+    const likely = unmappedDiff({
+      project: "frameworks/base",
+      mapping_source: "files",
+      candidates: [],
+      presence: "likely_present",
+      presence_detail: {
+        files: { "Power.java": "likely_present" },
+        heuristic: {
+          "Power.java": { added: { found: 2, total: 3, missing: ["if (lock == null) return;"] }, removed: { gone: 1, total: 1, remaining: [] } },
+        },
+      },
+    });
+    itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem({ label: "likely_present", diffs: [likely] }) });
+    renderRoute(URL);
+    const evidence = await screen.findByRole("list", { name: "Line evidence" });
+    expect(evidence).toHaveTextContent("Power.java: 2 of 3 added lines found, 1 of 1 removed lines gone");
+    expect(within(evidence).getByText("if (lock == null) return;").tagName).toBe("CODE");
+  });
+
+  it("picks a project for an unmapped diff and shows the new results", async () => {
+    const picked = scannedItem({
+      label: "applies",
+      label_reason: "system/core: applies as is",
+      presence: "not_present",
+      diffs: [unmappedDiff({ project: "system/core", mapping_source: "manual", presence: "not_present", apply: "applies", target_head: "b".repeat(40) })],
+    });
+    const calls = itemApi({
+      "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem(),
+      "GET /workspaces/1/target-projects": () => ["frameworks/av", "hardware/interfaces", "system/core"],
+      "PUT /workspaces/1/items/PROJ-101/diffs/3/project": () => picked,
+    });
+    renderRoute(URL);
+    const section = await screen.findByRole("region", { name: "Pre-scan" });
+    const select = await within(section).findByRole("combobox", { name: "Project for build.patch" });
+    // Candidates first, then the rest of the tree.
+    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(4));
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Pick a project…",
+      "system/core",
+      "hardware/interfaces",
+      "frameworks/av",
+    ]);
+    expect(within(section).getByRole("button", { name: "Use project" })).toBeDisabled();
+    await userEvent.selectOptions(select, "system/core");
+    await userEvent.click(within(section).getByRole("button", { name: "Use project" }));
+
+    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ project: "system/core" });
+    const row = within(section).getAllByRole("row")[1];
+    await waitFor(() => expect(row).toHaveTextContent("system/core (picked by hand)"));
+    expect(row).toHaveTextContent("Applies");
+    expect(within(section).queryByRole("combobox", { name: "Project for build.patch" })).toBeNull();
+    // The item's history refetches.
+    await waitFor(() => expect(calls.filter((c) => c.method === "GET" && c.path === "/workspaces/1/items/PROJ-101")).toHaveLength(2));
+  });
+
+  it("changes a mapped project or goes back to the automatic mapping", async () => {
+    const manual = scannedItem({ diffs: [unmappedDiff({ project: "system/core", mapping_source: "manual", candidates: [] })] });
+    const calls = itemApi({
+      "GET /workspaces/1/items/PROJ-101/prescan": () => manual,
+      "GET /workspaces/1/target-projects": () => ["hardware/interfaces", "system/core"],
+      "PUT /workspaces/1/items/PROJ-101/diffs/3/project": () => scannedItem(),
+    });
+    renderRoute(URL);
+    const section = await screen.findByRole("region", { name: "Pre-scan" });
+    await userEvent.click(await within(section).findByRole("button", { name: "Change" }));
+    expect(await within(section).findByRole("option", { name: "hardware/interfaces" })).toBeInTheDocument();
+    await userEvent.click(within(section).getByRole("button", { name: "Cancel" }));
+    expect(within(section).queryByRole("combobox")).toBeNull();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Map automatically" }));
+    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ project: null });
+    expect(await within(section).findByRole("combobox", { name: "Project for build.patch" })).toBeInTheDocument();
+  });
+
+  it("shows why picking failed", async () => {
+    itemApi({
+      "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem(),
+      "GET /workspaces/1/target-projects": () => ["system/core"],
+      "PUT /workspaces/1/items/PROJ-101/diffs/3/project": () => ({ status: 409, body: { detail: "A pre-scan is already running for this workspace" } }),
+    });
+    renderRoute(URL);
+    const section = await screen.findByRole("region", { name: "Pre-scan" });
+    await userEvent.selectOptions(await within(section).findByRole("combobox", { name: "Project for build.patch" }), "system/core");
+    await userEvent.click(within(section).getByRole("button", { name: "Use project" }));
+    expect(await within(section).findByText(/A pre-scan is already running/)).toBeInTheDocument();
   });
 
   it("re-runs the pre-scan for this item and refetches its results when done", async () => {
@@ -332,7 +460,7 @@ describe("ItemPage pre-scan", () => {
       },
       "GET /workspaces/1/items/PROJ-101/prescan": () => {
         resultFetches += 1;
-        return { scanned: resultFetches > 1, presence: "present", stale: [], diffs: [] };
+        return { scanned: resultFetches > 1, label: "present", label_reason: "every file reverse-applies", presence: "present", stale: [], diffs: [] };
       },
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -345,7 +473,7 @@ describe("ItemPage pre-scan", () => {
       expect(await within(section).findByText(/Pre-scanning… 0 \/ 1/)).toBeInTheDocument();
       await vi.advanceTimersByTimeAsync(POLL_MS);
       expect(await within(section).findByText(/Pre-scan done: 1 item/)).toBeInTheDocument();
-      expect(await within(section).findByText("Already present")).toBeInTheDocument();
+      expect(await within(section).findByText("every file reverse-applies")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

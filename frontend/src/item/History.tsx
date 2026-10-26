@@ -66,6 +66,8 @@ function describe(event: HistoryEvent): Description {
       return { title: `State: ${stateLabel(p.old)} → ${stateLabel(p.new)}`, details: [] };
     case "note_added":
       return { title: "Note", details: [String(p.text ?? "")] };
+    case "project_picked":
+      return { title: `Target project for ${p.filename}: ${p.new ?? "mapped automatically"}`, details: [] };
     case "cluster_joined":
       return { title: `Added to cluster ${p.name}`, details: [] };
     case "cluster_left":

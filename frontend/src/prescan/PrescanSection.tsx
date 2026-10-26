@@ -1,7 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { api, type ApplyResult, type DiffScan, type Presence } from "../api";
+import { itemsKey } from "../backlog/ImportPanel";
+import { itemKey } from "../pages/ItemPage";
 import { itemPrescanKey, PrescanStatus, useLatestPrescan, useStartPrescan } from "./PrescanPanel";
+import { TRIAGE_TEXT, triageClass } from "./triage";
 
 export const PRESENCE_LABELS: Record<Presence, string> = {
   present: "Already present",
@@ -59,7 +63,12 @@ export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; 
       {prescan?.scanned && (
         <>
           <p>
-            Item: <span className={presenceClass(prescan.presence)}>{PRESENCE_LABELS[prescan.presence ?? "unknown"]}</span>
+            {prescan.label && (
+              <>
+                Label: <span className={triageClass(prescan.label)}>{TRIAGE_TEXT[prescan.label]}</span>{" "}
+                {prescan.label_reason && <span className="hint">{prescan.label_reason}</span>}
+              </>
+            )}
             {prescan.stale.map((reason) => (
               <span key={reason} className="tag tag-warn" title="Results are out of date; pre-scan again">
                 Stale: {reason}
@@ -77,7 +86,7 @@ export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; 
             </thead>
             <tbody>
               {prescan.diffs.map((d) => (
-                <DiffRow key={d.attachment_id} diff={d} />
+                <DiffRow key={d.attachment_id} workspaceId={workspaceId} itemKey={itemKey} diff={d} running={running} />
               ))}
             </tbody>
           </table>
@@ -87,7 +96,15 @@ export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; 
   );
 }
 
-function DiffRow({ diff }: { diff: DiffScan }) {
+interface DiffRowProps {
+  workspaceId: number;
+  itemKey: string;
+  diff: DiffScan;
+  // No picking while a pre-scan runs: the backend refuses it.
+  running: boolean;
+}
+
+function DiffRow({ workspaceId, itemKey, diff, running }: DiffRowProps) {
   if (diff.scanned_at === null) {
     return (
       <tr>
@@ -121,6 +138,7 @@ function DiffRow({ diff }: { diff: DiffScan }) {
             )}
           </>
         )}
+        <ProjectPicker workspaceId={workspaceId} itemKey={itemKey} diff={diff} disabled={running} />
       </td>
       <td>
         {diff.presence && <span className={presenceClass(diff.presence)}>{PRESENCE_LABELS[diff.presence]}</span>}
@@ -130,6 +148,18 @@ function DiffRow({ diff }: { diff: DiffScan }) {
             {Object.entries(detail.files).map(([path, status]) => (
               <li key={path}>
                 <span className="mono">{path}</span>: {PRESENCE_LABELS[status]}
+              </li>
+            ))}
+          </ul>
+        )}
+        {detail?.heuristic && (
+          <ul className="prescan-files" aria-label="Line evidence">
+            {Object.entries(detail.heuristic).map(([path, h]) => (
+              <li key={path}>
+                <span className="mono">{path}</span>: {h.added.found} of {h.added.total} added lines found, {h.removed.gone} of{" "}
+                {h.removed.total} removed lines gone
+                {h.added.missing.length > 0 && <Lines title="missing" lines={h.added.missing} />}
+                {h.removed.remaining.length > 0 && <Lines title="still there" lines={h.removed.remaining} />}
               </li>
             ))}
           </ul>
@@ -165,5 +195,94 @@ function DiffRow({ diff }: { diff: DiffScan }) {
         )}
       </td>
     </tr>
+  );
+}
+
+function Lines({ title, lines }: { title: string; lines: string[] }) {
+  return (
+    <div className="prescan-lines">
+      <span className="hint">{title}:</span>
+      {lines.map((line, i) => (
+        <code key={i}>{line}</code>
+      ))}
+    </div>
+  );
+}
+
+/** Pick the diff's project by hand (always offered while unmapped), or go back to the automatic mapping. */
+function ProjectPicker({ workspaceId, itemKey: key, diff, disabled }: { workspaceId: number; itemKey: string; diff: DiffScan; disabled: boolean }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [choice, setChoice] = useState("");
+  const shown = open || diff.project === null;
+  const projects = useQuery({
+    queryKey: ["targetProjects", workspaceId],
+    queryFn: () => api.targetProjects(workspaceId),
+    enabled: shown,
+  });
+  const pick = useMutation({
+    mutationFn: (project: string | null) => api.pickProject(workspaceId, key, diff.attachment_id, project),
+    onSuccess: (result) => {
+      queryClient.setQueryData(itemPrescanKey(workspaceId, key), result);
+      // Backlog label and the item's history changed too.
+      void queryClient.invalidateQueries({ queryKey: itemsKey(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: itemKey(workspaceId, key) });
+      setOpen(false);
+      setChoice("");
+    },
+  });
+  const others = (projects.data ?? []).filter((p) => !diff.candidates.includes(p));
+
+  return (
+    <div className="project-picker">
+      {shown ? (
+        <>
+          <select
+            aria-label={`Project for ${diff.filename}`}
+            value={choice}
+            onChange={(e) => setChoice(e.target.value)}
+            disabled={disabled || pick.isPending}
+          >
+            <option value="">Pick a project…</option>
+            {diff.candidates.length > 0 && (
+              <optgroup label="Candidates">
+                {diff.candidates.map((p) => (
+                  <option key={p}>{p}</option>
+                ))}
+              </optgroup>
+            )}
+            {others.length > 0 && (
+              <optgroup label="All projects">
+                {others.map((p) => (
+                  <option key={p}>{p}</option>
+                ))}
+              </optgroup>
+            )}
+          </select>{" "}
+          <button onClick={() => pick.mutate(choice)} disabled={!choice || disabled || pick.isPending}>
+            Use project
+          </button>
+          {open && (
+            <button onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          <button onClick={() => setOpen(true)} disabled={disabled}>
+            Change
+          </button>
+          {diff.mapping_source === "manual" && (
+            <button onClick={() => pick.mutate(null)} disabled={disabled || pick.isPending}>
+              Map automatically
+            </button>
+          )}
+        </>
+      )}
+      {pick.isPending && <span className="hint"> Pre-scanning…</span>}
+      {projects.isError && <span className="error"> {projects.error.message}</span>}
+      {pick.isError && <span className="error"> {pick.error.message}</span>}
+    </div>
   );
 }

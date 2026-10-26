@@ -688,3 +688,13 @@ body {
   padding-left: 18px;
   font-size: 0.9em;
 }
+
+.project-picker {
+  margin-top: 4px;
+}
+
+.prescan-lines code {
+  display: block;
+  margin-left: 12px;
+  white-space: pre-wrap;
+}
