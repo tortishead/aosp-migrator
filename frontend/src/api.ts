@@ -60,6 +60,12 @@ export interface Workspace {
   source_tree_type: TreeType | null;
   // Followed link types (type name or direction); empty means all.
   link_types: string[];
+  // Null: `build/envsetup.sh` of the repo root or target tree.
+  envsetup_path: string | null;
+  // Required to build.
+  lunch_target: string | null;
+  // Seconds.
+  build_timeout: number;
   created_at: string;
   updated_at: string;
 }
@@ -71,6 +77,9 @@ export interface WorkspaceInput {
   repo_root: string;
   source_tree: string;
   link_types: string[];
+  envsetup_path: string;
+  lunch_target: string;
+  build_timeout: number;
 }
 
 export interface AuthStatus {

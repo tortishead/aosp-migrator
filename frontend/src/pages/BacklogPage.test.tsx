@@ -16,6 +16,9 @@ const workspace = {
   source_tree: null,
   source_tree_type: null,
   link_types: [],
+  envsetup_path: null,
+  lunch_target: null,
+  build_timeout: 7200,
   created_at: "2026-10-25T19:00:00Z",
   updated_at: "2026-10-25T19:00:00Z",
 };

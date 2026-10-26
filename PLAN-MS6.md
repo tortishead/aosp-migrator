@@ -38,9 +38,10 @@ Comes before MS2-2: the whole path import → pre-scan → patch → build works
 - Test: component tests for plain and 3-way patches, empty state for conflicts.
 - Done as: `api/migration.py`: `GET …/items/{key}/patches` (no patch text; `current` = the current diff version's `current_patch`) and `GET …/patches/{id}` (parsed with hunks, like the diff endpoint). `DiffBody` takes an id, query key and loader; `useViewType` / `ViewToggle` shared. The tab (`?tab=migration`) opens the current patch first, superseded ones on click.
 
-**6.3 Build settings per workspace**
+**6.3 Build settings per workspace** — done
 - Migration adds `envsetup_path`, `lunch_target`, `build_timeout` to `workspace`. Validation: `envsetup.sh` is a file inside the target tree or repo root. Workspace form fields.
 - Test: default path, validation errors, build root derivation with and without repo root.
+- Done as: `build/env.py` (`envsetup_path`, `build_root`, `DEFAULT_TIMEOUT`). Empty `envsetup_path` stored as null (default resolved at use, not checked at save). An explicit one must be a file in a `build/` dir whose parent is inside the repo root (else target tree), so `build/make/envsetup.sh` is refused. Timeout in seconds in the API, minutes in the form.
 
 **6.4 Affected modules**
 - `build/modules.py`, pure: read `module-info.json`, map changed files to modules (longest path), fallback to nearest `Android.bp` / `Android.mk` directory, nothing-to-build, path conversion target tree ↔ build root.

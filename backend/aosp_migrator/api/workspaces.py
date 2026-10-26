@@ -13,7 +13,8 @@ from aosp_migrator.config import Config
 from aosp_migrator.db.models import Workspace
 from aosp_migrator.importer.runner import running_job
 from aosp_migrator.prescan import runner as prescan_runner
-from aosp_migrator.trees import TreePathError, detect_tree_type, validate_repo_root, validate_tree_path
+from aosp_migrator.build.env import DEFAULT_TIMEOUT
+from aosp_migrator.trees import TreePathError, detect_tree_type, validate_envsetup, validate_repo_root, validate_tree_path
 
 router = APIRouter(prefix="/workspaces")
 
@@ -28,6 +29,11 @@ class WorkspaceIn(BaseModel):
     source_tree: str | None = None
     # Empty: follow every link type.
     link_types: list[str] = []
+    # Empty: `build/envsetup.sh` of the repo root or target tree.
+    envsetup_path: str | None = None
+    lunch_target: str | None = None
+    # Seconds.
+    build_timeout: int = DEFAULT_TIMEOUT
 
 
 class WorkspaceOut(BaseModel):
@@ -42,6 +48,9 @@ class WorkspaceOut(BaseModel):
     source_tree: str | None
     source_tree_type: str | None
     link_types: list[str]
+    envsetup_path: str | None
+    lunch_target: str | None
+    build_timeout: int
     created_at: datetime
     updated_at: datetime
 
@@ -79,6 +88,14 @@ def _apply(workspace: Workspace, body: WorkspaceIn) -> None:
             source = validate_tree_path(body.source_tree)
         except TreePathError as exc:
             raise HTTPException(status_code=422, detail=f"Source tree {exc}") from exc
+    envsetup = None
+    if body.envsetup_path and body.envsetup_path.strip():
+        try:
+            envsetup = validate_envsetup(body.envsetup_path, repo_root or target)
+        except TreePathError as exc:
+            raise HTTPException(status_code=422, detail=f"envsetup.sh path {exc}") from exc
+    if body.build_timeout <= 0:
+        raise HTTPException(status_code=422, detail="Build timeout must be positive")
 
     workspace.name = name
     workspace.jql = jql
@@ -88,6 +105,9 @@ def _apply(workspace: Workspace, body: WorkspaceIn) -> None:
     workspace.source_tree = str(source) if source else None
     workspace.source_tree_type = detect_tree_type(source) if source else None
     workspace.link_types = _normalize_link_types(body.link_types)
+    workspace.envsetup_path = str(envsetup) if envsetup else None
+    workspace.lunch_target = (body.lunch_target or "").strip() or None
+    workspace.build_timeout = body.build_timeout
 
 
 def _commit(session: Session, workspace: Workspace) -> None:

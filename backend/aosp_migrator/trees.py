@@ -31,6 +31,20 @@ def validate_repo_root(value: str, target: Path) -> Path:
     return root
 
 
+def validate_envsetup(value: str, root: Path) -> Path:
+    """An `envsetup.sh` in a `build/` directory inside `root` (the repo root or target tree)."""
+    path = Path(value.strip()).expanduser()
+    if not path.is_absolute():
+        raise TreePathError(f"must be an absolute path: {value}")
+    if not path.is_file():
+        raise TreePathError(f"is not a file: {path}")
+    if path.parent.name != "build":
+        raise TreePathError(f"is not in a build/ directory: {path}")
+    if not path.parent.parent.is_relative_to(root):
+        raise TreePathError(f"is not inside {root}: {path}")
+    return path
+
+
 def detect_tree_type(path: Path) -> TreeType:
     if (path / ".repo").is_dir():
         return "repo"
