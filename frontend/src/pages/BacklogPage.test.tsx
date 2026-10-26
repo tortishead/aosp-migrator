@@ -514,9 +514,9 @@ describe("Backlog pre-scan overview", () => {
     expect(within(second).getByText("stale")).toHaveAttribute("title", "Out of date: frameworks/base HEAD moved");
     const third = screen.getByRole("link", { name: "PROJ-103" }).closest("tr")!;
     expect(third.querySelectorAll(".tag")).toHaveLength(0);
-    // The apply result shows next to a label that does not already say it.
+    // The apply result replaces a present label.
     const fourth = screen.getByRole("link", { name: "PROJ-104" }).closest("tr")!;
-    expect([...fourth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Partially present", "3-way merge"]);
+    expect([...fourth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["3-way merge"]);
     const fifth = screen.getByRole("link", { name: "PROJ-105" }).closest("tr")!;
     expect([...fifth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Applies"]);
   });
