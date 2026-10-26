@@ -25,6 +25,7 @@ export function Filters({ search, facets, clusters, update }: Props) {
       <MultiFilter label="Components" param="component" options={pairs(facets?.components)} search={search} update={update} />
       <MultiFilter label="Fix version" param="fix_version" options={pairs(facets?.fix_versions)} search={search} update={update} />
       <FlagFilter label="Diff" param="has_diff" yes="With diff" no="Without diff" search={search} update={update} />
+      <FlagFilter label="Import error" param="has_error" yes="With import error" no="Without import error" search={search} update={update} />
       <FlagFilter label="Dropped" param="dropped" yes="Dropped only" no="Not dropped" search={search} update={update} />
       <ClusterFilter clusters={clusters} search={search} update={update} />
       {hasFilters(search) && (

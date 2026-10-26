@@ -255,6 +255,7 @@ def list_items(
     fix_version: ListParam = None,
     dropped: bool | None = None,
     has_diff: bool | None = None,
+    has_error: bool | None = None,
     cluster: str | None = None,
     sort: Sort = "key",
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -277,6 +278,8 @@ def list_items(
         conditions.append(Item.dropped.is_(dropped))
     if has_diff is not None:
         conditions.append(_has_diff() if has_diff else ~_has_diff())
+    if has_error is not None:
+        conditions.append(Item.last_import_error.is_not(None) if has_error else Item.last_import_error.is_(None))
     if cluster:
         conditions.append(_in_cluster(cluster))
     if q:

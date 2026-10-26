@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from test_import import app, client, client_factory, history, jira_config, run_import, session, workspace_id  # noqa: F401
 
-from aosp_migrator.db.models import Attachment, Item
+from aosp_migrator.db.models import Attachment, Item, JiraIssue
 
 FILLER = [f"PROJ-{n}" for n in range(105, 126)]
 
@@ -81,10 +81,22 @@ def test_filters(client: TestClient, imported: int) -> None:
     assert keys(client, imported, fix_version="2026.Q4") == ["PROJ-101", "PROJ-102"]
     assert keys(client, imported, has_diff="true") == ["PROJ-101", "PROJ-102", "PROJ-103", "PROJ-104"]
     assert keys(client, imported, has_diff="false") == FILLER
+    assert keys(client, imported, has_error="true") == []
+    assert len(keys(client, imported, has_error="false")) == 25
     assert keys(client, imported, dropped="true") == []
     assert len(keys(client, imported, dropped="false")) == 25
     assert keys(client, imported, state="new") == keys(client, imported)
     assert keys(client, imported, state="closed") == []
+
+
+def test_filter_import_errors(app: FastAPI, client: TestClient, imported: int) -> None:
+    with session(app) as s:
+        item = s.scalars(select(Item).join(JiraIssue, Item.issue_id == JiraIssue.id).where(JiraIssue.key == "PROJ-103")).one()
+        item.last_import_error = "attachment download failed"
+        s.commit()
+    assert keys(client, imported, has_error="true") == ["PROJ-103"]
+    assert "PROJ-103" not in keys(client, imported, has_error="false")
+    assert len(keys(client, imported, has_error="false")) == 24
 
 
 def test_filters_combine_with_and(client: TestClient, imported: int) -> None:
