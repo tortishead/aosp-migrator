@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { TRIAGE_LABELS, type Cluster, type Facets } from "../api";
 import { TRIAGE_TEXT } from "../prescan/triage";
@@ -89,6 +89,15 @@ interface MultiFilterProps {
 }
 
 function MultiFilter({ label, param, options, search, update }: MultiFilterProps) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  // <details> stays open until its summary is clicked again; close it on any click elsewhere.
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (ref.current?.open && !ref.current.contains(e.target as Node)) ref.current.open = false;
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, []);
   const selected = search.getAll(param);
   // Keep selected values that the facets no longer list (e.g. from an old link) so they can be unchecked.
   const all = [...options, ...selected.filter((v) => !options.some(([o]) => o === v)).map((v): [string, string] => [v, v])];
@@ -102,7 +111,7 @@ function MultiFilter({ label, param, options, search, update }: MultiFilterProps
   }
 
   return (
-    <details className="filter">
+    <details className="filter" ref={ref}>
       <summary>
         {label}
         {selected.length > 0 && ` (${selected.length})`}

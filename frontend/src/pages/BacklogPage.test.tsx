@@ -177,6 +177,23 @@ describe("BacklogPage", () => {
     expect(screen.getByRole("combobox", { name: "Sort" })).toHaveValue("-updated");
   });
 
+  it("closes an open filter dropdown on a click outside it", async () => {
+    backlogApi();
+    renderRoute("/workspaces/1");
+    await screen.findByRole("link", { name: "PROJ-101" });
+
+    const summary = screen.getByText("Jira status", { selector: "summary" });
+    await userEvent.click(summary);
+    const details = summary.closest("details")!;
+    expect(details).toHaveAttribute("open");
+
+    await userEvent.click(within(screen.getByRole("group", { name: "Jira status" })).getByRole("checkbox", { name: "Open" }));
+    expect(details).toHaveAttribute("open");
+
+    await userEvent.click(document.body);
+    expect(details).not.toHaveAttribute("open");
+  });
+
   it("writes filter changes to the URL and resets the page", async () => {
     const calls = backlogApi();
     const { router } = renderRoute("/workspaces/1?page=2");
