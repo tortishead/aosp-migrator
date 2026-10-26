@@ -24,8 +24,9 @@ test("import from fake Jira, triage an item, reimport keeps local state", async 
   await page.getByLabel("Personal access token").fill("fake-jira-pat");
   await page.getByRole("button", { name: "Test connection" }).click();
   await expect(page.getByText(/^Connected as /)).toBeVisible();
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("Saved.")).toBeVisible();
+  const jira = page.getByRole("form", { name: "Jira" });
+  await jira.getByRole("button", { name: "Save" }).click();
+  await expect(jira.getByText("Saved.")).toBeVisible();
 
   // Import.
   await page.getByRole("link", { name: "Workspaces", exact: true }).click();

@@ -8,6 +8,8 @@ import { facetsKey, ImportPanel, itemsKey, useStartImport } from "../backlog/Imp
 import { apiParams, currentPage, hasFilters, PAGE_SIZE, STATE_LABELS } from "../backlog/params";
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
 import { PrescanPanel, useStartPrescan } from "../prescan/PrescanPanel";
+import { TriageBar } from "../prescan/TriageBar";
+import { TRIAGE_TEXT, triageClass } from "../prescan/triage";
 import { workspacesKey } from "../queryClient";
 
 const SORTS: [string, string][] = [
@@ -94,6 +96,7 @@ export function BacklogPage() {
       </div>
       <ImportPanel workspaceId={workspaceId} />
       <PrescanPanel workspaceId={workspaceId} />
+      <TriageBar workspaceId={workspaceId} search={search} update={update} />
       <Filters search={search} facets={facets.data} clusters={clusters.data} update={update} />
       <div className="backlog-toolbar">
         <select aria-label="Sort" value={search.get("sort") ?? "key"} onChange={(e) => update((next) => next.set("sort", e.target.value))}>
@@ -150,6 +153,7 @@ export function BacklogPage() {
               <th>Components</th>
               <th>Fix version</th>
               <th>Diffs</th>
+              <th>Pre-scan</th>
               <th>Cluster</th>
               <th>Updated</th>
             </tr>
@@ -218,6 +222,18 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
       <td>{item.components.join(", ")}</td>
       <td>{item.fix_versions.join(", ")}</td>
       <td>{item.diff_count || ""}</td>
+      <td className="nowrap">
+        {item.triage_label && (
+          <span className={triageClass(item.triage_label)} title={item.triage_reason ?? undefined}>
+            {TRIAGE_TEXT[item.triage_label]}
+          </span>
+        )}
+        {item.stale.length > 0 && (
+          <span className="tag tag-warn" title={`Out of date: ${item.stale.join("; ")}`}>
+            stale
+          </span>
+        )}
+      </td>
       <td>{item.cluster && <Link to={`/workspaces/${workspaceId}/clusters/${item.cluster.id}`}>{item.cluster.name}</Link>}</td>
       <td className="nowrap">{new Date(item.jira_updated).toLocaleDateString()}</td>
     </tr>

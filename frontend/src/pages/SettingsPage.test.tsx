@@ -1,18 +1,18 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import type { Settings } from "../api";
+import type { Settings, Source } from "../api";
 import { mockApi, renderRoute } from "../test-utils";
 
-function settings(overrides: Partial<Settings["jira"]> = {}): Settings {
+function settings(overrides: Partial<Settings["jira"]> = {}, domains: { source: Source; value: string[] } = { source: "unset", value: ["google.com", "android.com"] }): Settings {
   return {
     jira: {
       base_url: { source: "file", value: "https://jira.example.com" },
       pat: { source: "file", is_set: true },
       ...overrides,
     },
-    prescan: { upstream_domains: { source: "unset", value: ["google.com", "android.com"] } },
+    prescan: { upstream_domains: domains },
   };
 }
 
@@ -32,7 +32,7 @@ describe("SettingsPage", () => {
     const baseUrl = await screen.findByLabelText("Base URL");
     await userEvent.clear(baseUrl);
     await userEvent.type(baseUrl, "https://jira.other.com");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(within(screen.getByRole("form", { name: "Jira" })).getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Saved.")).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ jira: { base_url: "https://jira.other.com" } });
   });
@@ -42,7 +42,7 @@ describe("SettingsPage", () => {
     renderRoute("/settings");
     const pat = await screen.findByLabelText("Personal access token");
     await userEvent.type(pat, "new-token");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(within(screen.getByRole("form", { name: "Jira" })).getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Saved.")).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({
       jira: { base_url: "https://jira.example.com", pat: "new-token" },
@@ -88,5 +88,38 @@ describe("SettingsPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Clear token" }));
     expect(await screen.findByLabelText("Personal access token")).toHaveAttribute("placeholder", "Not set");
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ jira: { pat: "" } });
+  });
+
+  it("shows the default upstream domains as a placeholder and saves new ones", async () => {
+    const calls = mockApi({
+      "GET /settings": () => settings(),
+      "PUT /settings": () => settings({}, { source: "file", value: ["google.com", "oem.example.com"] }),
+    });
+    renderRoute("/settings");
+    const domains = await screen.findByLabelText("Upstream author domains");
+    expect(domains).toHaveValue("");
+    expect(domains).toHaveAttribute("placeholder", "google.com, android.com");
+    await userEvent.type(domains, "google.com, OEM.example.com");
+    await userEvent.click(within(screen.getByRole("form", { name: "Pre-scan" })).getByRole("button", { name: "Save" }));
+    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ prescan: { upstream_domains: "google.com, OEM.example.com" } });
+    expect(await screen.findByDisplayValue("google.com, oem.example.com")).toBeInTheDocument();
+  });
+
+  it("shows a domain error and locks domains set by the environment", async () => {
+    mockApi({
+      "GET /settings": () => settings(),
+      "PUT /settings": () => ({ status: 422, body: { detail: "Not an email domain: nope" } }),
+    });
+    const { unmount } = renderRoute("/settings");
+    await userEvent.type(await screen.findByLabelText("Upstream author domains"), "nope");
+    await userEvent.click(within(screen.getByRole("form", { name: "Pre-scan" })).getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Not an email domain: nope")).toBeInTheDocument();
+    unmount();
+
+    mockApi({ "GET /settings": () => settings({}, { source: "env", value: ["corp.example.com"] }) });
+    renderRoute("/settings");
+    expect(await screen.findByLabelText("Upstream author domains")).toBeDisabled();
+    expect(screen.getByLabelText("Upstream author domains")).toHaveValue("corp.example.com");
+    expect(screen.getByText("Set by AOSP_MIGRATOR_UPSTREAM_DOMAINS.")).toBeInTheDocument();
   });
 });

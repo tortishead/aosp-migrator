@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-import type { Cluster, Facets, LocalState } from "../api";
+import { TRIAGE_LABELS, type Cluster, type Facets, type LocalState } from "../api";
+import { TRIAGE_TEXT } from "../prescan/triage";
 import { hasFilters, STATE_LABELS, type ListFilter } from "./params";
 
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -16,6 +17,7 @@ interface Props {
 
 export function Filters({ search, facets, clusters, update }: Props) {
   const states = Object.entries(STATE_LABELS) as [LocalState, string][];
+  const triage: [string, string][] = [...TRIAGE_LABELS.map((l): [string, string] => [l, TRIAGE_TEXT[l]]), ["none", "Not scanned"]];
   return (
     <div className="filters" role="search">
       <SearchBox value={search.get("q") ?? ""} update={update} />
@@ -27,6 +29,8 @@ export function Filters({ search, facets, clusters, update }: Props) {
       <FlagFilter label="Diff" param="has_diff" yes="With diff" no="Without diff" search={search} update={update} />
       <FlagFilter label="Import error" param="has_error" yes="With import error" no="Without import error" search={search} update={update} />
       <FlagFilter label="Dropped" param="dropped" yes="Dropped only" no="Not dropped" search={search} update={update} />
+      <MultiFilter label="Pre-scan" param="triage" options={triage} search={search} update={update} />
+      <FlagFilter label="Stale" param="stale" yes="Stale only" no="Not stale" search={search} update={update} />
       <ClusterFilter clusters={clusters} search={search} update={update} />
       {hasFilters(search) && (
         <button
