@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from aosp_migrator import db
-from aosp_migrator.api import auth, clusters, health, imports, items, migration, prescan, settings, workspaces
+from aosp_migrator.api import auth, build, clusters, health, imports, items, migration, prescan, settings, workspaces
 from aosp_migrator.build import runner as build_runner
 from aosp_migrator.config import Config, resolve_data_dir
 from aosp_migrator.importer.runner import ImportRunner, fail_interrupted_jobs
@@ -58,6 +58,7 @@ def create_app(
     app.include_router(imports.router, prefix="/api")
     app.include_router(prescan.router, prefix="/api")
     app.include_router(migration.router, prefix="/api")
+    app.include_router(build.router, prefix="/api")
     app.include_router(items.router, prefix="/api")
     app.include_router(clusters.router, prefix="/api")
 

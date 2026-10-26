@@ -115,6 +115,9 @@ export interface Item {
   triage_reason: string | null;
   /** Why the pre-scan results are out of date; empty when fresh or never scanned. */
   stale: string[];
+  /** Result of the last finished build and why; null until built. */
+  build_status: BuildStatus | null;
+  build_reason: string | null;
 }
 
 export interface ItemPage {
@@ -399,6 +402,67 @@ export interface ItemPrescan {
   diffs: DiffScan[];
 }
 
+/** Worst first. */
+export const BUILD_STATUSES = ["apply_failed", "build_failed", "build_successful"] as const;
+export type BuildStatus = (typeof BUILD_STATUSES)[number];
+
+export interface BuildJob {
+  id: number;
+  workspace_id: number;
+  /** `keys`: one unit per item; `cluster`: the cluster's members as one unit. */
+  scope: "keys" | "cluster";
+  /** Eligible items, in build order. */
+  issue_keys: string[];
+  cluster_id: number | null;
+  /** Selected items not built, and why. */
+  skipped: { key: string; reason: string }[];
+  status: JobStatus;
+  /** Units. */
+  done: number;
+  total: number;
+  /** Units that failed unexpectedly; the job carried on. */
+  errors: { keys: string[]; message: string }[];
+  error: string | null;
+  cancel_requested: boolean;
+  started_at: string;
+  finished_at: string | null;
+  /** Keys of the unit building now, or last built; null before the first unit. */
+  unit_keys: string[] | null;
+  /** Last lines of that unit's log. */
+  log_tail: string | null;
+}
+
+export interface BuildRun {
+  id: number;
+  job_id: number;
+  /** Every item of the unit, in build order. */
+  keys: string[];
+  cluster_id: number | null;
+  patch_ids: number[];
+  tool: "m" | "mmm" | null;
+  /** Module names (`m`) or directories relative to the build root (`mmm`). */
+  modules: string[];
+  command: string | null;
+  status: BuildStatus | "running" | "canceled" | "interrupted" | "error";
+  summary: string | null;
+  /** Where the full log is served; null when there is none. */
+  log_url: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface BuildSummary {
+  /** Items per build status, every status in order, zeros included. Dropped items are not counted. */
+  statuses: Record<BuildStatus, number>;
+  unbuilt: number;
+}
+
+export async function fetchText(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) throw new ApiError(response.status, response.statusText || `HTTP ${response.status}`);
+  return response.text();
+}
+
 export const api = {
   authStatus: () => apiFetch<AuthStatus>("/auth/status"),
   login: (token: string) =>
@@ -489,6 +553,14 @@ export const api = {
   itemPatches: (workspaceId: number, key: string) =>
     apiFetch<ItemPatch[]>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/patches`),
   patch: (workspaceId: number, patchId: number) => apiFetch<DiffWithHunks>(`/workspaces/${workspaceId}/patches/${patchId}`),
+  startBuild: (workspaceId: number, what: { keys: string[] } | { cluster_id: number }) =>
+    apiFetch<BuildJob>(`/workspaces/${workspaceId}/build`, { method: "POST", body: JSON.stringify(what) }),
+  buildJobs: (workspaceId: number, limit: number) => apiFetch<BuildJob[]>(`/workspaces/${workspaceId}/build-jobs?limit=${limit}`),
+  cancelBuild: (jobId: number) => apiFetch<BuildJob>(`/build-jobs/${jobId}/cancel`, { method: "POST" }),
+  buildSummary: (workspaceId: number) => apiFetch<BuildSummary>(`/workspaces/${workspaceId}/build-summary`),
+  // Newest first.
+  itemBuilds: (workspaceId: number, key: string) =>
+    apiFetch<BuildRun[]>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/builds`),
   targetProjects: (workspaceId: number) => apiFetch<string[]>(`/workspaces/${workspaceId}/target-projects`),
   // Null project: back to the automatic mapping. The item is pre-scanned again before this returns.
   pickProject: (workspaceId: number, key: string, attachmentId: number, project: string | null) =>

@@ -419,6 +419,46 @@ p.tag {
   padding-left: 20px;
 }
 
+.build-tail summary {
+  color: var(--fg-muted);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.build-tail pre,
+.build-log,
+.build-summary {
+  margin: 4px 0;
+  font-family: var(--mono);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Opens over the page like the error lists, wide enough for compiler lines. */
+.build-tail[open] pre {
+  position: absolute;
+  right: 0;
+  z-index: 5;
+  width: min(760px, 90vw);
+  max-height: 360px;
+  padding: 8px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  box-shadow: var(--shadow-pop);
+}
+
+.build-log {
+  max-height: 480px;
+  padding: 8px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;

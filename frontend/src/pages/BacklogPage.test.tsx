@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { Cluster, Facets, ImportJob, Item, ItemPage, PrescanJob, PrescanSummary, TriageLabel } from "../api";
+import type { BuildJob, BuildSummary, Cluster, Facets, ImportJob, Item, ItemPage, PrescanJob, PrescanSummary, TriageLabel } from "../api";
 import { POLL_MS } from "../backlog/ImportPanel";
 import { mockApi, renderRoute, type ApiCall } from "../test-utils";
 
@@ -49,6 +49,8 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     triage_label: null,
     triage_reason: null,
     stale: [],
+    build_status: null,
+    build_reason: null,
     ...overrides,
   };
 }
@@ -95,6 +97,32 @@ function prescanJob(overrides: Partial<PrescanJob> = {}): PrescanJob {
   };
 }
 
+function buildJob(overrides: Partial<BuildJob> = {}): BuildJob {
+  return {
+    id: 4,
+    workspace_id: 1,
+    scope: "keys",
+    issue_keys: ["PROJ-101", "PROJ-102"],
+    cluster_id: null,
+    skipped: [],
+    status: "running",
+    done: 0,
+    total: 2,
+    errors: [],
+    error: null,
+    cancel_requested: false,
+    started_at: "2026-10-25T20:00:00Z",
+    finished_at: null,
+    unit_keys: null,
+    log_tail: null,
+    ...overrides,
+  };
+}
+
+function buildSummary(statuses: Partial<BuildSummary["statuses"]> = {}, unbuilt = 0): BuildSummary {
+  return { statuses: { apply_failed: 0, build_failed: 0, build_successful: 0, ...statuses }, unbuilt };
+}
+
 function summary(labels: Partial<Record<TriageLabel, number>> = {}, unlabeled = 0, stale = 0): PrescanSummary {
   const zeros = { error: 0, unmapped: 0, unknown: 0, conflicts: 0, partial: 0, "3way": 0, applies: 0, likely_present: 0, present: 0 };
   return { labels: { ...zeros, ...labels }, unlabeled, stale };
@@ -119,6 +147,8 @@ function backlogApi(handlers: Parameters<typeof mockApi>[0] = {}) {
     "GET /workspaces/1/import-jobs": () => [],
     "GET /workspaces/1/prescan-jobs": () => [],
     "GET /workspaces/1/prescan-summary": () => summary(),
+    "GET /workspaces/1/build-jobs": () => [],
+    "GET /workspaces/1/build-summary": () => buildSummary(),
     ...handlers,
   });
 }
@@ -608,5 +638,121 @@ describe("Backlog pre-scan overview", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Backlog build", () => {
+  it("builds the selected items and lists the skipped ones", async () => {
+    const calls = backlogApi({
+      "POST /workspaces/1/build": () => ({
+        status: 202,
+        body: buildJob({ issue_keys: ["PROJ-101"], total: 1, skipped: [{ key: "PROJ-102", reason: "pre-scan: conflicts" }] }),
+      }),
+    });
+    renderRoute("/workspaces/1");
+    expect(await screen.findByRole("link", { name: "PROJ-101" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Build" })).toBeNull();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select all on this page" }));
+    await userEvent.click(screen.getByRole("button", { name: "Build selected" }));
+    expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/build")?.body).toEqual({ keys: ["PROJ-101", "PROJ-102"] });
+    const panel = await screen.findByRole("region", { name: "Build" });
+    expect(within(panel).getByRole("status")).toHaveTextContent("Building … (0 / 1)");
+    await userEvent.click(within(panel).getByText("1 item not built"));
+    expect(within(panel).getByRole("link", { name: "PROJ-102" }).closest("li")).toHaveTextContent("PROJ-102: pre-scan: conflicts");
+  });
+
+  it("shows the build in progress with its live log, refreshes the backlog as units finish, and cancels", async () => {
+    let polls = 0;
+    const calls = backlogApi({
+      "GET /workspaces/1/build-jobs": () => {
+        polls += 1;
+        if (polls === 1) return [buildJob({ unit_keys: ["PROJ-101"], log_tail: "lunch aosp_x86_64-eng\nmmm system/core" })];
+        return [buildJob({ done: 1, unit_keys: ["PROJ-102"], log_tail: "mmm packages/apps/Settings" })];
+      },
+      "POST /build-jobs/4/cancel": () => ({ status: 202, body: buildJob({ done: 1, unit_keys: ["PROJ-102"], cancel_requested: true }) }),
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderRoute("/workspaces/1");
+      const panel = await screen.findByRole("region", { name: "Build" });
+      expect(within(panel).getByRole("status")).toHaveTextContent("Building PROJ-101 (0 / 2)");
+      await userEvent.click(within(panel).getByText("Live log"));
+      expect(within(panel).getByLabelText("Build log tail")).toHaveTextContent("mmm system/core");
+      const before = calls.filter((c) => c.path === "/workspaces/1/build-summary").length;
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(await within(panel).findByText(/Building PROJ-102 \(1 \/ 2\)/)).toBeInTheDocument();
+      expect(within(panel).getByLabelText("Build log tail")).toHaveTextContent("mmm packages/apps/Settings");
+      await waitFor(() => expect(calls.filter((c) => c.path === "/workspaces/1/build-summary").length).toBeGreaterThan(before));
+    } finally {
+      vi.useRealTimers();
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Cancel build" }));
+    expect(calls.some((c) => c.method === "POST" && c.path === "/build-jobs/4/cancel")).toBe(true);
+    expect(await screen.findByText(/\(canceling\)/)).toBeInTheDocument();
+  });
+
+  it.each([
+    [buildJob({ status: "done", done: 2, finished_at: "2026-10-25T20:05:00Z" }), "Build done: 2 units"],
+    [buildJob({ status: "done", total: 0, skipped: [{ key: "PROJ-102", reason: "not pre-scanned" }] }), "Build: nothing eligible"],
+    [buildJob({ status: "canceled", done: 1 }), "Build canceled after 1 of 2 units"],
+    [buildJob({ status: "failed", error: "envsetup.sh not found: /src/aosp15/build/envsetup.sh" }), "Build failed: envsetup.sh not found: /src/aosp15/build/envsetup.sh"],
+  ])("shows a finished build: %#", async (job, text) => {
+    backlogApi({ "GET /workspaces/1/build-jobs": () => [job] });
+    renderRoute("/workspaces/1");
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel build" })).toBeNull();
+  });
+
+  it("lists units that failed unexpectedly", async () => {
+    backlogApi({ "GET /workspaces/1/build-jobs": () => [buildJob({ status: "done", done: 2, errors: [{ keys: ["PROJ-102"], message: "disk full" }] })] });
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByText("1 unit failed unexpectedly"));
+    expect(screen.getByText("PROJ-102: disk full")).toBeInTheDocument();
+  });
+
+  it("shows the build column with the reason", async () => {
+    backlogApi({
+      "GET /workspaces/1/items": () =>
+        page([
+          item("PROJ-101", { build_status: "build_successful", build_reason: "" }),
+          item("PROJ-102", { build_status: "build_failed", build_reason: "FAILED: out/target/Settings.apk" }),
+          item("PROJ-103"),
+        ]),
+    });
+    renderRoute("/workspaces/1");
+    expect(await screen.findByRole("columnheader", { name: "Build" })).toBeInTheDocument();
+    const first = (await screen.findByRole("link", { name: "PROJ-101" })).closest("tr")!;
+    expect(within(first).getByText("Built")).toHaveClass("tag-ok");
+    expect(within(first).getByText("Built")).not.toHaveAttribute("title");
+    const second = screen.getByRole("link", { name: "PROJ-102" }).closest("tr")!;
+    expect(within(second).getByText("Build failed")).toHaveAttribute("title", "FAILED: out/target/Settings.apk");
+    expect(within(second).getByText("Build failed")).toHaveClass("tag-error");
+    const third = screen.getByRole("link", { name: "PROJ-103" }).closest("tr")!;
+    expect(third.querySelectorAll(".tag")).toHaveLength(0);
+  });
+
+  it("counts items per build status and filters by a click or the filter", async () => {
+    const calls = backlogApi({ "GET /workspaces/1/build-summary": () => buildSummary({ build_failed: 2, build_successful: 5 }, 18) });
+    const { router } = renderRoute("/workspaces/1");
+    const bar = await screen.findByRole("group", { name: "Build counts" });
+    expect(within(bar).getAllByRole("button").map((b) => b.textContent)).toEqual(["2 build failed", "5 built", "18 not built"]);
+    await userEvent.click(within(bar).getByRole("button", { name: "2 build failed" }));
+    expect(new URLSearchParams(router.state.location.search).getAll("build")).toEqual(["build_failed"]);
+    await waitFor(() => expect(lastItemQuery(calls).getAll("build")).toEqual(["build_failed"]));
+    await userEvent.click(within(bar).getByRole("button", { name: "2 build failed" }));
+    await waitFor(() => expect(lastItemQuery(calls).has("build")).toBe(false));
+
+    await userEvent.click(screen.getByText("Build", { selector: "summary" }));
+    const statuses = screen.getByRole("group", { name: "Build" });
+    await userEvent.click(within(statuses).getByLabelText("Apply failed"));
+    await userEvent.click(within(statuses).getByLabelText("Not built"));
+    await waitFor(() => expect(lastItemQuery(calls).getAll("build")).toEqual(["apply_failed", "none"]));
+  });
+
+  it("hides the build count bar until something is built", async () => {
+    backlogApi({ "GET /workspaces/1/build-summary": () => buildSummary({}, 25) });
+    renderRoute("/workspaces/1");
+    await screen.findByRole("link", { name: "PROJ-101" });
+    expect(screen.queryByRole("group", { name: "Build counts" })).not.toBeInTheDocument();
   });
 });

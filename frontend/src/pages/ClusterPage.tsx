@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router";
 
 import { api, type ClusterDetail, type LocalState } from "../api";
 import { STATE_LABELS } from "../backlog/params";
+import { BuildPanel, useStartBuild } from "../build/BuildPanel";
 import { clusterKey, confirmingDissolve, memberWarning, useRefreshClusters } from "../clusters/shared";
 import { describeClusterEvent, HistoryTimeline } from "../item/History";
 
@@ -38,6 +39,7 @@ export function ClusterPage() {
       </div>
       <NameForm workspaceId={workspaceId} detail={detail} />
       <Members workspaceId={workspaceId} detail={detail} />
+      <BuildBox workspaceId={workspaceId} detail={detail} />
       <ChangedFiles detail={detail} />
       <Notes workspaceId={workspaceId} detail={detail} />
       <section aria-label="History">
@@ -213,6 +215,23 @@ function Members({ workspaceId, detail }: { workspaceId: number; detail: Cluster
           Apply
         </button>
         {[reorder, remove, changeState].map((m, i) => m.isError && <span key={i} className="error">{m.error.message}</span>)}
+      </div>
+    </section>
+  );
+}
+
+function BuildBox({ workspaceId, detail }: { workspaceId: number; detail: ClusterDetail }) {
+  const build = useStartBuild(workspaceId);
+  return (
+    <section aria-label="Build">
+      <h2>Build</h2>
+      <p className="hint">All members in order, applied together, one build; members the pre-scan did not find applying are skipped.</p>
+      <div className="actions">
+        <button onClick={() => build.mutate({ cluster_id: detail.id })} disabled={build.isPending}>
+          Build cluster
+        </button>
+        <BuildPanel workspaceId={workspaceId} />
+        {build.isError && <span className="error">{build.error.message}</span>}
       </div>
     </section>
   );

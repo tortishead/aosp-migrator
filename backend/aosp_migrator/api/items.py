@@ -9,6 +9,7 @@ from sqlalchemy import ColumnElement, Integer, Select, cast, column, exists, fun
 from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
+from aosp_migrator.api.build import BUILD_STATUSES
 from aosp_migrator.config import JIRA_BASE_URL, Config
 from aosp_migrator.db.models import (
     Attachment,
@@ -72,6 +73,9 @@ class ItemOut(BaseModel):
     triage_reason: str | None
     # Why the pre-scan results are out of date; empty when fresh or never scanned.
     stale: list[str]
+    # Result of the last finished build and why; None until built.
+    build_status: str | None
+    build_reason: str | None
 
 
 class ItemPage(BaseModel):
@@ -246,6 +250,14 @@ def _triage(labels: list[str]) -> ColumnElement[bool]:
     return or_(condition, Item.triage_label.is_(None)) if "none" in labels else condition
 
 
+def _build(statuses: list[str]) -> ColumnElement[bool]:
+    """Any of the build statuses; `none` matches items never built."""
+    if unknown := [s for s in statuses if s != "none" and s not in BUILD_STATUSES]:
+        raise HTTPException(status_code=422, detail=f"Unknown build status: {', '.join(unknown)}")
+    condition = Item.build_status.in_([s for s in statuses if s != "none"])
+    return or_(condition, Item.build_status.is_(None)) if "none" in statuses else condition
+
+
 def _sort_key(sort: Sort) -> list[Any]:
     name = sort.removeprefix("-")
     if name == "key":
@@ -275,6 +287,7 @@ def list_items(
     cluster: str | None = None,
     triage: ListParam = None,
     stale: bool | None = None,
+    build: ListParam = None,
     sort: Sort = "key",
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -303,6 +316,8 @@ def list_items(
         conditions.append(_in_cluster(cluster))
     if triage:
         conditions.append(_triage(triage))
+    if build:
+        conditions.append(_build(build))
     if stale is not None:
         # Needs every scanned item's HEADs, so only when asked for.
         stale_ids = list(stale_items(session, workspace_id, tree))
@@ -347,6 +362,8 @@ def list_items(
             triage_label=item.triage_label,
             triage_reason=item.triage_reason,
             stale=stale_reasons.get(item.id, []),
+            build_status=item.build_status,
+            build_reason=item.build_reason,
         )
         for item, issue, count, cluster_id, cluster_name in rows
     ]

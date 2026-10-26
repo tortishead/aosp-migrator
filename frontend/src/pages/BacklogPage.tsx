@@ -4,6 +4,9 @@ import { Link, useParams, useSearchParams } from "react-router";
 
 import { api, type Cluster, type ClusterRef, type Item, type LocalState } from "../api";
 import { Filters } from "../backlog/Filters";
+import { BuildBar } from "../build/BuildBar";
+import { BuildPanel, useStartBuild } from "../build/BuildPanel";
+import { BuildTag } from "../build/BuildTag";
 import { facetsKey, ImportPanel, itemsKey, useStartImport } from "../backlog/ImportPanel";
 import { apiParams, currentPage, hasFilters, PAGE_SIZE, STATE_LABELS } from "../backlog/params";
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
@@ -96,9 +99,11 @@ export function BacklogPage() {
         <div className="header-jobs">
           <ImportPanel workspaceId={workspaceId} />
           <PrescanPanel workspaceId={workspaceId} />
+          <BuildPanel workspaceId={workspaceId} />
         </div>
       </div>
       <TriageBar workspaceId={workspaceId} search={search} update={update} />
+      <BuildBar workspaceId={workspaceId} search={search} update={update} />
       <Filters search={search} facets={facets.data} clusters={clusters.data} update={update} />
       <div className="backlog-toolbar">
         <select aria-label="Sort" value={search.get("sort") ?? "key"} onChange={(e) => update((next) => next.set("sort", e.target.value))}>
@@ -154,6 +159,7 @@ export function BacklogPage() {
               <th>Labels</th>
               <th>Diffs</th>
               <th>Pre-scan</th>
+              <th>Build</th>
               <th>Cluster</th>
               <th>Updated</th>
             </tr>
@@ -233,6 +239,9 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
       <td className="nowrap">
         <TriageTags item={item} />
       </td>
+      <td className="nowrap">
+        <BuildTag status={item.build_status} reason={item.build_reason} />
+      </td>
       <td>{item.cluster && <Link to={`/workspaces/${workspaceId}/clusters/${item.cluster.id}`}>{item.cluster.name}</Link>}</td>
       <td className="nowrap">{new Date(item.jira_updated).toLocaleDateString()}</td>
     </tr>
@@ -258,6 +267,7 @@ function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered 
   });
   const reimport = useStartImport(workspaceId);
   const prescan = useStartPrescan(workspaceId);
+  const build = useStartBuild(workspaceId);
   const refreshClusters = useRefreshClusters(workspaceId);
   const [target, setTarget] = useState("");
   // No target cluster: a new one from the selection.
@@ -295,6 +305,9 @@ function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered 
       <button onClick={() => prescan.mutate(keys)} disabled={prescan.isPending}>
         Pre-scan selected
       </button>
+      <button onClick={() => build.mutate({ keys })} disabled={build.isPending} title="Items the pre-scan found applying, as is or 3-way">
+        Build selected
+      </button>
       <button
         onClick={() => cluster.mutate(null)}
         disabled={keys.length < 2 || cluster.isPending}
@@ -321,6 +334,7 @@ function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered 
       {cluster.isError && <span className="error">{cluster.error.message}</span>}
       {reimport.isError && <span className="error">{reimport.error.message}</span>}
       {prescan.isError && <span className="error">{prescan.error.message}</span>}
+      {build.isError && <span className="error">{build.error.message}</span>}
     </div>
   );
 }
