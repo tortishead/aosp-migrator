@@ -503,6 +503,8 @@ describe("Backlog pre-scan overview", () => {
           item("PROJ-103", { diff_count: 0 }),
           item("PROJ-104", { triage_label: "partial", triage_reason: "frameworks/base: Foo.java already in", apply: "3way" }),
           item("PROJ-105", { triage_label: "applies", apply: "applies" }),
+          item("PROJ-106", { triage_label: "unknown", triage_reason: "frameworks/av: history unavailable", apply: "conflicts" }),
+          item("PROJ-107", { triage_label: "applies", apply: "conflicts" }),
         ]),
     });
     renderRoute("/workspaces/1");
@@ -519,6 +521,11 @@ describe("Backlog pre-scan overview", () => {
     expect([...fourth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["3-way merge"]);
     const fifth = screen.getByRole("link", { name: "PROJ-105" }).closest("tr")!;
     expect([...fifth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Applies"]);
+    // One verdict per item: the label wins over any other apply result.
+    const sixth = screen.getByRole("link", { name: "PROJ-106" }).closest("tr")!;
+    expect([...sixth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Unknown"]);
+    const seventh = screen.getByRole("link", { name: "PROJ-107" }).closest("tr")!;
+    expect([...seventh.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Applies"]);
   });
 
   it("counts items per label and filters by a click", async () => {
