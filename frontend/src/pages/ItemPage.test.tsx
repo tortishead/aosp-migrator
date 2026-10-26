@@ -2,9 +2,19 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { type DiffScan, type HistoryEvent, type ImportJob, type ItemDetail, type ItemPrescan, type Note, type PrescanJob, TRIAGE_LABELS } from "../api";
+import {
+  type DiffScan,
+  type HistoryEvent,
+  type ImportJob,
+  type ItemDetail,
+  type ItemPatch,
+  type ItemPrescan,
+  type Note,
+  type PrescanJob,
+  TRIAGE_LABELS,
+} from "../api";
 import { POLL_MS } from "../backlog/ImportPanel";
-import { diffHandlers, itemDetail } from "../item/fixtures";
+import { cameraV1, cameraV2, diffHandlers, itemDetail, PATCH } from "../item/fixtures";
 import { mockApi, renderRoute } from "../test-utils";
 
 const URL = "/workspaces/1/items/PROJ-101";
@@ -517,5 +527,83 @@ describe("ItemPage pre-scan", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+function itemPatch(overrides: Partial<ItemPatch> = {}): ItemPatch {
+  return {
+    id: 7,
+    attachment_id: 12,
+    jira_id: "12",
+    filename: PATCH,
+    project: "frameworks/av",
+    source: "original",
+    level: "plain",
+    base_head: "b".repeat(40),
+    author: "Jane Doe <jane.doe@example.com>",
+    message: "camera: fix null deref on resume\n\nBug: PROJ-101",
+    current: true,
+    created_at: "2026-10-26T10:00:00Z",
+    ...overrides,
+  };
+}
+
+const CPP = "services/camera/libcameraservice/CameraService.cpp";
+
+describe("ItemPage migration tab", () => {
+  it("lists a plain patch and opens it in the diff viewer", async () => {
+    const calls = itemApi({
+      "GET /workspaces/1/items/PROJ-101/patches": () => [itemPatch()],
+      "GET /workspaces/1/patches/7": () => ({ ...cameraV2, format: "plain", commits: [] }),
+    });
+    const { router } = renderRoute(URL);
+    await userEvent.click(await screen.findByRole("tab", { name: "Migration" }));
+    expect(router.state.location.search).toBe("?tab=migration");
+
+    const section = await screen.findByRole("region", { name: "Migration patches" });
+    const rows = within(await within(section).findByRole("table", { name: "Patches" })).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent(`${PATCH}frameworks/avApplies as isJira diffbbbbbbbbbbbb`);
+    expect(rows[0]).toHaveTextContent("current");
+    const view = within(section).getByRole("region", { name: "Patch" });
+    expect(within(view).getByRole("heading", { name: `${PATCH} · Applies as is` })).toBeInTheDocument();
+    expect(within(view).getByText("Jane Doe <jane.doe@example.com>")).toBeInTheDocument();
+    expect(await within(view).findByRole("region", { name: CPP })).toBeInTheDocument();
+    expect(calls.some((c) => c.path === "/workspaces/1/patches/7")).toBe(true);
+  });
+
+  it("opens the current 3-way patch first and switches to a superseded one", async () => {
+    itemApi({
+      "GET /workspaces/1/items/PROJ-101/patches": () => [
+        itemPatch({ id: 9, level: "3way", base_head: "c".repeat(40), current: true }),
+        itemPatch({ id: 7, current: false }),
+      ],
+      "GET /workspaces/1/patches/9": () => ({ ...cameraV2, format: "plain", commits: [] }),
+      "GET /workspaces/1/patches/7": () => ({ ...cameraV1, format: "plain", commits: [] }),
+    });
+    renderRoute(`${URL}?tab=migration`);
+    const section = await screen.findByRole("region", { name: "Migration patches" });
+    const rows = within(await within(section).findByRole("table", { name: "Patches" })).getAllByRole("row").slice(1);
+    expect(rows[0]).toHaveTextContent("3-way merge");
+    expect(rows[0]).toHaveTextContent("current");
+    expect(rows[1]).toHaveTextContent("superseded");
+    expect(rows[0]).toHaveAttribute("aria-selected", "true");
+    const view = within(section).getByRole("region", { name: "Patch" });
+    expect(within(view).getByRole("heading", { name: `${PATCH} · 3-way merge` })).toBeInTheDocument();
+    const sidebar = await within(view).findByRole("navigation", { name: "Changed files" });
+    expect(within(sidebar).getAllByRole("listitem")).toHaveLength(2);
+
+    await userEvent.click(within(rows[1]).getByRole("button", { name: PATCH }));
+    expect(rows[1]).toHaveAttribute("aria-selected", "true");
+    expect(within(view).getByRole("heading", { name: `${PATCH} · Applies as is` })).toBeInTheDocument();
+    await waitFor(() => expect(within(view).getAllByRole("listitem")).toHaveLength(1));
+  });
+
+  it("explains why a conflicting item has no patch", async () => {
+    itemApi({ "GET /workspaces/1/items/PROJ-101/patches": () => [] });
+    renderRoute(`${URL}?tab=migration`);
+    const section = await screen.findByRole("region", { name: "Migration patches" });
+    expect(await within(section).findByText(/No migration patch\..*diffs that conflict or are already present have none/)).toBeInTheDocument();
+    expect(within(section).queryByRole("table", { name: "Patches" })).toBeNull();
   });
 });

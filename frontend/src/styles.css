@@ -981,6 +981,16 @@ p.tag {
   font-weight: 600;
 }
 
+/* Migration tab */
+.table.patches tr.selected td {
+  background: var(--accent-subtle);
+}
+
+.patch-view h3 {
+  margin: 0;
+  font-size: 1em;
+}
+
 /* Diff viewer */
 .diff-meta {
   display: flex;

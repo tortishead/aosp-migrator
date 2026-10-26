@@ -66,6 +66,31 @@ function saveViewType(viewType: ViewType) {
   }
 }
 
+/** Unified or split, remembered across diff viewers and visits. */
+export function useViewType(): [ViewType, (next: ViewType) => void] {
+  const [viewType, setViewType] = useState<ViewType>(loadViewType);
+  return [
+    viewType,
+    (next) => {
+      setViewType(next);
+      saveViewType(next);
+    },
+  ];
+}
+
+export function ViewToggle({ viewType, onChange }: { viewType: ViewType; onChange: (next: ViewType) => void }) {
+  return (
+    <span className="view-toggle" role="group" aria-label="Diff layout">
+      <button aria-pressed={viewType === "unified"} onClick={() => onChange("unified")}>
+        Unified
+      </button>
+      <button aria-pressed={viewType === "split"} onClick={() => onChange("split")}>
+        Split
+      </button>
+    </span>
+  );
+}
+
 /** One tab per diff attachment (same filename = versions of one diff), newest version shown first. */
 export function DiffTabs({ workspaceId, attachments }: { workspaceId: number; attachments: Attachment[] }) {
   const groups = useMemo(() => {
@@ -77,15 +102,10 @@ export function DiffTabs({ workspaceId, attachments }: { workspaceId: number; at
     }));
   }, [attachments]);
   const [tab, setTab] = useState(0);
-  const [viewType, setViewType] = useState<ViewType>(loadViewType);
+  const [viewType, setViewType] = useViewType();
 
   if (groups.length === 0) return <p className="hint">No diff attachments.</p>;
   const group = groups[Math.min(tab, groups.length - 1)];
-
-  function changeViewType(next: ViewType) {
-    setViewType(next);
-    saveViewType(next);
-  }
 
   return (
     <div className="diff-tabs">
@@ -96,14 +116,7 @@ export function DiffTabs({ workspaceId, attachments }: { workspaceId: number; at
             {g.versions.length > 1 && <span className="tag">{g.versions.length} versions</span>}
           </button>
         ))}
-        <span className="view-toggle" role="group" aria-label="Diff layout">
-          <button aria-pressed={viewType === "unified"} onClick={() => changeViewType("unified")}>
-            Unified
-          </button>
-          <button aria-pressed={viewType === "split"} onClick={() => changeViewType("split")}>
-            Split
-          </button>
-        </span>
+        <ViewToggle viewType={viewType} onChange={setViewType} />
       </div>
       <VersionedDiff key={group.filename} workspaceId={workspaceId} versions={group.versions} viewType={viewType} />
     </div>
@@ -133,7 +146,12 @@ function VersionedDiff({ workspaceId, versions, viewType }: { workspaceId: numbe
         )}
       </div>
       {attachment.local_url ? (
-        <DiffBody workspaceId={workspaceId} attachment={attachment} viewType={viewType} />
+        <DiffBody
+          id={`diff-${attachment.jira_id}`}
+          queryKey={["diff", workspaceId, attachment.jira_id]}
+          load={() => api.diff(workspaceId, attachment.jira_id)}
+          viewType={viewType}
+        />
       ) : (
         <p className="hint">Not downloaded.</p>
       )}
@@ -141,12 +159,17 @@ function VersionedDiff({ workspaceId, versions, viewType }: { workspaceId: numbe
   );
 }
 
-function DiffBody({ workspaceId, attachment, viewType }: { workspaceId: number; attachment: Attachment; viewType: ViewType }) {
-  const diff = useQuery({
-    queryKey: ["diff", workspaceId, attachment.jira_id],
-    queryFn: () => api.diff(workspaceId, attachment.jira_id),
-    staleTime: Infinity,
-  });
+interface DiffBodyProps {
+  /** Unique on the page: prefix of the file anchors. */
+  id: string;
+  queryKey: unknown[];
+  load: () => Promise<DiffWithHunks>;
+  viewType: ViewType;
+}
+
+/** A parsed diff: commit headers, file sidebar and one collapsible section per file. The content never changes for a key. */
+export function DiffBody({ id, queryKey, load, viewType }: DiffBodyProps) {
+  const diff = useQuery({ queryKey, queryFn: load, staleTime: Infinity });
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
 
   if (diff.isPending) return <p>Loading diff…</p>;
@@ -157,10 +180,10 @@ function DiffBody({ workspaceId, attachment, viewType }: { workspaceId: number; 
     return (
       <>
         {headers}
-        <p className="hint">No file changes found in this attachment.</p>
+        <p className="hint">No file changes found.</p>
       </>
     );
-  const anchor = (i: number) => `diff-${attachment.jira_id}-${i}`;
+  const anchor = (i: number) => `${id}-${i}`;
 
   function toggle(i: number, open?: boolean) {
     setCollapsed((current) => {

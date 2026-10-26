@@ -372,6 +372,15 @@ export interface MigrationPatch {
   created_at: string;
 }
 
+/** A migration patch in an item's list: no patch text, which comes parsed from `api.patch`. */
+export interface ItemPatch extends Omit<MigrationPatch, "diff"> {
+  /** The Jira diff it was made from; null for `ai` patches. */
+  jira_id: string | null;
+  filename: string | null;
+  /** What a build applies now: the current diff version's patch as last scanned. */
+  current: boolean;
+}
+
 export interface ItemPrescan {
   scanned: boolean;
   label: TriageLabel | null;
@@ -467,6 +476,10 @@ export const api = {
   prescanSummary: (workspaceId: number) => apiFetch<PrescanSummary>(`/workspaces/${workspaceId}/prescan-summary`),
   itemPrescan: (workspaceId: number, key: string) =>
     apiFetch<ItemPrescan>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/prescan`),
+  // Newest first.
+  itemPatches: (workspaceId: number, key: string) =>
+    apiFetch<ItemPatch[]>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/patches`),
+  patch: (workspaceId: number, patchId: number) => apiFetch<DiffWithHunks>(`/workspaces/${workspaceId}/patches/${patchId}`),
   targetProjects: (workspaceId: number) => apiFetch<string[]>(`/workspaces/${workspaceId}/target-projects`),
   // Null project: back to the automatic mapping. The item is pre-scanned again before this returns.
   pickProject: (workspaceId: number, key: string, attachmentId: number, project: string | null) =>
