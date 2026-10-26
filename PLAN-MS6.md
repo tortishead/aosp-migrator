@@ -48,9 +48,10 @@ Comes before MS2-2: the whole path import → pre-scan → patch → build works
 - Test: synthetic `module-info.json`, nested modules, `Android.bp` change, no module, zero / several product dirs fallback, repo root above target tree.
 - Done as: `affected_modules(changed, target_tree, build_root)` gives `tool` (`m` / `mmm`), sorted `targets` and `unbuilt` files; `changed_files(project, changes)` lists both sides of renames. Arch variants (`libfoo_32`) build by `module_name`. The fallback never picks the build root itself; files outside the build root build nothing.
 
-**6.5 Apply and restore**
+**6.5 Apply and restore** — done
 - `build/tree.py`: dirty check, record HEADs, apply patches (in order, `--3way` for clusters), restore (reset to recorded HEAD, delete added files), recovery from an in-flight record.
 - Test on `RepoTree`: restore leaves the tree byte-identical; user's untracked files survive; dirty project refused before any write; moved HEAD refused; multi-project unit restores all on partial failure; recovery restores a half-applied tree.
+- Done as: `prepare(tree, patches)` raises `TreeRefused` ("project dirty", "HEAD moved" against the patch's `base_head`, "not a git project" for plain trees) and returns `InFlight` (HEADs, added files incl. rename / copy targets, directories made for them; JSON round-trip). `apply_patches` raises `ApplyFailed`; `restore` resets, deletes added files, removes the made directories only when still empty. `reset --hard` leaves `ORIG_HEAD` and a reflog entry, the working tree is byte-identical.
 
 **6.6 Build job runner**
 - Migration adds `build_job`, `build_run`, item build fields. `BuildRunner` (pattern of `PrescanRunner`): eligibility, stale re-scan, units from items and clusters, in-flight record, build subprocess in its own process group with timeout, log file, error summary, restore, status per item, history events (`build_started`, `build_finished`, `tree_restored`). Startup: running jobs failed, in-flight units restored.
