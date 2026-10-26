@@ -1,4 +1,5 @@
 """Repo mapping: which project of a `repo` target tree a diff belongs to.
+A `git` or `plain` tree is a single project, `ROOT_PROJECT`.
 
 Diff paths are relative to the project root. A project matches a diff when the files
 the diff expects to exist (modified, deleted, rename/copy sources) exist under it.
@@ -16,6 +17,8 @@ from typing import Literal
 from aosp_migrator.importer.diffparse import FileChange
 
 PROJECT_LIST = Path(".repo") / "project.list"
+# The project of a `git` or `plain` tree: the tree root itself.
+ROOT_PROJECT = "."
 
 MappingSource = Literal["hint", "files", "copilot", "manual"]
 
@@ -60,12 +63,15 @@ def path_hints(text: str, projects: Iterable[str]) -> list[str]:
 
 def map_diff(tree: Path, projects: Iterable[str], files: Iterable[FileChange], hints: Iterable[str] = ()) -> DiffMapping:
     """Map one diff to a project of `tree`. A verified hint beats a file-only match."""
+    projects = list(projects)
     evidence = _evidence(files)
     if not evidence:
-        # Only new files: nothing to check, so a hint is taken on trust.
+        # Only new files: nothing to check, so a hint (or the only project) is taken on trust.
         hints = list(hints)
         if len(hints) == 1:
             return DiffMapping(hints[0], "hint")
+        if not hints and len(projects) == 1:
+            return DiffMapping(projects[0], "files")
         return DiffMapping(None, None, hints)
     matches = [p for p in projects if all((tree / p / path).exists() for path in evidence)]
     hinted = [p for p in hints if p in matches]

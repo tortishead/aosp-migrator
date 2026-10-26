@@ -25,7 +25,9 @@ def git(cwd: Path, *args: str, input: str | None = None, check: bool = True) -> 
             ["git", *args],
             cwd=cwd,
             input=input,
-            env={**os.environ, **_ENV},
+            # Never discover a repository above `cwd`: a `plain` tree inside some checkout
+            # would otherwise apply and log against that checkout.
+            env={**os.environ, **_ENV, "GIT_CEILING_DIRECTORIES": str(cwd.resolve().parent)},
             capture_output=True,
             text=True,
             errors="replace",

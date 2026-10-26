@@ -5,7 +5,7 @@ Stage `scan` maps each current diff to a target project and checks whether it is
 already present; each item is written in its own transaction, and an item that
 fails records an error while the job goes on. Stage `graph` then rebuilds the
 workspace-wide candidate graph. Only errors that would hit every item (no
-project list, unsupported tree) fail the whole job.
+project list, missing tree) fail the whole job.
 """
 
 import logging
@@ -21,7 +21,7 @@ from aosp_migrator.db.models import Attachment, DiffScan, ImportJob, Item, JiraI
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.graph import read_diff_text, rebuild_graph
-from aosp_migrator.prescan.mapping import ProjectListMissing, map_diff, path_hints, read_project_list
+from aosp_migrator.prescan.mapping import ROOT_PROJECT, ProjectListMissing, map_diff, path_hints, read_project_list
 from aosp_migrator.prescan.presence import check_presence
 
 log = logging.getLogger(__name__)
@@ -71,11 +71,12 @@ def current_diffs(session: Session, issue_id: int) -> list[Attachment]:
 
 
 def target_projects(workspace: Workspace) -> tuple[Path, list[str]]:
-    if workspace.target_tree_type != "repo":
-        raise PrescanError(f"Pre-scan supports `repo` target trees only; {workspace.target_tree} is a `{workspace.target_tree_type}` tree")
+    """Projects of a `repo` tree; a `git` or `plain` tree is one project at its root."""
     tree = Path(workspace.target_tree)
     if not tree.is_dir():
         raise PrescanError(f"Target tree not found: {tree}")
+    if workspace.target_tree_type != "repo":
+        return tree, [ROOT_PROJECT]
     try:
         return tree, read_project_list(tree)
     except ProjectListMissing as exc:

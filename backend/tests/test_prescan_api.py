@@ -1,3 +1,4 @@
+import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -143,18 +144,38 @@ def test_single_item_and_validation(client: TestClient, workspace_id: int) -> No
     assert [j["id"] for j in jobs] == [job["id"]]
 
 
-def test_missing_project_list_or_non_repo_tree_fails_the_job(client: TestClient, workspace_id: int, target: Path, tmp_path: Path) -> None:
+def test_missing_project_list_fails_the_job(client: TestClient, workspace_id: int, target: Path) -> None:
     (target / ".repo" / "project.list").unlink()
     job = run_prescan(client, workspace_id)
     assert job["status"] == "failed"
     assert "repo sync" in job["error"]
 
-    plain = tmp_path / "plain"
-    plain.mkdir()
-    other = client.post("/api/workspaces", json={"name": "plain", "jql": "x", "target_tree": str(plain)}).json()["id"]
+
+@pytest.mark.parametrize("tree_type", ["git", "plain"])
+def test_git_or_plain_tree_is_one_project(client: TestClient, workspace_id: int, target: Path, tmp_path: Path, tree_type: str) -> None:
+    tree = target / "frameworks/base"
+    if tree_type == "plain":
+        tree = tmp_path / "plain"
+        shutil.copytree(target / "frameworks/base", tree, ignore=shutil.ignore_patterns(".git"))
+    response = client.post("/api/workspaces", json={"name": tree_type, "jql": "project = PROJ", "target_tree": str(tree)})
+    assert response.json()["target_tree_type"] == tree_type
+    other = response.json()["id"]
+    assert run_import(client, other)["status"] == "done"
+
     job = run_prescan(client, other)
-    assert job["status"] == "failed"
-    assert "`repo` target trees only" in job["error"]
+    assert (job["status"], job["errors"]) == ("done", [])
+    present = prescan(client, other, "PROJ-103")
+    assert (present["presence"], present["diffs"][0]["project"], present["stale"]) == ("present", ".", [])
+    expected_head = RepoTree(target).git("frameworks/base", "rev-parse", "HEAD").strip() if tree_type == "git" else None
+    assert present["diffs"][0]["target_head"] == expected_head
+    camera = prescan(client, other, "PROJ-101")["diffs"][0]
+    assert (camera["project"], camera["candidates"]) == (None, [])
+    # Lines moved on: only history can tell, and a plain tree has none.
+    upstream = prescan(client, other, "PROJ-109")["diffs"][0]
+    if tree_type == "git":
+        assert upstream["presence"] == "present"
+    else:
+        assert (upstream["presence"], upstream["presence_detail"]["reason"]) == ("unknown", "history unavailable")
 
 
 def test_item_error_does_not_stop_the_job(app: FastAPI, client: TestClient, workspace_id: int) -> None:
