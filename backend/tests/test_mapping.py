@@ -9,6 +9,7 @@ from aosp_migrator.prescan.mapping import (
     ROOT_PROJECT,
     DiffMapping,
     ProjectListMissing,
+    projects_under,
     discover_projects,
     map_diff,
     path_hints,
@@ -43,6 +44,13 @@ def test_read_project_list_ignores_blank_lines_and_slashes(tmp_path: Path) -> No
 def test_missing_project_list(tmp_path: Path) -> None:
     with pytest.raises(ProjectListMissing, match="repo sync"):
         read_project_list(tmp_path)
+
+
+def test_projects_under_a_subdirectory_of_the_repo_checkout() -> None:
+    assert projects_under(PROJECTS, ROOT_PROJECT) == PROJECTS
+    assert projects_under(PROJECTS, "frameworks") == ["base", "base/packages/SystemUI", "av"]
+    assert projects_under(PROJECTS, "frameworks/base") == [ROOT_PROJECT, "packages/SystemUI"]
+    assert projects_under(PROJECTS, "frame") == []
 
 
 def test_discover_projects_finds_nested_git_dirs(tree: RepoTree) -> None:

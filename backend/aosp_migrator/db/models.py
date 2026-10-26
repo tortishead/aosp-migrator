@@ -40,6 +40,9 @@ class Workspace(Base):
     jql: Mapped[str] = mapped_column(Text)
     target_tree: Mapped[str] = mapped_column(String)
     target_tree_type: Mapped[str] = mapped_column(String)
+    # The `repo` checkout whose `.repo/project.list` lists the target tree's projects, when
+    # the target tree is a subdirectory of it (`<root>/qssi`). None: the target tree itself.
+    repo_root: Mapped[str | None] = mapped_column(String)
     source_tree: Mapped[str | None] = mapped_column(String)
     source_tree_type: Mapped[str | None] = mapped_column(String)
     # Link types whose tickets are followed, matched against the type name ("Relates") or

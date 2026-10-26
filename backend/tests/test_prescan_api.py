@@ -228,6 +228,20 @@ def test_plain_tree_of_git_projects(client: TestClient, target: Path, fake_jira:
     assert (upstream["presence"], upstream["presence_detail"]["history"][0]["match"]) == ("present", "change_id")
 
 
+def test_target_tree_below_the_repo_root(client: TestClient, workspace_id: int, target: Path) -> None:
+    """Target tree `<root>/frameworks` with `.repo` at `<root>`: its projects, relative to it."""
+    body = {"name": "sub", "jql": "project = PROJ", "target_tree": str(target / "frameworks"), "repo_root": str(target)}
+    sub_id = client.post("/api/workspaces", json=body).json()["id"]
+    assert client.get(f"/api/workspaces/{sub_id}/target-projects").json() == ["av", "base"]
+    (target / "empty").mkdir()
+    client.put(f"/api/workspaces/{sub_id}", json={**body, "target_tree": str(target / "empty")})
+    response = client.get(f"/api/workspaces/{sub_id}/target-projects")
+    assert (response.status_code, response.json()["detail"]) == (
+        422,
+        f"No project of {target / '.repo/project.list'} is under the target tree {target / 'empty'}",
+    )
+
+
 @pytest.mark.parametrize("tree_type", ["git", "plain"])
 def test_git_or_plain_tree_is_one_project(client: TestClient, workspace_id: int, target: Path, tmp_path: Path, tree_type: str) -> None:
     tree = target / "frameworks/base"

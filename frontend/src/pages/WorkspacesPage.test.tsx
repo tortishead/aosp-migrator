@@ -12,6 +12,7 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     jql: "project = OEM",
     target_tree: "/src/aosp15",
     target_tree_type: "repo",
+    repo_root: null,
     source_tree: null,
     source_tree_type: null,
     link_types: [],
@@ -64,6 +65,7 @@ describe("WorkspacesPage", () => {
       name: "Android 15",
       jql: "project = OEM",
       target_tree: "/src/aosp15",
+      repo_root: "",
       source_tree: "",
       link_types: [],
     });
@@ -104,6 +106,7 @@ describe("WorkspacesPage", () => {
       name: "Android 15",
       jql: "project = NEW",
       target_tree: "/src/aosp15",
+      repo_root: "",
       source_tree: "",
       link_types: ["Relates", "is blocked by"],
     });

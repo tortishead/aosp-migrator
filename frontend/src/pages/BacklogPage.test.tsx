@@ -12,6 +12,7 @@ const workspace = {
   jql: "project = OEM",
   target_tree: "/src/aosp15",
   target_tree_type: "repo",
+  repo_root: null,
   source_tree: null,
   source_tree_type: null,
   link_types: [],

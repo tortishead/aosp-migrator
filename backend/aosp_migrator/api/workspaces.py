@@ -13,7 +13,7 @@ from aosp_migrator.config import Config
 from aosp_migrator.db.models import Workspace
 from aosp_migrator.importer.runner import running_job
 from aosp_migrator.prescan import runner as prescan_runner
-from aosp_migrator.trees import TreePathError, detect_tree_type, validate_tree_path
+from aosp_migrator.trees import TreePathError, detect_tree_type, validate_repo_root, validate_tree_path
 
 router = APIRouter(prefix="/workspaces")
 
@@ -24,6 +24,7 @@ class WorkspaceIn(BaseModel):
     name: str
     jql: str
     target_tree: str
+    repo_root: str | None = None
     source_tree: str | None = None
     # Empty: follow every link type.
     link_types: list[str] = []
@@ -37,6 +38,7 @@ class WorkspaceOut(BaseModel):
     jql: str
     target_tree: str
     target_tree_type: str
+    repo_root: str | None
     source_tree: str | None
     source_tree_type: str | None
     link_types: list[str]
@@ -65,6 +67,12 @@ def _apply(workspace: Workspace, body: WorkspaceIn) -> None:
         target = validate_tree_path(body.target_tree)
     except TreePathError as exc:
         raise HTTPException(status_code=422, detail=f"Target tree {exc}") from exc
+    repo_root = None
+    if body.repo_root and body.repo_root.strip():
+        try:
+            repo_root = validate_repo_root(body.repo_root, target)
+        except TreePathError as exc:
+            raise HTTPException(status_code=422, detail=f".repo path {exc}") from exc
     source = None
     if body.source_tree and body.source_tree.strip():
         try:
@@ -75,7 +83,8 @@ def _apply(workspace: Workspace, body: WorkspaceIn) -> None:
     workspace.name = name
     workspace.jql = jql
     workspace.target_tree = str(target)
-    workspace.target_tree_type = detect_tree_type(target)
+    workspace.target_tree_type = "repo" if repo_root else detect_tree_type(target)
+    workspace.repo_root = str(repo_root) if repo_root else None
     workspace.source_tree = str(source) if source else None
     workspace.source_tree_type = detect_tree_type(source) if source else None
     workspace.link_types = _normalize_link_types(body.link_types)

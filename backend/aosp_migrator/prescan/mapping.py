@@ -38,7 +38,7 @@ _REPOSITORY_FIELD = re.compile(r"\bRepository\b[\s*_]*[:|=][\s*_|`]*([\w.+\-/]+)
 
 class ProjectListMissing(Exception):
     def __init__(self, tree: Path) -> None:
-        super().__init__(f"{tree / PROJECT_LIST} not found; run `repo sync` in the target tree")
+        super().__init__(f"{tree / PROJECT_LIST} not found; run `repo sync` in the repo checkout")
 
 
 @dataclass
@@ -56,6 +56,23 @@ def read_project_list(tree: Path) -> list[str]:
     except FileNotFoundError:
         raise ProjectListMissing(tree) from None
     return [line.strip().strip("/") for line in text.splitlines() if line.strip()]
+
+
+def projects_under(projects: Iterable[str], prefix: str) -> list[str]:
+    """Projects at or below `prefix` (relative to the repo root), relative to `prefix`.
+
+    For a target tree that is a subdirectory of the repo checkout (`qssi`): its projects,
+    with the tree itself as `ROOT_PROJECT` when it is a project. `.` keeps them all.
+    """
+    if prefix == ROOT_PROJECT:
+        return list(projects)
+    result: list[str] = []
+    for project in projects:
+        if project == prefix:
+            result.append(ROOT_PROJECT)
+        elif project.startswith(prefix + "/"):
+            result.append(project[len(prefix) + 1 :])
+    return result
 
 
 def discover_projects(tree: Path) -> list[str]:

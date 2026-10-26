@@ -106,6 +106,27 @@ def test_validation_errors(client: TestClient, trees: dict[str, Path], field: st
     assert client.get("/api/workspaces").json() == []
 
 
+def test_repo_root_above_the_target_tree(client: TestClient, trees: dict[str, Path]) -> None:
+    qssi = trees["repo"] / "qssi"
+    qssi.mkdir()
+    body = client.post("/api/workspaces", json=payload(qssi, repo_root=str(trees["repo"]))).json()
+    assert (body["repo_root"], body["target_tree_type"]) == (str(trees["repo"]), "repo")
+    # The `.repo` dir itself names its checkout; empty clears it.
+    updated = client.put(f"/api/workspaces/{body['id']}", json=payload(qssi, repo_root=str(trees["repo"] / ".repo"))).json()
+    assert updated["repo_root"] == str(trees["repo"])
+    cleared = client.put(f"/api/workspaces/{body['id']}", json=payload(qssi, repo_root=" ")).json()
+    assert (cleared["repo_root"], cleared["target_tree_type"]) == (None, "plain")
+
+
+def test_repo_root_validation(client: TestClient, trees: dict[str, Path]) -> None:
+    no_repo = client.post("/api/workspaces", json=payload(trees["plain"], repo_root=str(trees["git"])))
+    assert (no_repo.status_code, no_repo.json()["detail"]) == (422, f".repo path has no .repo directory: {trees['git']}")
+    elsewhere = client.post("/api/workspaces", json=payload(trees["plain"], repo_root=str(trees["repo"])))
+    assert (elsewhere.status_code, elsewhere.json()["detail"]) == (422, f".repo path does not contain the target tree: {trees['repo']}")
+    missing = client.post("/api/workspaces", json=payload(trees["plain"], repo_root="/does/not/exist"))
+    assert missing.json()["detail"] == ".repo path does not exist: /does/not/exist"
+
+
 def test_path_to_file_rejected(client: TestClient, tmp_path: Path) -> None:
     file = tmp_path / "file.txt"
     file.write_text("x")

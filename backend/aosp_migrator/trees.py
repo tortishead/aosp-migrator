@@ -19,6 +19,18 @@ def validate_tree_path(value: str) -> Path:
     return path
 
 
+def validate_repo_root(value: str, target: Path) -> Path:
+    """The `repo` checkout holding `target`: a directory with `.repo`, or that `.repo` itself."""
+    root = validate_tree_path(value)
+    if root.name == ".repo":
+        root = root.parent
+    if not (root / ".repo").is_dir():
+        raise TreePathError(f"has no .repo directory: {root}")
+    if not target.is_relative_to(root):
+        raise TreePathError(f"does not contain the target tree: {root}")
+    return root
+
+
 def detect_tree_type(path: Path) -> TreeType:
     if (path / ".repo").is_dir():
         return "repo"

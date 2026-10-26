@@ -22,7 +22,7 @@ from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJo
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import check_apply
-from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list, repository_hints
+from aosp_migrator.prescan.mapping import PROJECT_LIST, ProjectListMissing, discover_projects, map_diff, path_hints, projects_under, read_project_list, repository_hints
 from aosp_migrator.prescan.presence import check_presence
 from aosp_migrator.prescan.triage import Triage, diff_triage, item_triage
 
@@ -86,16 +86,26 @@ def current_diffs(session: Session, issue_id: int) -> list[Attachment]:
 
 
 def target_projects(workspace: Workspace) -> tuple[Path, list[str]]:
-    """Projects of a `repo` tree from its project list; of a `git` or `plain` tree from its `.git` dirs."""
+    """Projects of a `repo` tree from its project list; of a `git` or `plain` tree from its `.git` dirs.
+
+    With a repo root above the target tree, only the projects under the target tree, relative to it.
+    """
     tree = Path(workspace.target_tree)
     if not tree.is_dir():
         raise PrescanError(f"Target tree not found: {tree}")
     if workspace.target_tree_type != "repo":
         return tree, discover_projects(tree)
+    root = Path(workspace.repo_root) if workspace.repo_root else tree
     try:
-        return tree, read_project_list(tree)
+        projects = read_project_list(root)
     except ProjectListMissing as exc:
         raise PrescanError(str(exc)) from exc
+    if root == tree:
+        return tree, projects
+    projects = projects_under(projects, tree.relative_to(root).as_posix())
+    if not projects:
+        raise PrescanError(f"No project of {root / PROJECT_LIST} is under the target tree {tree}")
+    return tree, projects
 
 
 class PrescanRunner:

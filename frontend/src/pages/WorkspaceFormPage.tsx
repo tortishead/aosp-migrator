@@ -28,6 +28,7 @@ function WorkspaceForm({ workspace }: { workspace?: Workspace }) {
     name: workspace?.name ?? "",
     jql: workspace?.jql ?? "",
     target_tree: workspace?.target_tree ?? "",
+    repo_root: workspace?.repo_root ?? "",
     source_tree: workspace?.source_tree ?? "",
   });
   const [linkTypes, setLinkTypes] = useState(workspace?.link_types.join(", ") ?? "");
@@ -79,6 +80,14 @@ function WorkspaceForm({ workspace }: { workspace?: Workspace }) {
           <input required placeholder="/home/me/aosp-15" {...field("target_tree")} />
         </label>
         <p className="hint">Tree the patches are migrated to. Must be an existing directory on this machine.</p>
+        <label>
+          .repo path (optional)
+          <input placeholder="/home/me/aosp-15" {...field("repo_root")} />
+        </label>
+        <p className="hint">
+          Repo checkout holding the target tree, when the target tree is a subdirectory of it (e.g. target tree
+          /home/me/aosp-15/qssi). Its .repo/project.list gives the projects. Empty: the target tree's own .repo, if any.
+        </p>
         <label>
           Source tree path (optional)
           <input placeholder="/home/me/aosp-14" {...field("source_tree")} />

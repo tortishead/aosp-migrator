@@ -54,6 +54,8 @@ export interface Workspace {
   jql: string;
   target_tree: string;
   target_tree_type: TreeType;
+  // Repo checkout holding the target tree (its `.repo` lists the projects); null: the target tree itself.
+  repo_root: string | null;
   source_tree: string | null;
   source_tree_type: TreeType | null;
   // Followed link types (type name or direction); empty means all.
@@ -66,6 +68,7 @@ export interface WorkspaceInput {
   name: string;
   jql: string;
   target_tree: string;
+  repo_root: string;
   source_tree: string;
   link_types: string[];
 }
