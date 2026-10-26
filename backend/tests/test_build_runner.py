@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from fake_jira import FakeJiraServer, FakeJiraStore
+from fake_jira.build import fail_settings_build, write_envsetup
 from fake_jira.prescan import prescan_store
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -23,33 +24,12 @@ from aosp_migrator.prescan.runner import current_diffs, current_patch, diff_scan
 
 LUNCH = "aosp_x86_64-eng"
 
-# `lunch`, `m` and `mmm` that only echo; a `FAIL_BUILD` marker anywhere in the tree fails the
-# build like a compile error, a `SLOW_BUILD` one makes it hang.
-ENVSETUP = """\
-lunch() { echo "lunch $1"; }
-_fake_build() {
-    echo "$@"
-    if grep -rq --exclude-dir=.git --exclude-dir=.repo --exclude-dir=build SLOW_BUILD .; then sleep 60; fi
-    if grep -rq --exclude-dir=.git --exclude-dir=.repo --exclude-dir=build FAIL_BUILD .; then
-        echo "packages/apps/Settings/res/values/oem_strings.xml:3: error: FAIL_BUILD marker"
-        echo "FAILED: out/target/common/obj/APPS/Settings_intermediates/package-res.apk"
-        echo "ninja: build stopped"
-        return 1
-    fi
-    echo "#### build completed successfully ####"
-}
-m() { _fake_build m "$@"; }
-mmm() { _fake_build mmm "$@"; }
-"""
-
 
 @pytest.fixture
 def fake_jira(fake_jira_server: FakeJiraServer, target: Path) -> FakeJiraStore:
     """The pre-scan scenario; PROJ-102's new resource file carries the failure marker."""
     store = prescan_store(target)
-    for attachment in store.issues["PROJ-102"].attachments:
-        if attachment.filename == "settings.diff":
-            attachment.content = attachment.content.replace(b"Screen brightness", b"FAIL_BUILD")
+    fail_settings_build(store)
     fake_jira_server.store = store
     return store
 
@@ -57,8 +37,7 @@ def fake_jira(fake_jira_server: FakeJiraServer, target: Path) -> FakeJiraStore:
 @pytest.fixture
 def workspace(app: FastAPI, client: TestClient, workspace_id: int, target: Path) -> int:
     """Imported, pre-scanned, with the fake envsetup and a lunch target."""
-    (target / "build").mkdir()
-    (target / "build" / "envsetup.sh").write_text(ENVSETUP)
+    write_envsetup(target)
     with session(app) as s:
         ws = s.get(Workspace, workspace_id)
         assert ws is not None
