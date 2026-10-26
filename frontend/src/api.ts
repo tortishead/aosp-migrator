@@ -290,7 +290,7 @@ export interface PrescanJob {
   finished_at: string | null;
 }
 
-export type Presence = "present" | "not_present" | "partial" | "unknown";
+export type Presence = "present" | "likely_present" | "not_present" | "partial" | "unknown";
 
 export interface DiffScan {
   attachment_id: number;
@@ -305,8 +305,13 @@ export interface DiffScan {
   candidates: string[];
   presence: Presence | null;
   presence_detail: {
-    files?: Record<string, "present" | "not_present" | "unknown">;
+    files?: Record<string, "present" | "likely_present" | "not_present" | "unknown">;
     history?: { subject: string; match: "change_id" | "subject" | "patch_id" | null; sha: string | null }[];
+    /** Content heuristic evidence per file it checked; first few missing / remaining lines. */
+    heuristic?: Record<
+      string,
+      { added: { found: number; total: number; missing: string[] }; removed: { gone: number; total: number; remaining: string[] } }
+    >;
     reason?: string;
   } | null;
   target_head: string | null;

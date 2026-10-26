@@ -5,6 +5,7 @@ import { itemPrescanKey, PrescanStatus, useLatestPrescan, useStartPrescan } from
 
 export const PRESENCE_LABELS: Record<Presence, string> = {
   present: "Already present",
+  likely_present: "Likely present",
   not_present: "Not present",
   partial: "Partially present",
   unknown: "Unknown",
@@ -19,7 +20,7 @@ const MAPPING_LABELS: Record<NonNullable<DiffScan["mapping_source"]>, string> = 
 
 function presenceClass(presence: Presence | null): string {
   if (presence === "present") return "tag";
-  if (presence === "partial" || presence === "unknown") return "tag tag-warn";
+  if (presence === "likely_present" || presence === "partial" || presence === "unknown") return "tag tag-warn";
   return "tag tag-error";
 }
 
@@ -125,7 +126,7 @@ function DiffRow({ diff }: { diff: DiffScan }) {
           <ul className="prescan-files">
             {detail.history.map((h, i) => (
               <li key={i}>
-                Upstream “{h.subject}”:{" "}
+                Commit “{h.subject}”:{" "}
                 {h.sha ? (
                   <>
                     in history as <span className="mono">{h.sha.slice(0, 12)}</span> (by {h.match?.replace("_", "-")})

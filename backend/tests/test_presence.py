@@ -16,9 +16,9 @@ H = "services/camera/CameraService.h"
 OEM = "dev@oem.example.com"
 
 
-def lines(*body: str) -> str:
+def lines(*body: str, filler: str = "line") -> str:
     """A file with 20 filler lines around `body`, so hunks have context."""
-    before = [f"// line {n}" for n in range(10)]
+    before = [f"// {filler} {n}" for n in range(10)]
     after = [f"// tail {n}" for n in range(10)]
     return "\n".join([*before, *body, *after]) + "\n"
 
@@ -67,10 +67,10 @@ def test_present(tree: RepoTree, project: Path) -> None:
 def test_not_present(tree: RepoTree, project: Path) -> None:
     patch = tree.format_patch(PROJECT, fix(tree))
     tree.git(PROJECT, "reset", "-q", "--hard", "HEAD~1")
-    assert check_presence(project, patch) == Presence(
-        "not_present",
-        {"files": {CPP: "not_present", H: "not_present"}, "history": [{"subject": "camera: fix resume", "match": None, "sha": None}]},
-    )
+    result = check_presence(project, patch)
+    assert result.status == "not_present"
+    assert result.detail["files"] == {CPP: "not_present", H: "not_present"}
+    assert result.detail["history"] == [{"subject": "camera: fix resume", "match": None, "sha": None}]
 
 
 def test_partial(tree: RepoTree, project: Path) -> None:
@@ -235,8 +235,63 @@ def test_tree_unchanged_after_scan(tree: RepoTree, project: Path) -> None:
     assert snapshot(project) == before
 
 
+def drifted_target(tree: RepoTree, cpp: list[str], h: list[str]) -> None:
+    """Replace the fix with a target whose context lines moved on, committed under another name."""
+    tree.git(PROJECT, "reset", "-q", "--hard", "HEAD~1")
+    tree.commit(PROJECT, {CPP: lines(*cpp, filler="reworded"), H: lines(*h, filler="reworded")}, "camera: port of something")
+
+
+FIXED_CPP = ["int resume() {", "  if (!client) return -1;", "  return 0;", "}"]
+
+
+def test_drifted_context_is_likely_present(tree: RepoTree, project: Path, tmp_path: Path) -> None:
+    patch = tree.format_patch(PROJECT, fix(tree))
+    drifted_target(tree, FIXED_CPP, ["int  resume()  const;"])
+    result = check_presence(project, patch)
+    assert result.status == "likely_present"
+    assert result.detail["files"] == {CPP: "likely_present", H: "likely_present"}
+    assert result.detail["history"] == [{"subject": "camera: fix resume", "match": None, "sha": None}]
+    assert result.detail["heuristic"][H] == {
+        "added": {"found": 1, "total": 1, "missing": []},
+        "removed": {"gone": 1, "total": 1, "remaining": []},
+    }
+    # No history to ask: the heuristic still answers.
+    plain = tmp_path / "plain"
+    shutil.copytree(project, plain, ignore=shutil.ignore_patterns(".git"))
+    result = check_presence(plain, patch)
+    assert (result.status, result.detail["reason"]) == ("likely_present", HISTORY_UNAVAILABLE)
+
+
+def test_added_line_missing_is_not_present(tree: RepoTree, project: Path) -> None:
+    patch = tree.format_patch(PROJECT, fix(tree))
+    drifted_target(tree, FIXED_CPP, ["long resume() const;"])
+    result = check_presence(project, patch)
+    assert result.status == "not_present"
+    assert result.detail["files"] == {CPP: "likely_present", H: "not_present"}
+    assert result.detail["heuristic"][H]["added"] == {"found": 0, "total": 1, "missing": ["int resume() const;"]}
+
+
+def test_removed_line_still_there_is_not_present(tree: RepoTree, project: Path) -> None:
+    patch = tree.format_patch(PROJECT, fix(tree))
+    drifted_target(tree, FIXED_CPP, ["int resume() const;", "int resume();"])
+    result = check_presence(project, patch)
+    assert result.status == "not_present"
+    assert result.detail["files"][H] == "not_present"
+    assert result.detail["heuristic"][H]["removed"] == {"gone": 0, "total": 1, "remaining": ["int resume();"]}
+
+
+def test_brace_only_hunks_do_not_count(tree: RepoTree, project: Path) -> None:
+    patch = tree.format_patch(PROJECT, tree.commit(PROJECT, {CPP: lines("int resume() {", "  return 0;", "}", "", "};")}, "camera: braces", OEM))
+    drifted_target(tree, ["int resume() {", "  return 0;", "}", "};"], ["int resume();"])
+    result = check_presence(project, patch)
+    assert result.status == "not_present"
+    assert "heuristic" not in result.detail
+
+
 def test_combine() -> None:
     assert combine(["present", "present"]) == "present"
+    assert combine(["present", "likely_present"]) == "likely_present"
+    assert combine(["likely_present", "not_present"]) == "not_present"
     assert combine(["present", "not_present"]) == "partial"
     assert combine(["partial"]) == "partial"
     assert combine(["not_present", "unknown"]) == "unknown"

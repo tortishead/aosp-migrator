@@ -227,7 +227,7 @@ class DiffScan(Base):
     mapping_source: Mapped[str | None] = mapped_column(String)  # hint / files / copilot / manual
     # Projects to choose from when unmapped.
     candidates: Mapped[list[Any]]
-    presence: Mapped[str | None] = mapped_column(String)  # present / not_present / partial / unknown
+    presence: Mapped[str | None] = mapped_column(String)  # present / likely_present / not_present / partial / unknown
     # Per-file reverse-apply results, or the upstream history match.
     presence_detail: Mapped[dict[str, Any] | None]
     # HEAD of the mapped project when scanned, to spot stale results.
