@@ -16,24 +16,21 @@ Source of requirements: [spec.md](spec.md).
 |----|---------------|--------|
 | MS1 | Import + web UI (workspaces, backlog, item detail, settings, manual clustering) | Planned (below) |
 | MS2-1 | Pre-scan without Copilot (repo mapping, already-present check, apply check, triage labels) | Planned (below) |
-| MS2-2 | Copilot evaluation on demand, dependencies, cluster suggestions | Needs grilling |
-| MS3 | Migration level 1 (plain patch apply) | Needs grilling |
-| MS4 | Migration level 2 (3-way / other merge strategies) | Needs grilling |
-| MS5 | Migration level 3 (Copilot re-implementation) | Needs grilling |
-| MS6 | Build and verify (affected modules, optional CTS) | Needs grilling |
+| MS6 | Deterministic migration patch (levels 1 + 2) and build of affected modules | Planned ([PLAN-MS6.md](PLAN-MS6.md)), next |
+| MS2-2 | Copilot evaluation on demand, dependencies, cluster suggestions | Needs grilling, after MS6 |
+| MS5 | Migration level 3 (Copilot re-implementation), adds `ai` patches to the MS6 flow | Needs grilling |
+| MS6-2 | Optional tests (CTS / atest) after a successful build | Needs grilling |
 | MS7 | Human review | Needs grilling |
 | MS8 | Push (Jira comment, GitHub branch + PR) | Needs grilling |
 
-Open question for MS3: spec says a migration is done only after build succeeds. Consider pulling MS6 forward to directly after MS3, so level 1 is testable end to end.
+MS3 (level 1) and MS4 (level 2) are merged into MS6: the pre-scan apply check already does both, so MS6 keeps its result as a patch and builds it.
 
 Parked questions (from the MS1 grilling), to settle when their milestone starts:
 
 - How Copilot is invoked (Copilot CLI behind an adapter recommended). MS2-2/MS5.
 - Token budget split: deterministic first, LLM only where needed. MS2-2/MS5.
-- Patch handling across multiple repos in one ticket. MS3.
 - Push target: GitHub per-repo branch + PR, remote mapping per repo, Gerrit out of scope. MS8.
-- Reimport brings a new diff version after migration has started: invalidate, flag, or ignore? MS3.
-- Backlog "start migration level" action from spec Module 1: lands in MS3, not MS1.
+- Backlog "start migration level" action from spec Module 1: "Build selected" in MS6; level 3 in MS5.
 - From the MS2 grilling: `git` / `plain` target trees, cheap-model-first Copilot tier, auto pre-scan after import, fetch/mirror cache for history lookups.
 
 ---
@@ -193,7 +190,7 @@ History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`
   - Else `git apply --3way --cached` against HEAD in a temp `GIT_INDEX_FILE`, with `GIT_OBJECT_DIRECTORY` set to a temp dir and the real object store as alternate: clean result gives `3way`.
   - Else `conflicts`, with the failing files. Missing preimage blobs (common for OEM-only files) or a plain tree give `conflicts` with that reason.
   - Each item is checked on its own. A patch that only fails because a prerequisite is missing shows `conflicts`; dependency-ordered checks come with the dependency work in MS2-2.
-- **Triage label (per item):** machine facts are labels, not local state. Local state (`new` / `not_relevant` / `closed`) stays the user's decision and the pre-scan never changes it. The item label is the worst diff result, in this order: `error`, `unmapped`, `unknown`, `conflicts`, `partial`, `3way`, `applies`, `likely_present`, `present`. An item with no diff gets no label. Later milestones add their own labels next to it (e.g. build result in MS6). MS3 skips `present` items by default.
+- **Triage label (per item):** machine facts are labels, not local state. Local state (`new` / `not_relevant` / `closed`) stays the user's decision and the pre-scan never changes it. The item label is the worst diff result, in this order: `error`, `unmapped`, `unknown`, `conflicts`, `partial`, `3way`, `applies`, `likely_present`, `present`. An item with no diff gets no label. Later milestones add their own labels next to it (e.g. build result in MS6). MS6 builds only `applies` and `3way` items.
 - **Overview:** backlog column "Pre-scan" with the label as badge (tooltip: reason, e.g. matched commit or conflicting files) and a stale marker; count bar above the backlog ("12 present · 3 partial · 30 applies · …"), a click filters by that label; filters for label and stale. Closing present items is the existing bulk state change, logged in history.
 - **Staleness:** scan stores inputs (current diff attachment ids, target project HEAD SHAs). A new diff version or a moved HEAD marks the item stale (shown, filterable). No automatic re-run.
 - **Settings (global):** upstream author domains.
@@ -264,6 +261,10 @@ History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`
 - Triage rule: apply over presence. A diff that is not `present` takes its apply result (`applies` / `3way` / `conflicts`) whenever it was apply-checked, whatever presence said (`unknown`, `partial`, `likely_present`); the presence finding is appended to the reason ("<project>: a.c conflict; b.c already in"). Only a diff without an apply result keeps its presence label. Since the runner apply-checks every mapped diff that is not present, `partial` / `likely_present` / `unknown` labels are now rare. The backlog shows the label alone (`prescan/TriageTags.tsx`); the items API `apply` field added for a second tag is gone.
 - `relabel_items` at startup labels every scanned item again from its stored scans (`error` kept), so a triage rule change needs no re-scan.
 - Cleanup: `prescan/patch.py` (`Patch.parse`: commits, per-file `FileSections` with `patch` and `binary`; `strip_option`) shared by presence and apply; `git.apply()`; `apply.ORDER` / `apply.worst` (items API uses them); `triage.worst`; runner `diff_scan` lookup and one error-label path; `Presence.files(result)`. Item-level combined `presence` and `presence.combine` removed (unused since 2.10: the item page shows the label).
+
+## MS6 — Migration patch and build
+
+Sub-plan: [PLAN-MS6.md](PLAN-MS6.md).
 
 ## MS2-2 — Copilot on demand, dependencies, clusters
 

@@ -265,3 +265,25 @@ class PrescanJob(Base):
     cancel_requested: Mapped[bool] = mapped_column(default=False)
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     finished_at: Mapped[datetime | None]
+
+
+class MigrationPatch(Base):
+    """The patch a build applies for one diff, as the pre-scan made it. Never changed once written."""
+
+    __tablename__ = "migration_patch"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("item.id", ondelete="CASCADE"), index=True)
+    # The Jira diff it was made from; None for patches not made from one (`ai`, MS5).
+    attachment_id: Mapped[int | None] = mapped_column(ForeignKey("attachment.id", ondelete="CASCADE"), index=True)
+    # Project path in the target tree, relative to its root.
+    project: Mapped[str] = mapped_column(String)
+    source: Mapped[str] = mapped_column(String)  # original / ai
+    level: Mapped[str] = mapped_column(String)  # plain / 3way
+    # Project HEAD it was made against; None in a plain tree.
+    base_head: Mapped[str | None] = mapped_column(String)
+    diff: Mapped[str] = mapped_column(Text)
+    # For the format-patch when pushing; None for a plain diff.
+    author: Mapped[str | None] = mapped_column(String)
+    message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)

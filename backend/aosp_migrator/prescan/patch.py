@@ -12,6 +12,7 @@ from aosp_migrator.importer.diffparse import Commit, FileChange, ParsedDiff, par
 
 _FROM_SHA = re.compile(r"^From [0-9a-f]{40} ", re.MULTILINE)
 _P1 = re.compile(r"^(?:diff --git a/|--- a/|\+\+\+ b/)", re.MULTILINE)
+_PATCH_TAG = re.compile(r"^\[PATCH[^\]]*\]\s*")
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,20 @@ class Patch:
     def headers(self) -> list[tuple[Commit, list[FileChange]]]:
         """Each format-patch commit header with the files of its part of the series."""
         return [(header, parsed.files) for parsed in self.commits for header in parsed.commits]
+
+    @property
+    def author(self) -> str | None:
+        """Author of the first commit; None for a plain diff."""
+        return next((commit.author for commit, _ in self.headers if commit.author), None)
+
+    @property
+    def message(self) -> str | None:
+        """Commit message without `[PATCH n/m]` tags, the messages of a series one after another; None for a plain diff."""
+        messages = [
+            "\n\n".join(part for part in (_PATCH_TAG.sub("", commit.subject), commit.message.strip()) if part)
+            for commit, _ in self.headers
+        ]
+        return "\n\n".join(m for m in messages if m) or None
 
     @cached_property
     def files(self) -> list[FileSections]:
