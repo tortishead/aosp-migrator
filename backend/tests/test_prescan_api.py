@@ -90,21 +90,29 @@ def test_job_over_fixture_workspace(client: TestClient, workspace_id: int, targe
         ("0001-camera-fix-null-deref.patch", "frameworks/av", "hint")
     ]
     assert camera["diffs"][0]["target_head"] == RepoTree(target).git("frameworks/av", "rev-parse", "HEAD").strip()
+    assert (camera["diffs"][0]["apply"], camera["diffs"][0]["apply_detail"]) == (
+        "applies",
+        {"files": {"services/camera/libcameraservice/CameraService.cpp": "applies", "services/camera/libcameraservice/CameraService.h": "applies"}},
+    )
 
     assert prescan(client, workspace_id, "PROJ-103")["presence"] == "present"
+    assert (diffs("PROJ-103")[0]["apply"], diffs("PROJ-103")[0]["apply_detail"]) == (None, None)
     battery_icon = diffs("PROJ-104")[0]
     assert battery_icon["presence"] == "partial"
     assert battery_icon["presence_detail"]["files"] == {
         "packages/SystemUI/res/drawable-xxhdpi/oem_battery.png": "not_present",
         "packages/SystemUI/res/values/dimens.xml": "present",
     }
+    # Only the file still missing is apply-checked; the fixture's binary data is not real.
+    assert battery_icon["apply"] == "conflicts"
+    assert battery_icon["apply_detail"]["files"] == {"packages/SystemUI/res/drawable-xxhdpi/oem_battery.png": "conflicts"}
     hal = diffs("PROJ-107")[0]
     assert (hal["project"], hal["mapping_source"]) == ("hardware/interfaces", "hint")
     upstream = diffs("PROJ-109")[0]
     assert upstream["presence"] == "present"
     assert upstream["presence_detail"]["history"][0]["match"] == "change_id"
     unmapped = diffs("PROJ-110")[0]
-    assert (unmapped["project"], unmapped["presence"], unmapped["target_head"]) == (None, None, None)
+    assert (unmapped["project"], unmapped["presence"], unmapped["apply"], unmapped["target_head"]) == (None, None, None, None)
     assert sorted(unmapped["candidates"]) == ["hardware/interfaces", "packages/apps/Settings", "system/core"]
     filler = prescan(client, workspace_id, "PROJ-111")
     assert (filler["scanned"], filler["presence"], filler["diffs"]) == (False, None, [])

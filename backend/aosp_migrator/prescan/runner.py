@@ -1,8 +1,8 @@
 """Pre-scan jobs: run in a background thread, one at a time per workspace.
 
 A job scans every non-dropped backlog item (`all`) or a list of them (`keys`).
-Stage `scan` maps each current diff to a target project and checks whether it is
-already present; each item is written in its own transaction, and an item that
+Stage `scan` maps each current diff to a target project, checks whether it is
+already present and, when not, whether it applies; each item is written in its own transaction, and an item that
 fails records an error while the job goes on. Only errors that would hit every
 item (no project list, missing tree) fail the whole job.
 """
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from aosp_migrator.db.models import Attachment, DiffScan, ImportJob, Item, JiraIssue, PrescanJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
+from aosp_migrator.prescan.apply import check_apply
 from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list
 from aosp_migrator.prescan.presence import check_presence
 
@@ -192,7 +193,7 @@ def read_diff_text(attachment: Attachment) -> str | None:
 
 
 def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:
-    """Map and presence-check each current diff of `issue`; results replace its earlier diff scans."""
+    """Map, presence- and apply-check each current diff of `issue`; results replace its earlier diff scans."""
     hints = path_hints(f"{issue.summary}\n{issue.description_raw}", projects)
     for attachment in current_diffs(session, issue.id):
         text = read_diff_text(attachment)
@@ -206,11 +207,16 @@ def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str
             mapping = map_diff(tree, projects, parse_diff(text).files, hints)
             scan.project, scan.mapping_source, scan.candidates = mapping.project, mapping.source, mapping.candidates
         if scan.project is None:
-            scan.presence = scan.presence_detail = scan.target_head = None
+            scan.presence = scan.presence_detail = scan.apply = scan.apply_detail = scan.target_head = None
         else:
             project_dir = tree / scan.project
             presence = check_presence(project_dir, text, upstream_domains)
             scan.presence, scan.presence_detail = presence.status, presence.detail
+            scan.apply = scan.apply_detail = None
+            if presence.status != "present":
+                present = [path for path, result in presence.detail.get("files", {}).items() if result == "present"]
+                applied = check_apply(project_dir, text, present)
+                scan.apply, scan.apply_detail = applied.status, applied.detail
             scan.target_head = git.head(project_dir)
         scan.scanned_at = utcnow()
     session.flush()

@@ -230,6 +230,10 @@ class DiffScan(Base):
     presence: Mapped[str | None] = mapped_column(String)  # present / likely_present / not_present / partial / unknown
     # Per-file reverse-apply results, or the upstream history match.
     presence_detail: Mapped[dict[str, Any] | None]
+    # None when present, unmapped or not checked yet.
+    apply: Mapped[str | None] = mapped_column(String)  # applies / 3way / conflicts
+    # Per-file apply results and why each conflicting file conflicts.
+    apply_detail: Mapped[dict[str, Any] | None]
     # HEAD of the mapped project when scanned, to spot stale results.
     target_head: Mapped[str | None] = mapped_column(String)
     scanned_at: Mapped[datetime] = mapped_column(default=utcnow)
