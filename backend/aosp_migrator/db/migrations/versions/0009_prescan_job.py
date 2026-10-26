@@ -1,7 +1,7 @@
 """prescan job
 
 Revision ID: 0009
-Revises: 0008
+Revises: 0007
 Create Date: 2026-10-26 14:30:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0009"
-down_revision: str | None = "0008"
+down_revision: str | None = "0007"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

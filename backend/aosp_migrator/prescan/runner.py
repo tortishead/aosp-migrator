@@ -3,9 +3,8 @@
 A job scans every non-dropped backlog item (`all`) or a list of them (`keys`).
 Stage `scan` maps each current diff to a target project and checks whether it is
 already present; each item is written in its own transaction, and an item that
-fails records an error while the job goes on. Stage `graph` then rebuilds the
-workspace-wide candidate graph. Only errors that would hit every item (no
-project list, missing tree) fail the whole job.
+fails records an error while the job goes on. Only errors that would hit every
+item (no project list, missing tree) fail the whole job.
 """
 
 import logging
@@ -20,7 +19,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from aosp_migrator.db.models import Attachment, DiffScan, ImportJob, Item, JiraIssue, PrescanJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
-from aosp_migrator.prescan.graph import read_diff_text, rebuild_graph
 from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list
 from aosp_migrator.prescan.presence import check_presence
 
@@ -177,16 +175,20 @@ class _Job:
             self.job.done += 1
             self.session.commit()
 
-        self._check_cancel()
-        self.job.stage = "graph"
-        self.session.commit()
-        rebuild_graph(self.session, workspace.id)
-        self.session.commit()
-
     def _check_cancel(self) -> None:
         self.session.refresh(self.job, ["cancel_requested"])
         if self.job.cancel_requested:
             raise _Canceled
+
+
+def read_diff_text(attachment: Attachment) -> str | None:
+    if attachment.local_path is None:
+        return None
+    try:
+        with open(attachment.local_path, "rb") as f:
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
 
 
 def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:

@@ -421,7 +421,6 @@ describe("Backlog clusters", () => {
         polls += 1;
         if (polls === 1) return [];
         if (polls === 2) return [prescanJob({ done: 10 })];
-        if (polls === 3) return [prescanJob({ done: 25, stage: "graph" })];
         return [
           prescanJob({
             status: "done",
@@ -442,8 +441,6 @@ describe("Backlog clusters", () => {
       expect(screen.getByRole("button", { name: "Pre-scan backlog" })).toBeDisabled();
       await vi.advanceTimersByTimeAsync(POLL_MS);
       expect(await screen.findByText(/Pre-scanning… 10 \/ 25/)).toBeInTheDocument();
-      await vi.advanceTimersByTimeAsync(POLL_MS);
-      expect(await screen.findByText(/building dependency graph/)).toBeInTheDocument();
       await vi.advanceTimersByTimeAsync(POLL_MS);
       expect(await screen.findByText(/Pre-scan done: 25 items/)).toBeInTheDocument();
     } finally {

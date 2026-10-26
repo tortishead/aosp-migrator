@@ -12,7 +12,7 @@ const URL = "/workspaces/1/items/PROJ-101";
 function itemApi(handlers: Parameters<typeof mockApi>[0] = {}) {
   return mockApi({
     "GET /workspaces/1/items/PROJ-101": () => itemDetail(),
-    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, presence: null, stale: [], diffs: [], edges: [] }),
+    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, presence: null, stale: [], diffs: [] }),
     "GET /workspaces/1/prescan-jobs": () => [],
     ...diffHandlers,
     ...handlers,
@@ -288,24 +288,6 @@ describe("ItemPage pre-scan", () => {
           target_head: null,
         },
       ],
-      edges: [
-        {
-          relation: "depends_on",
-          key: "PROJ-107",
-          summary: "OEM camera config HAL",
-          reason: "symbol",
-          detail: { symbols: ["IOemCameraConfig"], directed: true },
-          copilot: null,
-        },
-        {
-          relation: "related",
-          key: "PROJ-108",
-          summary: "Enable OEM camera mode",
-          reason: "files",
-          detail: { projects: ["frameworks/av"], files: ["CameraService.cpp"], directed: false },
-          copilot: null,
-        },
-      ],
     };
     itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scanned });
     renderRoute(URL);
@@ -315,10 +297,6 @@ describe("ItemPage pre-scan", () => {
     expect(rows[0]).toHaveTextContent("frameworks/av (path in description)");
     expect(rows[0]).toHaveTextContent("CameraService.h: Not present");
     expect(rows[1]).toHaveTextContent("Unmapped candidates: system/core, hardware/interfaces");
-    const deps = within(section).getByRole("list", { name: "Candidate dependencies" });
-    expect(deps).toHaveTextContent("Depends on PROJ-107 OEM camera config HAL symbol uses IOemCameraConfig");
-    expect(deps).toHaveTextContent("Related to PROJ-108 Enable OEM camera mode files same files: CameraService.cpp");
-    expect(within(deps).getByRole("link", { name: "PROJ-107" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-107");
   });
 
   it("re-runs the pre-scan for this item and refetches its results when done", async () => {
@@ -347,7 +325,7 @@ describe("ItemPage pre-scan", () => {
       },
       "GET /workspaces/1/items/PROJ-101/prescan": () => {
         resultFetches += 1;
-        return { scanned: resultFetches > 1, presence: "present", stale: [], diffs: [], edges: [] };
+        return { scanned: resultFetches > 1, presence: "present", stale: [], diffs: [] };
       },
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });

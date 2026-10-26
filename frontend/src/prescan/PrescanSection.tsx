@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router";
 
-import { api, type DependencyEdge, type DiffScan, type Presence } from "../api";
+import { api, type DiffScan, type Presence } from "../api";
 import { itemPrescanKey, PrescanStatus, useLatestPrescan, useStartPrescan } from "./PrescanPanel";
 
 export const PRESENCE_LABELS: Record<Presence, string> = {
@@ -16,12 +15,6 @@ const MAPPING_LABELS: Record<NonNullable<DiffScan["mapping_source"]>, string> = 
   files: "files match",
   copilot: "Copilot",
   manual: "picked by hand",
-};
-
-const RELATION_LABELS: Record<DependencyEdge["relation"], string> = {
-  depends_on: "Depends on",
-  depended_on_by: "Needed by",
-  related: "Related to",
 };
 
 function presenceClass(presence: Presence | null): string {
@@ -76,20 +69,6 @@ export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; 
               ))}
             </tbody>
           </table>
-        </>
-      )}
-      {prescan && prescan.edges.length > 0 && (
-        <>
-          <h3>Candidate dependencies</h3>
-          <ul className="prescan-edges" aria-label="Candidate dependencies">
-            {prescan.edges.map((e, i) => (
-              <li key={i}>
-                {RELATION_LABELS[e.relation]} <Link to={`/workspaces/${workspaceId}/items/${e.key}`}>{e.key}</Link> {e.summary}{" "}
-                <span className="tag">{e.reason}</span> <span className="hint">{edgeDetail(e)}</span>
-                {e.copilot && <span className="tag">Copilot: {e.copilot}</span>}
-              </li>
-            ))}
-          </ul>
         </>
       )}
     </section>
@@ -161,20 +140,4 @@ function DiffRow({ diff }: { diff: DiffScan }) {
       </td>
     </tr>
   );
-}
-
-function edgeDetail(edge: DependencyEdge): string {
-  const d = edge.detail as Record<string, string & string[]>;
-  switch (edge.reason) {
-    case "files":
-      return `same files: ${d.files.join(", ")}`;
-    case "hunks":
-      return `overlapping changes in ${d.overlapping.join(", ")}`;
-    case "link":
-      return `Jira: ${d.description}`;
-    case "series":
-      return `patch ${d.from_patch} after ${d.to_patch} by ${d.author}`;
-    case "symbol":
-      return `uses ${d.symbols.join(", ")}`;
-  }
 }
