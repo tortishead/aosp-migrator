@@ -43,9 +43,10 @@ Comes before MS2-2: the whole path import → pre-scan → patch → build works
 - Test: default path, validation errors, build root derivation with and without repo root.
 - Done as: `build/env.py` (`envsetup_path`, `build_root`, `DEFAULT_TIMEOUT`). Empty `envsetup_path` stored as null (default resolved at use, not checked at save). An explicit one must be a file in a `build/` dir whose parent is inside the repo root (else target tree), so `build/make/envsetup.sh` is refused. Timeout in seconds in the API, minutes in the form.
 
-**6.4 Affected modules**
+**6.4 Affected modules** — done
 - `build/modules.py`, pure: read `module-info.json`, map changed files to modules (longest path), fallback to nearest `Android.bp` / `Android.mk` directory, nothing-to-build, path conversion target tree ↔ build root.
 - Test: synthetic `module-info.json`, nested modules, `Android.bp` change, no module, zero / several product dirs fallback, repo root above target tree.
+- Done as: `affected_modules(changed, target_tree, build_root)` gives `tool` (`m` / `mmm`), sorted `targets` and `unbuilt` files; `changed_files(project, changes)` lists both sides of renames. Arch variants (`libfoo_32`) build by `module_name`. The fallback never picks the build root itself; files outside the build root build nothing.
 
 **6.5 Apply and restore**
 - `build/tree.py`: dirty check, record HEADs, apply patches (in order, `--3way` for clusters), restore (reset to recorded HEAD, delete added files), recovery from an in-flight record.
