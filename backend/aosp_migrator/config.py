@@ -56,6 +56,9 @@ class Config:
     def attachments_dir(self, workspace_id: int) -> Path:
         return self.workspace_dir(workspace_id) / "attachments"
 
+    def builds_dir(self, workspace_id: int) -> Path:
+        return self.workspace_dir(workspace_id) / "builds"
+
     def workspace_dir(self, workspace_id: int) -> Path:
         return self.data_dir / "workspaces" / str(workspace_id)
 

@@ -97,6 +97,10 @@ class Item(Base):
     triage_label: Mapped[str | None] = mapped_column(String, index=True)
     triage_reason: Mapped[str | None] = mapped_column(Text)
     triaged_at: Mapped[datetime | None]
+    # Result of the item's last finished build run (see build/runner.py); None until built.
+    build_status: Mapped[str | None] = mapped_column(String, index=True)  # apply_failed / build_failed / build_successful
+    build_reason: Mapped[str | None] = mapped_column(Text)
+    built_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -293,3 +297,53 @@ class MigrationPatch(Base):
     author: Mapped[str | None] = mapped_column(String)
     message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class BuildJob(Base):
+    __tablename__ = "build_job"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    scope: Mapped[str] = mapped_column(String)  # keys / cluster
+    # Eligible items to build, in build order: one unit each (`keys`), or the cluster's members as one unit.
+    issue_keys: Mapped[list[Any]]
+    cluster_id: Mapped[int | None] = mapped_column(ForeignKey("cluster.id", ondelete="SET NULL"))
+    # [{key, reason}] per selected item that is not built (triage label not `applies` / `3way`).
+    skipped: Mapped[list[Any]]
+    status: Mapped[str] = mapped_column(String, default="running")
+    done: Mapped[int] = mapped_column(default=0)
+    # Units.
+    total: Mapped[int]
+    # [{keys, message}] per unit that failed unexpectedly; the job itself carries on.
+    errors: Mapped[list[Any]]
+    # Why the whole job failed.
+    error: Mapped[str | None] = mapped_column(Text)
+    cancel_requested: Mapped[bool] = mapped_column(default=False)
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None]
+
+
+class BuildRun(Base):
+    """One unit of a build job: its patches applied, its modules built, the tree restored. Kept for every attempt."""
+
+    __tablename__ = "build_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("build_job.id", ondelete="CASCADE"), index=True)
+    # Several for a cluster, in cluster order.
+    item_ids: Mapped[list[Any]]
+    cluster_id: Mapped[int | None] = mapped_column(ForeignKey("cluster.id", ondelete="SET NULL"))
+    patch_ids: Mapped[list[Any]]
+    tool: Mapped[str | None] = mapped_column(String)  # m / mmm; None when nothing was built
+    # Module names (`m`) or directories relative to the build root (`mmm`).
+    modules: Mapped[list[Any]]
+    command: Mapped[str | None] = mapped_column(Text)
+    # running / apply_failed / build_failed / build_successful / canceled / interrupted / error
+    status: Mapped[str] = mapped_column(String, default="running")
+    # First error lines of the build, the apply error, or why it was not built.
+    summary: Mapped[str | None] = mapped_column(Text)
+    log_path: Mapped[str | None] = mapped_column(String)
+    # `build.tree.InFlight` while patches may be in the tree; None once restored.
+    inflight: Mapped[dict[str, Any] | None]
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None]

@@ -80,6 +80,22 @@ def test_three_way_apply_restores_too(tree: RepoTree) -> None:
     assert snapshot(tree.root) == before
 
 
+def test_three_way_merge_leaves_index_and_object_store_alone(tree: RepoTree) -> None:
+    """Both patches are made against HEAD; the second only applies by merging over the first."""
+    lines = [f"line {n}\n" for n in range(8)]
+    tree.commit(BASE, {"Lines.java": "".join(lines)}, "add lines")
+    first = make_patch(tree, BASE, {"Lines.java": "".join(lines).replace("line 2", "line two")})
+    second = make_patch(tree, BASE, {"Lines.java": "".join(lines).replace("line 4", "line four")})
+    index = (tree.root / BASE / ".git" / "index").read_bytes()
+    before = snapshot(tree.root)
+    inflight = prepare(tree.root, [first, second])
+    apply_patches(tree.root, [first, second], three_way=True)
+    assert (tree.root / BASE / "Lines.java").read_text() == "".join(lines).replace("line 2", "line two").replace("line 4", "line four")
+    assert (tree.root / BASE / ".git" / "index").read_bytes() == index
+    restore(tree.root, inflight)
+    assert snapshot(tree.root) == before
+
+
 def test_rename_target_counts_as_added(tree: RepoTree) -> None:
     head = tree.git(BASE, "rev-parse", "HEAD").strip()
     tree.git(BASE, "mv", ACTIVITY, "core/Moved.java")
