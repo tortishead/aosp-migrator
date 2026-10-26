@@ -5,7 +5,19 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import ColumnElement, Integer, Select, cast, column, exists, func, literal_column, or_, select, table
+from sqlalchemy import (
+    ColumnElement,
+    Integer,
+    Select,
+    cast,
+    column,
+    exists,
+    func,
+    literal_column,
+    or_,
+    select,
+    table,
+)
 from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
@@ -24,6 +36,7 @@ from aosp_migrator.db.models import (
     Note,
     Workspace,
 )
+from aosp_migrator.prescan import apply
 from aosp_migrator.prescan.runner import stale_items
 from aosp_migrator.prescan.triage import ORDER
 
@@ -34,8 +47,6 @@ ListParam = Annotated[list[str] | None, Query()]
 
 # Maintained by triggers, see migration 0003. Not a model: SQLAlchemy only needs to name it.
 issue_fts = table("issue_fts", column("rowid"), column("key"), column("summary"), column("description"), column("diff_paths"))
-# Apply results, worst first.
-APPLY_ORDER = ["conflicts", "3way", "applies"]
 # Trigram FTS cannot match terms shorter than this; those fall back to LIKE.
 TRIGRAM = 3
 
@@ -378,16 +389,15 @@ def _diff_subjects(session: Session, issue_ids: list[int]) -> dict[int, list[str
 
 def _apply_results(session: Session, issue_ids: list[int]) -> dict[int, str]:
     """Worst apply result of the current diffs per issue; issues without an apply-checked diff are left out."""
-    results: dict[int, str] = {}
+    statuses: dict[int, list[Any]] = {}
     current = session.execute(
         select(Attachment.issue_id, DiffScan.apply)
         .join(DiffScan, DiffScan.attachment_id == Attachment.id)
         .where(Attachment.issue_id.in_(issue_ids), Attachment.kind == "diff", Attachment.is_current.is_(True), DiffScan.apply.is_not(None))
     )
-    for issue_id, apply in current:
-        if issue_id not in results or APPLY_ORDER.index(apply) < APPLY_ORDER.index(results[issue_id]):
-            results[issue_id] = apply
-    return results
+    for issue_id, status in current:
+        statuses.setdefault(issue_id, []).append(status)
+    return {issue_id: worst for issue_id, results in statuses.items() if (worst := apply.worst(results))}
 
 
 @router.get("/facets")

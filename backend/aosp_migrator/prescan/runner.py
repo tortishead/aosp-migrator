@@ -18,13 +18,29 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, PrescanJob, Workspace, utcnow
+from aosp_migrator.db.models import (
+    Attachment,
+    DiffScan,
+    HistoryEvent,
+    ImportJob,
+    Item,
+    JiraIssue,
+    PrescanJob,
+    Workspace,
+    utcnow,
+)
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import check_apply
-from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list
+from aosp_migrator.prescan.mapping import (
+    ProjectListMissing,
+    discover_projects,
+    map_diff,
+    path_hints,
+    read_project_list,
+)
 from aosp_migrator.prescan.presence import check_presence
-from aosp_migrator.prescan.triage import diff_triage, item_triage
+from aosp_migrator.prescan.triage import Triage, diff_triage, item_triage
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +74,19 @@ def fail_interrupted_jobs(session: Session) -> None:
         job.status = "failed"
         job.error = "Interrupted by a server restart"
         job.finished_at = utcnow()
+    session.commit()
+
+
+def relabel_items(session: Session) -> None:
+    """Label every scanned item again from its stored scans, so a change of the triage rules needs no re-scan.
+
+    Items labeled `error` keep it: they have no complete scan to label from.
+    """
+    rows = session.execute(
+        select(Item, JiraIssue).join(JiraIssue, Item.issue_id == JiraIssue.id).where(Item.triage_label.is_not(None), Item.triage_label != "error")
+    )
+    for item, issue in rows:
+        triage_item(session, item, issue, keep_time=True)
     session.commit()
 
 
@@ -130,10 +159,7 @@ class PrescanRunner:
                 raise PrescanError(f"Not a project of the target tree: {project}")
             attachment = session.get(Attachment, attachment_id)
             assert attachment is not None
-            scan = session.scalar(select(DiffScan).where(DiffScan.attachment_id == attachment_id))
-            if scan is None:
-                scan = DiffScan(attachment_id=attachment_id, candidates=[])
-                session.add(scan)
+            scan = _scan_row(session, attachment_id)
             old = scan.project
             # Without a kept source, the scan maps the diff again.
             scan.project, scan.mapping_source = project, "manual" if project is not None else None
@@ -147,7 +173,7 @@ class PrescanRunner:
                     triage_item(session, item, issue)
             except Exception as exc:
                 log.exception("Pre-scan of %s failed", issue.key)
-                item.triage_label, item.triage_reason, item.triaged_at = "error", str(exc), utcnow()
+                _label_error(item, exc)
             session.commit()
 
     @staticmethod
@@ -218,7 +244,7 @@ class _Job:
                 self.session.rollback()
                 # Reassign: in-place changes to a JSON column are not tracked.
                 self.job.errors = [*self.job.errors, {"key": issue.key, "message": str(exc)}]
-                item.triage_label, item.triage_reason, item.triaged_at = "error", str(exc), utcnow()
+                _label_error(item, exc)
             self.job.done += 1
             self.session.commit()
 
@@ -245,10 +271,7 @@ def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str
         text = read_diff_text(attachment)
         if text is None:
             raise PrescanError(f"{attachment.filename}: downloaded file is missing; reimport the ticket")
-        scan = session.scalar(select(DiffScan).where(DiffScan.attachment_id == attachment.id))
-        if scan is None:
-            scan = DiffScan(attachment_id=attachment.id, candidates=[])
-            session.add(scan)
+        scan = _scan_row(session, attachment.id)
         if scan.mapping_source not in KEPT_SOURCES or scan.project is None:
             mapping = map_diff(tree, projects, parse_diff(text).files, hints)
             scan.project, scan.mapping_source, scan.candidates = mapping.project, mapping.source, mapping.candidates
@@ -260,27 +283,46 @@ def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str
             scan.presence, scan.presence_detail = presence.status, presence.detail
             scan.apply = scan.apply_detail = None
             if presence.status != "present":
-                present = [path for path, result in presence.detail.get("files", {}).items() if result == "present"]
-                applied = check_apply(project_dir, text, present)
+                applied = check_apply(project_dir, text, presence.files("present"))
                 scan.apply, scan.apply_detail = applied.status, applied.detail
             scan.target_head = git.head(project_dir)
         scan.scanned_at = utcnow()
     session.flush()
 
 
-def triage_item(session: Session, item: Item, issue: JiraIssue) -> None:
-    """Label `item` from the scans of its current diffs; None when it has none or one is not scanned yet."""
-    triages = []
+def diff_scan(session: Session, attachment_id: int) -> DiffScan | None:
+    return session.scalar(select(DiffScan).where(DiffScan.attachment_id == attachment_id))
+
+
+def _scan_row(session: Session, attachment_id: int) -> DiffScan:
+    scan = diff_scan(session, attachment_id)
+    if scan is None:
+        scan = DiffScan(attachment_id=attachment_id, candidates=[])
+        session.add(scan)
+    return scan
+
+
+def triage_item(session: Session, item: Item, issue: JiraIssue, keep_time: bool = False) -> None:
+    """Label `item` from the scans of its current diffs; None when it has none or one is not scanned yet.
+
+    `keep_time`: leave `triaged_at` alone unless the label or its reason changes.
+    """
+    triages: list[Triage] = []
     for attachment in current_diffs(session, issue.id):
-        scan = session.scalar(select(DiffScan).where(DiffScan.attachment_id == attachment.id))
+        scan = diff_scan(session, attachment.id)
         if scan is None:
             triages = []
             break
         triages.append(diff_triage(scan, attachment.filename))
     triage = item_triage(triages)
-    item.triage_label = triage.label if triage else None
-    item.triage_reason = triage.reason if triage else None
-    item.triaged_at = utcnow()
+    label, reason = (triage.label, triage.reason) if triage else (None, None)
+    if keep_time and (item.triage_label, item.triage_reason) == (label, reason):
+        return
+    item.triage_label, item.triage_reason, item.triaged_at = label, reason, utcnow()
+
+
+def _label_error(item: Item, exc: Exception) -> None:
+    item.triage_label, item.triage_reason, item.triaged_at = "error", str(exc), utcnow()
 
 
 def stale_items(session: Session, workspace_id: int, tree: Path, item_ids: list[int] | None = None) -> dict[int, list[str]]:
@@ -295,8 +337,8 @@ def stale_items(session: Session, workspace_id: int, tree: Path, item_ids: list[
     if item_ids is not None:
         query = query.where(Item.id.in_(item_ids))
     rows: dict[int, list[tuple[Attachment, DiffScan | None]]] = {}
-    for item_id, attachment, scan in session.execute(query):
-        rows.setdefault(item_id, []).append((attachment, scan))
+    for item_id, attachment, found in session.execute(query):
+        rows.setdefault(item_id, []).append((attachment, found))
 
     heads: dict[str, str | None] = {}
     stale: dict[int, list[str]] = {}
@@ -304,10 +346,10 @@ def stale_items(session: Session, workspace_id: int, tree: Path, item_ids: list[
         if all(scan is None for _, scan in attachments):
             continue
         reasons: list[str] = []
-        current = [(a, scan) for a, scan in attachments if a.is_current and a.local_path is not None]
-        if any(scan is None for _, scan in current):
+        current = [scan for a, scan in attachments if a.is_current and a.local_path is not None]
+        if None in current:
             reasons.append("new diff version")
-        for _, scan in current:
+        for scan in current:
             if scan is None or scan.project is None:
                 continue
             if scan.project not in heads:

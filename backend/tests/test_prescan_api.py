@@ -19,7 +19,7 @@ from aosp_migrator.app import create_app
 from aosp_migrator.config import JIRA_BASE_URL, JIRA_PAT, Config
 from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue
 from aosp_migrator.jira.datacenter import DataCenterClient
-from aosp_migrator.prescan.runner import PrescanRunner
+from aosp_migrator.prescan.runner import PrescanRunner, relabel_items
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ def test_job_over_fixture_workspace(client: TestClient, workspace_id: int, targe
         return prescan(client, workspace_id, key)["diffs"]
 
     camera = prescan(client, workspace_id, "PROJ-101")
-    assert (camera["scanned"], camera["presence"], camera["stale"]) == (True, "not_present", [])
+    assert (camera["scanned"], camera["label"], camera["stale"]) == (True, "applies", [])
     # Only the current version of the patch is scanned.
     assert [(d["filename"], d["project"], d["mapping_source"]) for d in camera["diffs"]] == [
         ("0001-camera-fix-null-deref.patch", "frameworks/av", "hint")
@@ -95,7 +95,7 @@ def test_job_over_fixture_workspace(client: TestClient, workspace_id: int, targe
         {"files": {"services/camera/libcameraservice/CameraService.cpp": "applies", "services/camera/libcameraservice/CameraService.h": "applies"}},
     )
 
-    assert prescan(client, workspace_id, "PROJ-103")["presence"] == "present"
+    assert prescan(client, workspace_id, "PROJ-103")["label"] == "present"
     assert (diffs("PROJ-103")[0]["apply"], diffs("PROJ-103")[0]["apply_detail"]) == (None, None)
     battery_icon = diffs("PROJ-104")[0]
     assert battery_icon["presence"] == "partial"
@@ -115,7 +115,7 @@ def test_job_over_fixture_workspace(client: TestClient, workspace_id: int, targe
     assert (unmapped["project"], unmapped["presence"], unmapped["apply"], unmapped["target_head"]) == (None, None, None, None)
     assert sorted(unmapped["candidates"]) == ["hardware/interfaces", "packages/apps/Settings", "system/core"]
     filler = prescan(client, workspace_id, "PROJ-111")
-    assert (filler["scanned"], filler["presence"], filler["diffs"]) == (False, None, [])
+    assert (filler["scanned"], filler["label"], filler["diffs"]) == (False, None, [])
 
 
 def items(client: TestClient, workspace_id: int, **params: Any) -> list[dict[str, Any]]:
@@ -242,7 +242,7 @@ def test_git_or_plain_tree_is_one_project(client: TestClient, workspace_id: int,
     job = run_prescan(client, other)
     assert (job["status"], job["errors"]) == ("done", [])
     present = prescan(client, other, "PROJ-103")
-    assert (present["presence"], present["diffs"][0]["project"], present["stale"]) == ("present", ".", [])
+    assert (present["label"], present["diffs"][0]["project"], present["stale"]) == ("present", ".", [])
     expected_head = RepoTree(target).git("frameworks/base", "rev-parse", "HEAD").strip() if tree_type == "git" else None
     assert present["diffs"][0]["target_head"] == expected_head
     camera = prescan(client, other, "PROJ-101")["diffs"][0]
@@ -268,10 +268,29 @@ def test_item_error_does_not_stop_the_job(app: FastAPI, client: TestClient, work
     assert [e["key"] for e in job["errors"]] == ["PROJ-105"]
     assert "reimport" in job["errors"][0]["message"]
     assert prescan(client, workspace_id, "PROJ-105")["scanned"] is False
-    assert prescan(client, workspace_id, "PROJ-106")["presence"] == "not_present"
+    assert prescan(client, workspace_id, "PROJ-106")["diffs"][0]["presence"] == "not_present"
     failed = items(client, workspace_id, q="PROJ-105")[0]
     assert failed["triage_label"] == "error"
     assert "reimport" in failed["triage_reason"]
+
+
+def test_relabel_follows_the_triage_rules_without_a_rescan(app: FastAPI, client: TestClient, workspace_id: int) -> None:
+    assert run_prescan(client, workspace_id)["status"] == "done"
+    with session(app) as s:
+        camera = s.scalar(select(Item).join(JiraIssue, Item.issue_id == JiraIssue.id).where(JiraIssue.key == "PROJ-101"))
+        failed = s.scalar(select(Item).join(JiraIssue, Item.issue_id == JiraIssue.id).where(JiraIssue.key == "PROJ-105"))
+        assert camera is not None and failed is not None
+        # As labeled by older rules: unknown presence won over a clean apply.
+        camera.triage_label, camera.triage_reason = "unknown", "frameworks/av: history unavailable"
+        scan = s.scalar(select(DiffScan).join(Attachment).where(Attachment.issue_id == camera.issue_id, Attachment.is_current.is_(True)))
+        assert scan is not None
+        scan.presence, scan.presence_detail = "unknown", {"reason": "history unavailable"}
+        failed.triage_label, failed.triage_reason = "error", "boom"
+        s.commit()
+        relabel_items(s)
+    camera_out, failed_out = items(client, workspace_id, q="PROJ-101")[0], items(client, workspace_id, q="PROJ-105")[0]
+    assert (camera_out["triage_label"], camera_out["triage_reason"]) == ("applies", "frameworks/av: applies as is; presence unknown: history unavailable")
+    assert (failed_out["triage_label"], failed_out["triage_reason"]) == ("error", "boom")
 
 
 def test_cancel_and_one_job_per_workspace(app: FastAPI, client: TestClient, workspace_id: int) -> None:
@@ -396,4 +415,4 @@ def test_plain_tree_with_shallow_project(client: TestClient, target: Path, fake_
     assert run_prescan(client, workspace_id)["status"] == "done"
     item = prescan(client, workspace_id, "PROJ-109")
     assert item["diffs"][0]["project"] == "frameworks/base"
-    assert (item["presence"], item["diffs"][0]["presence_detail"]["reason"]) == ("unknown", "history unavailable")
+    assert (item["diffs"][0]["presence"], item["diffs"][0]["presence_detail"]["reason"]) == ("unknown", "history unavailable")

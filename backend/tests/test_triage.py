@@ -38,7 +38,11 @@ def test_order_is_worst_first() -> None:
         ("partial", "conflicts", "conflicts"),
         # A patch that is already in conflicts; that says nothing new.
         ("likely_present", "conflicts", "likely_present"),
-        ("unknown", "applies", "unknown"),
+        # A patch that applies is not in the working tree, whatever the history could not tell.
+        ("unknown", "applies", "applies"),
+        ("unknown", "3way", "3way"),
+        # It may conflict because it is already in.
+        ("unknown", "conflicts", "unknown"),
         ("not_present", None, "unknown"),
     ],
 )
@@ -59,7 +63,10 @@ def test_reasons() -> None:
     assert diff_triage(conflicts, "p").reason == "system/core: a.c conflict"
     partial = scan("partial", "3way", presence_detail={"files": {"a.c": "present", "b.c": "not_present"}}, apply_detail={"files": {"b.c": "3way"}})
     assert diff_triage(partial, "p").reason == "system/core: a.c already in"
-    assert diff_triage(scan("unknown", "applies", presence_detail={"reason": "history unavailable"}), "p").reason == "system/core: history unavailable"
+    unknown = {"reason": "history unavailable"}
+    assert diff_triage(scan("unknown", "conflicts", presence_detail=unknown), "p").reason == "system/core: history unavailable"
+    applies = diff_triage(scan("unknown", "applies", presence_detail=unknown), "p")
+    assert applies.reason == "system/core: applies as is; presence unknown: history unavailable"
     likely = scan("likely_present", "conflicts", presence_detail={"files": {"a.c": "likely_present"}})
     assert diff_triage(likely, "p").reason == "system/core: lines of a.c found in the target"
 

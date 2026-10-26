@@ -38,6 +38,7 @@ def create_app(
     with app.state.sessionmaker() as session:
         fail_interrupted_jobs(session)
         prescan_runner.fail_interrupted_jobs(session)
+        prescan_runner.relabel_items(session)
     app.state.import_runner = ImportRunner(
         app.state.sessionmaker,
         config.attachments_dir,
