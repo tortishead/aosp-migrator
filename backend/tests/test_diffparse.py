@@ -1,7 +1,7 @@
 import pytest
 from fake_jira.fixtures import fixture_file
 
-from aosp_migrator.importer.diffparse import FileChange, looks_like_diff, parse_diff
+from aosp_migrator.importer.diffparse import Commit, FileChange, looks_like_diff, parse_diff
 
 
 def fixture_text(name: str) -> str:
@@ -22,6 +22,43 @@ def test_format_patch_multi_file() -> None:
         ("services/camera/libcameraservice/CameraService.cpp", 4, 0),
         ("services/camera/libcameraservice/CameraService.h", 1, 1),
     ]
+
+
+def test_format_patch_commit_header() -> None:
+    parsed = parse_diff(fixture_text("camera-fix.v2.patch"))
+    assert parsed.commits == [
+        Commit(
+            sha="9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a",
+            author="Jane Doe <jane.doe@example.com>",
+            date="2026-09-25T16:40:00+02:00",
+            subject="camera: fix null deref on resume",
+            message="Log the missing client and return NO_INIT instead of crashing.\n\nBug: PROJ-101",
+        )
+    ]
+
+
+def test_commit_header_folded_encoded_subject() -> None:
+    text = (
+        "From 3f2a9c1d4e5b6a7c8d9e0f1a2b3c4d5e6f7a8b9c Mon Sep 17 00:00:00 2001\n"
+        "From: =?UTF-8?q?J=C3=B6rg?= <j@example.com>\n"
+        "Date: not a date\n"
+        "Subject: [PATCH v2 1/3] audio: a subject\n"
+        " folded over two lines\n"
+        "\n"
+        "diff --git a/x b/x\n"
+    )
+    assert parse_diff(text).commits == [
+        Commit(
+            sha="3f2a9c1d4e5b6a7c8d9e0f1a2b3c4d5e6f7a8b9c",
+            author="Jörg <j@example.com>",
+            date="not a date",
+            subject="audio: a subject folded over two lines",
+        )
+    ]
+
+
+def test_plain_diff_has_no_commits() -> None:
+    assert parse_diff(fixture_text("settings.diff")).commits == []
 
 
 def test_plain_git_diff_with_new_file_and_rename() -> None:

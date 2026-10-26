@@ -11,7 +11,7 @@ import kotlin from "refractor/kotlin";
 import makefile from "refractor/makefile";
 import markup from "refractor/markup";
 
-import { api, type Attachment, type DiffWithHunks, type FileStatus } from "../api";
+import { api, type Attachment, type Commit, type DiffWithHunks, type FileStatus } from "../api";
 
 for (const syntax of [c, cpp, java, javascript, kotlin, makefile, markup]) refractor.register(syntax);
 // react-diff-view expects refractor 3's API, which returned the node list instead of a root.
@@ -151,8 +151,15 @@ function DiffBody({ workspaceId, attachment, viewType }: { workspaceId: number; 
 
   if (diff.isPending) return <p>Loading diff…</p>;
   if (diff.isError) return <p className="error">{diff.error.message}</p>;
-  const files = diff.data.files;
-  if (files.length === 0) return <p className="hint">No file changes found in this attachment.</p>;
+  const { files, commits } = diff.data;
+  const headers = commits.map((commit, i) => <CommitHeader key={i} commit={commit} />);
+  if (files.length === 0)
+    return (
+      <>
+        {headers}
+        <p className="hint">No file changes found in this attachment.</p>
+      </>
+    );
   const anchor = (i: number) => `diff-${attachment.jira_id}-${i}`;
 
   function toggle(i: number, open?: boolean) {
@@ -165,32 +172,68 @@ function DiffBody({ workspaceId, attachment, viewType }: { workspaceId: number; 
   }
 
   return (
-    <div className="diff-layout">
-      <nav className="diff-files" aria-label="Changed files">
-        <ul>
+    <>
+      {headers}
+      <div className="diff-layout">
+        <nav className="diff-files" aria-label="Changed files">
+          <ul>
+            {files.map((f, i) => (
+              <li key={i}>
+                <button
+                  className="link-button"
+                  title={f.path}
+                  onClick={() => {
+                    toggle(i, true);
+                    document.getElementById(anchor(i))?.scrollIntoView({ block: "start" });
+                  }}
+                >
+                  {f.path.split("/").pop()}
+                </button>
+                <Counts file={f} />
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <div className="diff-main">
           {files.map((f, i) => (
-            <li key={i}>
-              <button
-                className="link-button"
-                title={f.path}
-                onClick={() => {
-                  toggle(i, true);
-                  document.getElementById(anchor(i))?.scrollIntoView({ block: "start" });
-                }}
-              >
-                {f.path.split("/").pop()}
-              </button>
-              <Counts file={f} />
-            </li>
+            <FileDiff key={i} id={anchor(i)} file={f} viewType={viewType} collapsed={collapsed.has(i)} toggle={() => toggle(i)} />
           ))}
-        </ul>
-      </nav>
-      <div className="diff-main">
-        {files.map((f, i) => (
-          <FileDiff key={i} id={anchor(i)} file={f} viewType={viewType} collapsed={collapsed.has(i)} toggle={() => toggle(i)} />
-        ))}
+        </div>
       </div>
-    </div>
+    </>
+  );
+}
+
+function formatDate(date: string): string {
+  const parsed = new Date(date);
+  return Number.isNaN(parsed.getTime()) ? date : parsed.toLocaleString();
+}
+
+/** The mail header of a format-patch commit: subject, author, date, sha and message body. */
+function CommitHeader({ commit }: { commit: Commit }) {
+  return (
+    <section className="commit-header" aria-label="Commit">
+      <h3>{commit.subject || "(no subject)"}</h3>
+      <dl>
+        {commit.author && (
+          <>
+            <dt>From</dt>
+            <dd>{commit.author}</dd>
+          </>
+        )}
+        {commit.date && (
+          <>
+            <dt>Date</dt>
+            <dd title={commit.date}>{formatDate(commit.date)}</dd>
+          </>
+        )}
+        <dt>Commit</dt>
+        <dd>
+          <code>{commit.sha}</code>
+        </dd>
+      </dl>
+      {commit.message && <pre>{commit.message}</pre>}
+    </section>
   );
 }
 

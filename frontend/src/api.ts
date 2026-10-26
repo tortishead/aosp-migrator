@@ -91,6 +91,8 @@ export interface Item {
   dropped: boolean;
   last_import_error: string | null;
   diff_count: number;
+  /** Commit subjects from the format-patch headers of the current diffs. */
+  diff_subjects: string[];
   cluster: ClusterRef | null;
 }
 
@@ -126,15 +128,28 @@ export interface FileChange {
   binary: boolean;
 }
 
+/** Email-style header of one format-patch commit. */
+export interface Commit {
+  sha: string;
+  author: string | null;
+  /** ISO 8601 with offset; the raw header if it could not be parsed. */
+  date: string | null;
+  subject: string;
+  message: string;
+}
+
 export interface ParsedDiff {
   format: "format-patch" | "plain";
   files: FileChange[];
+  /** Missing in diffs parsed before commits were kept; reimport fills it. */
+  commits?: Commit[];
 }
 
 /** A diff as the viewer gets it: each file also carries the raw text of its hunks. */
 export interface DiffWithHunks {
   format: ParsedDiff["format"];
   files: (FileChange & { hunks: string[] })[];
+  commits: Commit[];
 }
 
 export interface Attachment {

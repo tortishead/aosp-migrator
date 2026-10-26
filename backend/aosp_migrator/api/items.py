@@ -62,6 +62,8 @@ class ItemOut(BaseModel):
     last_import_error: str | None
     # Current diff attachments (one per filename).
     diff_count: int
+    # Commit subjects from the format-patch headers of the current diffs.
+    diff_subjects: list[str]
     cluster: ClusterRef | None
 
 
@@ -295,6 +297,8 @@ def list_items(
         .offset(offset)
         .limit(limit)
     )
+    rows = list(rows)
+    subjects = _diff_subjects(session, [issue.id for _, issue, *_ in rows])
     items = [
         ItemOut(
             id=item.id,
@@ -309,11 +313,28 @@ def list_items(
             dropped=item.dropped,
             last_import_error=item.last_import_error,
             diff_count=count,
+            diff_subjects=subjects.get(issue.id, []),
             cluster=ClusterRef(id=cluster_id, name=cluster_name) if cluster_id is not None else None,
         )
         for item, issue, count, cluster_id, cluster_name in rows
     ]
     return ItemPage(items=items, total=total, offset=offset, limit=limit)
+
+
+def _diff_subjects(session: Session, issue_ids: list[int]) -> dict[int, list[str]]:
+    """Distinct commit subjects of the current diffs per issue, in attachment order."""
+    subjects: dict[int, list[str]] = {}
+    current = session.execute(
+        select(Attachment.issue_id, Attachment.parsed)
+        .where(Attachment.issue_id.in_(issue_ids), Attachment.kind == "diff", Attachment.is_current.is_(True))
+        .order_by(Attachment.created, Attachment.id)
+    )
+    for issue_id, parsed in current:
+        seen = subjects.setdefault(issue_id, [])
+        for commit in (parsed or {}).get("commits", []):
+            if commit.get("subject") and commit["subject"] not in seen:
+                seen.append(commit["subject"])
+    return subjects
 
 
 @router.get("/facets")

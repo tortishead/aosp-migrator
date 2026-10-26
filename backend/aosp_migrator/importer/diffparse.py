@@ -3,10 +3,14 @@
 Handles `git format-patch` output (one or more commits per file), plain git diffs,
 and plain unified diffs without `diff --git` headers. Lines are counted from the
 hunk header ranges, so a format-patch signature (`-- `) is never taken as a removal.
+The email-style header of each format-patch commit (From, Date, Subject, message) is kept.
 """
 
 import re
 from dataclasses import asdict, dataclass, field
+from email.parser import HeaderParser
+from email.policy import default as email_policy
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 
 # How many leading lines the sniffer looks at.
@@ -16,6 +20,8 @@ FileStatus = Literal["modified", "added", "deleted", "renamed", "copied"]
 
 _FROM_SHA = re.compile(r"^From [0-9a-f]{40} ")
 _HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+# `[PATCH]`, `[PATCH v2 1/3]`, `[RFC PATCH]`: stripped from the subject like `git am` does.
+_PATCH_PREFIX = re.compile(r"^(?:\[[^\]]*PATCH[^\]]*\]\s*)+", re.IGNORECASE)
 _C_ESCAPES = {"n": "\n", "t": "\t", '"': '"', "\\": "\\", "a": "\a", "b": "\b", "f": "\f", "r": "\r", "v": "\v"}
 
 
@@ -32,9 +38,21 @@ class FileChange:
 
 
 @dataclass
+class Commit:
+    """Email-style header of one format-patch commit."""
+
+    sha: str
+    author: str | None = None  # `Name <email>`
+    date: str | None = None  # ISO 8601 with offset, as written in the patch
+    subject: str = ""
+    message: str = ""  # Body of the commit message, without the subject
+
+
+@dataclass
 class ParsedDiff:
     format: Literal["format-patch", "plain"]
     files: list[FileChange] = field(default_factory=list)
+    commits: list[Commit] = field(default_factory=list)
 
     def to_json(self, *, hunks: bool = False) -> dict[str, Any]:
         data = asdict(self)
@@ -74,6 +92,7 @@ def parse_diff(text: str) -> ParsedDiff:
         line = lines[i]
         if _FROM_SHA.match(line):
             current, git_sides_pending = None, False  # Next commit of a series
+            result.commits.append(_commit(lines, i))
         elif line.startswith("diff --git "):
             current = _git_header(line[len("diff --git ") :])
             result.files.append(current)
@@ -99,6 +118,31 @@ def parse_diff(text: str) -> ParsedDiff:
             _git_extended_header(line, current)
         i += 1
     return result
+
+
+def _commit(lines: list[str], i: int) -> Commit:
+    """Parse the mail header and message after the `From <sha>` line at `i`."""
+    commit = Commit(sha=lines[i].split(" ", 2)[1])
+    i += 1
+    start = i
+    while i < len(lines) and lines[i].strip():
+        i += 1
+    headers = HeaderParser(policy=email_policy).parsestr("\n".join(lines[start:i]) + "\n\n")
+    if author := headers.get("From"):
+        commit.author = str(author)
+    if date := headers.get("Date"):
+        try:
+            commit.date = parsedate_to_datetime(str(date)).isoformat()
+        except (TypeError, ValueError):
+            commit.date = str(date)
+    commit.subject = _PATCH_PREFIX.sub("", str(headers.get("Subject", ""))).strip()
+    body: list[str] = []
+    for line in lines[i + 1 :]:
+        if line == "---" or line.startswith("diff --git ") or _FROM_SHA.match(line):
+            break
+        body.append(line)
+    commit.message = "\n".join(body).strip()
+    return commit
 
 
 def _count(group: str | None) -> int:

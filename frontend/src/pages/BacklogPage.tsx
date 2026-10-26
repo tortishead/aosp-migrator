@@ -204,6 +204,11 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
             import error
           </span>
         )}
+        {item.diff_subjects.map((subject) => (
+          <div key={subject} className="diff-subject" title="Commit subject from the patch">
+            {subject}
+          </div>
+        ))}
       </td>
       <td>{item.status}</td>
       <td className="nowrap">{STATE_LABELS[item.local_state]}</td>

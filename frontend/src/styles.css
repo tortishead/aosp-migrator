@@ -466,6 +466,48 @@ body {
   margin: 8px 0;
 }
 
+.commit-header {
+  margin: 8px 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  background: #f6f8fa;
+}
+
+.commit-header h3 {
+  margin: 0 0 4px;
+  font-size: 1em;
+}
+
+.commit-header dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  color: #59636e;
+  font-size: 0.9em;
+}
+
+.commit-header dt {
+  font-weight: 600;
+}
+
+.commit-header dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.commit-header pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-size: 0.9em;
+}
+
+.diff-subject {
+  color: #59636e;
+  font-size: 0.85em;
+}
+
 .diff-layout {
   display: grid;
   grid-template-columns: minmax(160px, 240px) 1fr;

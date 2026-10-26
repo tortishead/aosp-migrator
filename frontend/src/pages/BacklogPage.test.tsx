@@ -40,6 +40,7 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     dropped: false,
     last_import_error: null,
     diff_count: 1,
+    diff_subjects: [],
     cluster: null,
     ...overrides,
   };
@@ -94,7 +95,11 @@ describe("BacklogPage", () => {
     backlogApi({
       "GET /workspaces/1/items": () =>
         page([
-          item("PROJ-101", { local_state: "not_relevant", labels: ["camera", "oem-patch"] }),
+          item("PROJ-101", {
+            local_state: "not_relevant",
+            labels: ["camera", "oem-patch"],
+            diff_subjects: ["camera: fix null deref on resume"],
+          }),
           item("PROJ-102", { dropped: true, last_import_error: "HTTP 500", diff_count: 0 }),
         ]),
     });
@@ -104,6 +109,7 @@ describe("BacklogPage", () => {
     expect(screen.getByRole("link", { name: "PROJ-101" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-101");
     expect(within(first).getByText("Not relevant")).toBeInTheDocument();
     expect(within(first).getByText("camera, oem-patch")).toBeInTheDocument();
+    expect(within(first).getByText("camera: fix null deref on resume")).toBeInTheDocument();
     const second = screen.getByRole("link", { name: "PROJ-102" }).closest("tr")!;
     expect(within(second).getByText("dropped")).toBeInTheDocument();
     expect(within(second).getByText("import error")).toHaveAttribute("title", "HTTP 500");

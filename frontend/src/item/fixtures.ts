@@ -3,6 +3,15 @@ import type { Attachment, DiffWithHunks, ItemDetail } from "../api";
 // Hunks as the server returns them for backend/tests/fake_jira/files/camera-fix.v2.patch.
 export const cameraV2: DiffWithHunks = {
   format: "format-patch",
+  commits: [
+    {
+      sha: "9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a",
+      author: "Jane Doe <jane.doe@example.com>",
+      date: "2026-09-25T16:40:00+02:00",
+      subject: "camera: fix null deref on resume",
+      message: "Log the missing client and return NO_INIT instead of crashing.\n\nBug: PROJ-101",
+    },
+  ],
   files: [
     {
       path: "services/camera/libcameraservice/CameraService.cpp",
@@ -50,11 +59,21 @@ export const cameraV2: DiffWithHunks = {
 
 export const cameraV1: DiffWithHunks = {
   format: "format-patch",
+  commits: [
+    {
+      sha: "3f2a9c1d4e5b6a7c8d9e0f1a2b3c4d5e6f7a8b9c",
+      author: "Jane Doe <jane.doe@example.com>",
+      date: "2026-09-21T10:12:00+02:00",
+      subject: "camera: fix null deref on resume",
+      message: "Bug: PROJ-101",
+    },
+  ],
   files: [{ ...cameraV2.files[0], added: 3, hunks: [cameraV2.files[0].hunks[0].replace("+        return NO_INIT;\n", "")] }],
 };
 
 export const icons: DiffWithHunks = {
   format: "plain",
+  commits: [],
   files: [
     { path: "res/drawable/oem_battery.png", old_path: null, status: "added", added: 0, removed: 0, binary: true, hunks: [] },
   ],
