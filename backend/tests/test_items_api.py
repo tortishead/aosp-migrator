@@ -56,7 +56,6 @@ def test_list_fields_and_natural_key_order(client: TestClient, imported: int) ->
         "cluster": None,
         "triage_label": None,
         "triage_reason": None,
-        "apply": None,
         "stale": [],
     }
     assert [i["diff_count"] for i in page["items"][1:4]] == [1, 1, 1]

@@ -101,8 +101,6 @@ export interface Item {
   /** Null until pre-scanned, and for items without diffs. */
   triage_label: TriageLabel | null;
   triage_reason: string | null;
-  /** Worst apply result over the current diffs that were apply-checked; null when none was. */
-  apply: ApplyResult | null;
   /** Why the pre-scan results are out of date; empty when fresh or never scanned. */
   stale: string[];
 }

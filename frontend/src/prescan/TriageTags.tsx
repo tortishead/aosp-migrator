@@ -1,21 +1,13 @@
-import type { Item, TriageLabel } from "../api";
+import type { Item } from "../api";
 import { TRIAGE_TEXT, triageClass } from "./triage";
 
-// Labels saying the diffs are (partly) in the target already; an apply result says more.
-const PRESENT_LABELS = new Set<TriageLabel>(["partial", "likely_present", "present"]);
-
-/** Backlog pre-scan column: one verdict tag and a stale marker.
- *
- * The verdict is the triage label, or the apply result in place of a present label. Never both.
- */
+/** Backlog pre-scan column: the triage label (the apply result whenever the diffs were apply-checked) and a stale marker. */
 export function TriageTags({ item }: { item: Item }) {
-  const { triage_label: label, apply } = item;
-  const shown = label && apply && PRESENT_LABELS.has(label) ? apply : label;
   return (
     <>
-      {shown && (
-        <span className={triageClass(shown)} title={item.triage_reason ?? undefined}>
-          {TRIAGE_TEXT[shown]}
+      {item.triage_label && (
+        <span className={triageClass(item.triage_label)} title={item.triage_reason ?? undefined}>
+          {TRIAGE_TEXT[item.triage_label]}
         </span>
       )}
       {item.stale.length > 0 && (

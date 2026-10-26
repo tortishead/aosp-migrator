@@ -18,27 +18,11 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aosp_migrator.db.models import (
-    Attachment,
-    DiffScan,
-    HistoryEvent,
-    ImportJob,
-    Item,
-    JiraIssue,
-    PrescanJob,
-    Workspace,
-    utcnow,
-)
+from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, PrescanJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import check_apply
-from aosp_migrator.prescan.mapping import (
-    ProjectListMissing,
-    discover_projects,
-    map_diff,
-    path_hints,
-    read_project_list,
-)
+from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list
 from aosp_migrator.prescan.presence import check_presence
 from aosp_migrator.prescan.triage import Triage, diff_triage, item_triage
 

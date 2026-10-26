@@ -8,23 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
-from aosp_migrator.db.models import (
-    Attachment,
-    DiffScan,
-    Item,
-    JiraIssue,
-    PrescanJob,
-    Workspace,
-)
-from aosp_migrator.prescan.runner import (
-    JobConflictError,
-    PrescanError,
-    PrescanRunner,
-    current_diffs,
-    diff_scan,
-    stale_items,
-    target_projects,
-)
+from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue, PrescanJob, Workspace
+from aosp_migrator.prescan.runner import JobConflictError, PrescanError, PrescanRunner, current_diffs, diff_scan, stale_items, target_projects
 from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter()
