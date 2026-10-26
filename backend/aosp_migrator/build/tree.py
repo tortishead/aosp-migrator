@@ -10,6 +10,7 @@ untracked files stay. `restore` works from a stored record alone, so a unit left
 applied by a crash is restored the same way.
 """
 
+import tempfile
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
@@ -76,12 +77,41 @@ def prepare(tree: Path, patches: Sequence[UnitPatch]) -> InFlight:
 
 
 def apply_patches(tree: Path, patches: Sequence[UnitPatch], three_way: bool = False) -> None:
-    """`git apply` each patch into its project's working tree, in order; `--3way` for clusters."""
-    for patch in patches:
-        options = ("--3way",) if three_way else ()
-        result = git.apply(tree / patch.project, patch.diff, *options)
-        if result.returncode != 0:
-            raise ApplyFailed(f"{patch.project}: {result.stderr.strip()}")
+    """`git apply` each patch into its project's working tree, in order; `--3way` for clusters.
+
+    A 3-way apply works on a temp index and writes its merge blobs into a temp object dir,
+    so the project's index and object store stay as they were.
+    """
+    with tempfile.TemporaryDirectory(prefix="aosp-migrator-build-") as tmp:
+        envs: dict[str, dict[str, str]] = {}
+        for patch in patches:
+            cwd = tree / patch.project
+            options: tuple[str, ...] = ()
+            env = None
+            if three_way:
+                options = ("--3way",)
+                if patch.project not in envs:
+                    envs[patch.project] = _scratch_env(cwd, Path(tmp) / str(len(envs)))
+                env = envs[patch.project]
+            result = git.apply(cwd, patch.diff, *options, env=env)
+            if result.returncode != 0:
+                raise ApplyFailed(f"{patch.project}: {result.stderr.strip()}")
+
+
+def _scratch_env(cwd: Path, scratch: Path) -> dict[str, str]:
+    """Git env with an index of HEAD and an object dir in `scratch`, the project's objects as alternate."""
+    objects = Path(git.git(cwd, "rev-parse", "--git-path", "objects").stdout.strip())
+    objects = (objects if objects.is_absolute() else cwd / objects).resolve()
+    (scratch / "objects").mkdir(parents=True)
+    env = {
+        "GIT_INDEX_FILE": str(scratch / "index"),
+        "GIT_OBJECT_DIRECTORY": str(scratch / "objects"),
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(objects),
+    }
+    git.git(cwd, "read-tree", "HEAD", env=env)
+    # Stat info, so the working tree matches the index (it is clean: `prepare` checked).
+    git.git(cwd, "update-index", "-q", "--refresh", env=env)
+    return env
 
 
 def restore(tree: Path, inflight: InFlight) -> None:
