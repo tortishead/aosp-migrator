@@ -46,4 +46,6 @@ def head(cwd: Path) -> str | None:
 
 
 def is_shallow(cwd: Path) -> bool:
-    return git(cwd, "rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+    # The `shallow` file, not `--is-shallow-repository`: git before 2.15 echoes that flag back.
+    path = Path(git(cwd, "rev-parse", "--git-path", "shallow").stdout.strip())
+    return (path if path.is_absolute() else cwd / path).is_file()
