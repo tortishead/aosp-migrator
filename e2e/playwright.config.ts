@@ -6,6 +6,9 @@ export const APP_PORT = 8792;
 // Serves the pre-scan scenario tickets that fit the `repo` tree it builds at PRESCAN_TREE.
 export const PRESCAN_JIRA_PORT = 8793;
 export const PRESCAN_TREE = ".prescan/aosp";
+// The same scenario set up for builds (fake envsetup.sh, one compile failure, one 3-way patch) in a tree of its own.
+export const BUILD_JIRA_PORT = 8794;
+export const BUILD_TREE = ".build/aosp";
 
 // Every run starts from an empty data dir. Jira settings from the environment would override the UI.
 const clean = "env -u AOSP_MIGRATOR_JIRA_BASE_URL -u AOSP_MIGRATOR_JIRA_PAT -u AOSP_MIGRATOR_DATA_DIR";
@@ -30,6 +33,11 @@ export default defineConfig({
     {
       command: `rm -rf .prescan && cd ../backend && PYTHONPATH=tests uv run python -m fake_jira --port ${PRESCAN_JIRA_PORT} --prescan-tree ../e2e/${PRESCAN_TREE}`,
       url: `http://127.0.0.1:${PRESCAN_JIRA_PORT}/rest/api/2/myself`,
+      reuseExistingServer: false,
+    },
+    {
+      command: `rm -rf .build && cd ../backend && PYTHONPATH=tests uv run python -m fake_jira --port ${BUILD_JIRA_PORT} --prescan-tree ../e2e/${BUILD_TREE} --build`,
+      url: `http://127.0.0.1:${BUILD_JIRA_PORT}/rest/api/2/myself`,
       reuseExistingServer: false,
     },
     {

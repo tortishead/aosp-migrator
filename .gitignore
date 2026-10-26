@@ -13,3 +13,4 @@ backend/dist/
 *.tsbuildinfo
 e2e/.data/
 e2e/.prescan/
+e2e/.build/
