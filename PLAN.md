@@ -15,7 +15,8 @@ Source of requirements: [spec.md](spec.md).
 | MS | Workflow step | Status |
 |----|---------------|--------|
 | MS1 | Import + web UI (workspaces, backlog, item detail, settings, manual clustering) | Planned (below) |
-| MS2 | Pre-scan (repo mapping, already-present check, Copilot evaluation, cluster suggestions) | Planned (below) |
+| MS2-1 | Pre-scan without Copilot (repo mapping, already-present check, apply check, triage labels) | Planned (below) |
+| MS2-2 | Copilot evaluation on demand, dependencies, cluster suggestions | Needs grilling |
 | MS3 | Migration level 1 (plain patch apply) | Needs grilling |
 | MS4 | Migration level 2 (3-way / other merge strategies) | Needs grilling |
 | MS5 | Migration level 3 (Copilot re-implementation) | Needs grilling |
@@ -27,9 +28,9 @@ Open question for MS3: spec says a migration is done only after build succeeds. 
 
 Parked questions (from the MS1 grilling), to settle when their milestone starts:
 
-- How Copilot is invoked (Copilot CLI behind an adapter recommended). MS2/MS5.
-- Token budget split: deterministic first, LLM only where needed. MS2/MS5.
-- Patch handling across multiple repos in one ticket. MS2/MS3.
+- How Copilot is invoked (Copilot CLI behind an adapter recommended). MS2-2/MS5.
+- Token budget split: deterministic first, LLM only where needed. MS2-2/MS5.
+- Patch handling across multiple repos in one ticket. MS3.
 - Push target: GitHub per-repo branch + PR, remote mapping per repo, Gerrit out of scope. MS8.
 - Reimport brings a new diff version after migration has started: invalidate, flag, or ignore? MS3.
 - Backlog "start migration level" action from spec Module 1: lands in MS3, not MS1.
@@ -166,53 +167,42 @@ Each step lists what is built and what proves it works.
 
 ## MS2 — Pre-scan
 
+Split after 2.4. MS2-1 is the deterministic pre-scan: no Copilot, no dependencies, no clustering. Every item gets a triage label from cheap git checks, so items that need no AI go straight on to migration and build. MS2-2 adds Copilot, started by hand per item or selection, and the dependency and cluster work. Its grilling happens when MS2-1 is done.
+
+History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`) took 2.1–2.4 and the git/plain tree fixes, then removed the candidate graph (`prescan/graph.py`, `dependency_edge`). The Copilot adapter (`ms2` commit `40cd8a2`, settings and `copilot.py`) waits there for MS2-2.
+
+## MS2-1 — Pre-scan without Copilot
+
 ### Decisions
 
-- **Goal:** per backlog item, find the affected repo(s), decide whether the patch is already present, still required and makes sense, and suggest dependencies/clusters. Deterministic first; Copilot only where judgment is needed (spec: save tokens).
+- **Goal:** per backlog item, find the affected repo(s), decide whether the patch is already present, and whether it applies as is or with a 3-way merge. Deterministic only (spec: save tokens).
 - **Trigger:** user-started background job for the whole workspace, the filtered selection, or one item. Same mechanics as import (progress polling, cancel, one job per workspace, a failing item records an error and does not abort). Not run automatically after import.
-- **Order:** deterministic stages (repo mapping, already-present, candidate graph) run for the whole selection first, then Copilot works through the items that still need it. An item proven present skips Copilot. Copilot calls sequential; parallelism setting (max 4) later.
 - **Trees:** `repo` target trees: projects come from `.repo/project.list`; missing file fails the job with a hint to run `repo sync`. A `git` or `plain` tree has no project list: its projects are the directories holding a `.git` (nested ones included, `.` for the root; hidden dirs, symlinks and root `out/` skipped), found in job stage `projects`; with none, the tree is one project `.`. A diff with only new files maps to the only project of a single-project tree. A `plain` tree has no history, so HEAD is null and history lookups give `unknown` ("history unavailable"). Git never discovers a repository above the scanned directory.
-- **Never mutate user trees:** no fetch, no deepen, no checkout. Read-only git commands only.
+- **Never mutate user trees:** no fetch, no deepen, no checkout, no writes to the index or object store. Checks that need git to write use a temp index and a temp object directory.
 - **Repo mapping (per diff, not per item):**
   - Hint: paths in the description (`{VAR}/…`, `${VAR}/…`, `$VAR/…`, bare `frameworks/base/...`), longest project-list prefix wins. Built-in pattern, no per-workspace regex.
   - Check: a project matches when the diff's touched files (non-new) exist under it. Hint is verified the same way.
-  - Exactly one match: mapped. Zero or several: Copilot asked (`repo` field in the verdict), then manual picker as last resort.
+  - Exactly one match: mapped. Zero or several: `unmapped`, the user picks the project by hand on the item page (kept across re-runs).
   - A ticket may map to several repos.
-- **Already present (per diff: `present` / `not_present` / `partial` / `unknown`):**
-  - Every diff: `git apply --reverse --check` in the mapped target project; per-file results give `partial`.
-  - Fallback only when reverse-apply fails and the format-patch `From:` domain is in the global upstream list (default `google.com`, `android.com`): look up existing history by Change-Id, then subject, then `git patch-id`. Shallow history means `unknown` with reason "history unavailable".
-  - Item is present only when all its diffs are present. `partial` is flagged and still goes to Copilot.
-- **Candidate graph (workspace-wide, deterministic):**
-  - Same project: overlapping files or hunks; one diff touches lines another adds.
-  - Any project: Jira links between backlog items, same `[PATCH n/m]` series, symbol match (identifier added in one diff — method/class, AIDL/HIDL interface, resource name, sysprop, permission string — appears in another item's diff; text search over imported diffs).
-  - Copilot gets each item's candidate list (key, summary, edge reason, overlapping files) and confirms or rejects each edge.
-- **Copilot adapter:**
-  - Standalone `copilot` CLI in non-interactive prompt mode, behind an interface `evaluate(bundle) -> Verdict`. Binary path and model in Settings, "test Copilot" button. Missing or unauthenticated CLI fails the job up front. Exact flags/output format verified in step 2.5.
-  - One configurable model. One call per item (all its diffs/repos in one bundle).
-  - No tools by default. When the verdict says "insufficient context", an opt-in setting allows one retry with read-only tree access.
-  - Invalid JSON or CLI error: one retry with a "valid JSON only" nudge, then item error.
-- **Context bundle:** built deterministically, fixed priority, cap ~8k tokens (configurable), dropped from the bottom:
-  1. migration ticket summary + description
-  2. current diff(s)
-  3. target code ±20 lines around each hunk, or "file missing in target"
-  4. deterministic findings (repo mapping, already-present results, candidate edges)
-  5. linked implementation ticket text (description + last few comments; already imported via links)
-  6. source commit message (source tree first by Change-Id/subject/patch-id; GitHub only when the ticket has a commit/PR URL and the GitHub PAT is set)
-  7. PR discussion (off by default)
-  Content sent once (ticket diff and source commit are not both sent). Bundle stored with the verdict and shown in the UI.
-- **Verdict (strict JSON per item):** `makes_sense`, `still_required`, `already_present` each `{value: yes|no|unsure, reason}`; `repo` (only when asked); `depends_on: [{key, reason}]` (confirmed edges); `confidence`; `summary` (≤3 sentences on what the patch does, reused by MS5).
-- **Advisory only:** pre-scan never changes local state or clusters. User accepts or overrides per item; accepting "already present" / "not required" goes through the existing state flow (`not_relevant` / `closed`), logged in item history.
-- **Cluster suggestions:** connected components of confirmed edges. Shown as suggestions; accept creates/extends an MS1 cluster, dismiss is remembered across re-runs.
-- **Staleness:** verdict stores inputs (current diff attachment ids, bundle hash, target project HEAD SHAs). Change marks it stale (shown, filterable). No automatic re-run.
-- **Settings (global):** Copilot binary path, model, token cap, read-only escalation on/off, upstream author domains, PR discussion on/off.
+- **Already present (per diff: `present` / `partial` / `likely_present` / `not_present` / `unknown`):**
+  - First `git apply --reverse --check` per file in the mapped project. All files pass: `present`; some: `partial`.
+  - When reverse-apply fails, history lookup per format-patch commit: Change-Id and `git patch-id --stable` for every author; exact subject only when the `From:` domain is in the upstream list (default `google.com`, `android.com`), since OEM subjects like "Fix crash" match too easily. A match gives `present`. Shallow history or a plain tree gives `unknown`, "history unavailable".
+  - Content heuristic for context drift: when neither proves presence, a file is `likely_present` when its added lines are in the target file and its removed lines are gone (blank and trivial lines such as lone braces ignored). Shown with its evidence, never treated as proof.
+- **Apply check (per diff, when not `present`):**
+  - `git apply --check` against the working tree: `applies`.
+  - Else `git apply --3way --cached` against HEAD in a temp `GIT_INDEX_FILE`, with `GIT_OBJECT_DIRECTORY` set to a temp dir and the real object store as alternate: clean result gives `3way`.
+  - Else `conflicts`, with the failing files. Missing preimage blobs (common for OEM-only files) or a plain tree give `conflicts` with that reason.
+  - Each item is checked on its own. A patch that only fails because a prerequisite is missing shows `conflicts`; dependency-ordered checks come with the dependency work in MS2-2.
+- **Triage label (per item):** machine facts are labels, not local state. Local state (`new` / `not_relevant` / `closed`) stays the user's decision and the pre-scan never changes it. The item label is the worst diff result, in this order: `error`, `unmapped`, `unknown`, `conflicts`, `partial`, `3way`, `applies`, `likely_present`, `present`. An item with no diff gets no label. Later milestones add their own labels next to it (e.g. build result in MS6). MS3 skips `present` items by default.
+- **Overview:** backlog column "Pre-scan" with the label as badge (tooltip: reason, e.g. matched commit or conflicting files) and a stale marker; count bar above the backlog ("12 present · 3 partial · 30 applies · …"), a click filters by that label; filters for label and stale. Closing present items is the existing bulk state change, logged in history.
+- **Staleness:** scan stores inputs (current diff attachment ids, target project HEAD SHAs). A new diff version or a moved HEAD marks the item stale (shown, filterable). No automatic re-run.
+- **Settings (global):** upstream author domains.
 
 ### Data model (additions, sketch)
 
 - `prescan_job` — like `import_job` (workspace_id, scope, selection, status, stage, done, total, errors, started_at, finished_at, cancel_requested)
-- `diff_scan` — attachment_id, project (nullable), mapping_source (`hint` / `files` / `copilot` / `manual`), candidates (JSON), presence, presence_detail (JSON per file / history match), target_head, scanned_at
-- `prescan_verdict` — item_id, verdict (JSON), bundle (text), inputs (JSON: attachment ids, bundle hash, heads), accepted (nullable: `accepted` / `overridden`), error, created_at
-- `dependency_edge` — workspace_id, from_item_id, to_item_id, reason (`files` / `hunks` / `link` / `series` / `symbol`), detail (JSON), copilot (`confirmed` / `rejected` / null)
-- `cluster_suggestion_dismissal` — workspace_id, member key set hash
+- `diff_scan` — attachment_id, project (nullable), mapping_source (`hint` / `files` / `manual`), candidates (JSON), presence, presence_detail (JSON per file / history match / heuristic evidence), apply (`applies` / `3way` / `conflicts`, nullable), apply_detail (JSON), target_head, scanned_at
+- `item` — triage label (nullable) and the time it was computed, so the backlog can count and filter without re-reading every scan
 
 ### Steps
 
@@ -226,36 +216,49 @@ Each step lists what is built and what proves it works.
 - Test: present, partial, not present, upstream patch found by Change-Id after drift, shallow repo gives "history unavailable", tree unchanged after scan.
 - As built: `aosp_migrator/prescan/presence.py`: `check_presence(project_dir, diff_text, upstream_domains) -> Presence(status, detail)`, `combine(statuses)` for the item level (all present -> present; any present/partial -> partial; any unknown -> unknown). Each file is reverse-checked on its own patch: `FileChange.raw` (new, not stored) holds each file's section; a series' sections for one file are concatenated in series order (`git apply -R` undoes them newest first); `-p1` when `a/`/`b/` prefixes are present, else `-p0`. `git apply --include` was not usable (exit 0 when nothing matches). "Binary files differ" sections are `unknown` per file. History fallback only when not every checkable file is present and every format-patch commit's author domain is upstream (domain or subdomain): per commit `git log HEAD` by Change-Id, then exact subject (`[PATCH ...]` tag stripped), then `git patch-id --stable` against `git log -p` limited to the diff's paths. Not found in a shallow clone, or any git error during lookup (e.g. missing blobs in a partial clone), gives `unknown` "history unavailable". Detail: `files` `{path: present|not_present|unknown}`, `history` `[{subject, match, sha}]`, `reason`. `prescan/git.py` runs every git call with `GIT_NO_LAZY_FETCH=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_TERMINAL_PROMPT=0`; `head()`, `is_shallow()`. Upstream domains: config field `[prescan] upstream_domains` / `AOSP_MIGRATOR_UPSTREAM_DOMAINS` (comma-separated), `Config.upstream_domains()`; API/UI with 2.5. `RepoTree` gained `commit(..., author=)`, deletes via `None`, and `format_patch`.
 
-**2.3 Candidate graph** — done
-- Edges from files/hunks, Jira links, patch series, symbol match. Migration adds `dependency_edge`.
-- Test: each edge kind, cross-repo symbol pair, no self edges, rebuild replaces old unconfirmed edges.
-- As built: `aosp_migrator/prescan/graph.py`. Pure `build_edges(GraphItem[])` plus DB side `graph_items` / `rebuild_graph(session, workspace_id)` over non-dropped items, current downloaded diffs (re-parsed from disk for hunks) and `ItemLink`s between backlog items. `files`/`hunks` only between diffs mapped to the same project; `hunks` (instead of `files`) when hunk ranges of a shared file meet old/old, or old against the other's new side ("touches lines another adds"). `link`: `is blocked by`/`depends on`/`requires`/`is caused by` and reverses are directed, others undirected. `series`: `[PATCH n/m]`, m>1, same author email and m; later n depends on earlier; identical patch sets skipped. `symbol`: definitions on added lines (types incl. AIDL `parcelable`/HIDL `union`, method/function declarations, `#define`, `static final`/`const` constants, resource `name=`, manifest `<permission>`, sysprop and `*.permission.*` string literals), minus names also on removed lines, ≥4 chars, small stop list; matched against all hunk tokens of other items, any project; user depends on definer. Directed edges stored as from=dependent; undirected once with lower item id first and `detail.directed` False. Rebuild deletes edges with `copilot` null and refreshes detail of confirmed/rejected ones. Migration `0008`: `dependency_edge` (unique `from_item_id, to_item_id, reason`).
+**2.3 Candidate graph** — built, then removed
+- Moved to MS2-2 with the dependency work. Code and its tests are in `ms2` commit `6f61833` (`prescan/graph.py`).
 
 **2.4 Pre-scan job and API (deterministic stages)** — done
 - `prescan_job` runner, start (all / selection / single), progress, cancel, item errors. Staleness inputs recorded. Fake Jira fixtures extended (`{AOSP_HOME}/...` paths, links between items, cross-repo symbol pair, `[PATCH n/m]` series).
 - Test: job over fixture workspace, cancel, one job per workspace, error isolation, stale after reimport with new diff version and after target HEAD moves.
-- As built: `aosp_migrator/prescan/runner.py` `PrescanRunner` (same thread/executor pattern as imports). Stage `scan` per item in its own transaction: hints from summary + description, `map_diff`, `check_presence`, `git.head` into the attachment's `diff_scan` row (mapping from `manual`/`copilot` kept on re-scan); stage `graph` rebuilds the workspace graph. Job fails up front for non-`repo` trees, missing tree or `project.list`; refused (409) while another pre-scan or an import runs; workspace delete refused while one runs; `running` jobs failed at startup. Staleness computed on read (`stale_reasons`): a current diff without a scan ("new diff version"), or a mapped project's HEAD ≠ `target_head` ("<project> HEAD moved"). API (`api/prescan.py`): `POST /workspaces/{id}/prescan {keys?}`, `GET /workspaces/{id}/prescan-jobs`, `GET /prescan-jobs/{id}`, `POST /prescan-jobs/{id}/cancel`, `GET /workspaces/{id}/items/{key}/prescan` (per current diff scan, combined presence, stale reasons, edges as `depends_on`/`depended_on_by`/`related`). Migration `0009`: `prescan_job`. Fixtures: `tests/fake_jira/prescan.py` `prescan_store(target)` builds a matching `repo` tree (patches made by git in scratch projects) and reworks PROJ-101, PROJ-105..110 (outcomes listed in its docstring); `python -m fake_jira --prescan-tree DIR` serves it for manual tests. Minimal UI ahead of 2.8/2.9, for manual testing: backlog "Pre-scan backlog" panel (progress, cancel, item errors), "Pre-scan selected" bulk action, read-only item "Pre-scan" section with "Pre-scan this item".
+- As built: `aosp_migrator/prescan/runner.py` `PrescanRunner` (same thread/executor pattern as imports). Stage `scan` per item in its own transaction: hints from summary + description, `map_diff`, `check_presence`, `git.head` into the attachment's `diff_scan` row (mapping from `manual`/`copilot` kept on re-scan). Job fails up front for a missing tree, or a `repo` tree without `project.list`; refused (409) while another pre-scan or an import runs; workspace delete refused while one runs; `running` jobs failed at startup. Staleness computed on read (`stale_reasons`): a current diff without a scan ("new diff version"), or a mapped project's HEAD ≠ `target_head` ("<project> HEAD moved"). API (`api/prescan.py`): `POST /workspaces/{id}/prescan {keys?}`, `GET /workspaces/{id}/prescan-jobs`, `GET /prescan-jobs/{id}`, `POST /prescan-jobs/{id}/cancel`, `GET /workspaces/{id}/items/{key}/prescan` (per current diff scan, combined presence, stale reasons). Migration `0009`: `prescan_job`. Fixtures: `tests/fake_jira/prescan.py` `prescan_store(target)` builds a matching `repo` tree (patches made by git in scratch projects) and reworks PROJ-101, PROJ-105..110 (outcomes listed in its docstring); `python -m fake_jira --prescan-tree DIR` serves it for manual tests. Minimal UI ahead of 2.9/2.10, for manual testing: backlog "Pre-scan backlog" panel (progress, cancel, item errors), "Pre-scan selected" bulk action, read-only item "Pre-scan" section with "Pre-scan this item".
 
-**2.5 Copilot adapter and settings**
-- Verify the `copilot` CLI non-interactive flags and output; adapter with fake implementation for tests; Settings fields and "test Copilot" button.
-- Test: fake adapter contract, missing binary error, settings round-trip; optional live smoke test (skipped by default).
+**2.5 History lookup for every author**
+- Change-Id and patch-id lookup for every format-patch commit; subject only for upstream domains. Runs only after reverse-apply fails.
+- Test: OEM patch already cherry-picked found by Change-Id, OEM patch with drifted context found by patch-id, OEM subject alone not a match, upstream subject match kept, shallow clone and plain tree `unknown`.
 
-**2.6 Context bundle**
-- Builder with priority order and token cap, target excerpts around hunks, linked implementation ticket text, source commit lookup (source tree, then GitHub when URL + PAT).
-- Test: drop order under a small cap, dedupe of diff vs source commit, file missing in target, source commit found by Change-Id, GitHub path against a fake.
+**2.6 Likely-present heuristic**
+- Per file: added lines present in the target file, removed lines absent, trivial lines ignored. Diff `likely_present` when every file is present or likely and at least one is only likely. Evidence in `presence_detail`.
+- Test: drifted context gives `likely_present`, one added line missing gives `not_present`, removed line still there gives `not_present`, brace-only hunks do not count.
 
-**2.7 Copilot stage and verdicts**
-- Job runs Copilot after deterministic stages for items that need it; strict JSON parse, one retry, item error; optional read-only escalation; edges confirmed/rejected; migration adds `prescan_verdict`.
-- Test: present items skipped, invalid JSON retry then error, ambiguous repo resolved via verdict, edge confirmation, verdict stored with bundle and inputs.
+**2.7 Apply check**
+- `git apply --check`, then 3-way on temp index and temp object dir, else `conflicts`. Migration adds `apply` / `apply_detail` to `diff_scan`.
+- Test: clean apply, 3-way after drift, real conflict, missing preimage blob, plain tree, user tree and object store unchanged after the scan (no new loose objects, index untouched).
 
-**2.8 Item page Pre-scan tab**
-- Stage results per diff, verdict, bundle viewer, manual repo picker, accept/override (state change through existing flow, history logged), stale badge, re-run single item.
-- Test: component tests for tab states, accept sets state and logs history, override kept across re-run.
+**2.8 Item triage label and API**
+- Label from the diff results in the fixed order, stored on `item` by the job; workspace endpoint with counts per label; backlog API returns label and stale flag and filters by both. Upstream domains in the settings API.
+- Test: label order, item with mixed diffs, counts, filters, label refreshed on re-run, local state never touched.
 
-**2.9 Backlog and cluster suggestions**
-- Backlog columns/filters: repo, verdict, stale, pre-scan error; bulk "Pre-scan selected". Clusters page "Suggested" section: accept into cluster, dismiss (remembered).
-- Test: filters, suggestion from confirmed edges, accept creates cluster, dismiss survives re-run.
+**2.9 Backlog overview**
+- "Pre-scan" column with badge, tooltip and stale marker; count bar with click-to-filter; label and stale filters; bulk close of a filtered selection uses the existing flow. Upstream domains field in Settings.
+- Test: component tests for column, count bar filter, stale marker.
 
-**2.10 End-to-end and acceptance**
-- Playwright: import, pre-scan with fake Copilot, open item, accept verdict, accept a suggested cluster.
-- Manual acceptance by user against a real `repo` tree and real tickets with live Copilot.
+**2.10 Item page Pre-scan section**
+- Per diff: project and mapping source, presence with evidence (files, matched commit, heuristic lines), apply result with conflicting files; manual project picker for unmapped diffs; stale badge; re-run this item.
+- Test: component tests for each label, picker saves and survives re-run.
+
+**2.11 End-to-end and acceptance**
+- Playwright: import, pre-scan, count bar filter, open item, pick a project, close present items.
+- Manual acceptance by user against a real `repo` tree and real tickets.
+
+## MS2-2 — Copilot on demand, dependencies, clusters
+
+Needs grilling. Input from the first MS2 plan, to revisit:
+
+- **Trigger:** manual, per item or selection ("Ask Copilot"), not an automatic stage. Candidates: `unmapped`, `partial`, `likely_present`, `conflicts`, or any item the user wants checked.
+- **Adapter:** standalone `copilot` CLI behind an interface, built on `ms2` (commit `40cd8a2`): `copilot -p PROMPT -s --no-ask-user [--model=M]` with tools denied; read-only escalation as opt-in; settings for binary, model, token cap; "test Copilot" button. Live test still pending.
+- **Context bundle:** fixed priority under a token cap (ticket text, diffs, target code around hunks, MS2-1 findings, linked implementation tickets, source commit, PR discussion off by default). Stored with the verdict.
+- **Verdict:** strict JSON: `makes_sense`, `still_required`, `already_present` (`yes|no|unsure` + reason), `repo` when unmapped, `depends_on`, `confidence`, `summary` (reused by MS5). Advisory; user accepts or overrides.
+- **Dependencies:** candidate graph from 2.3 (files/hunks, Jira links, `[PATCH n/m]` series, symbols); which edges count without Copilot; dependency-ordered apply check on a temp index.
+- **Clusters:** suggestions from edges; accept creates/extends an MS1 cluster, dismiss remembered.
