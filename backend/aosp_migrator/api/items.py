@@ -15,6 +15,7 @@ from aosp_migrator.db.models import (
     Cluster,
     ClusterMember,
     Comment,
+    DiffScan,
     HistoryEvent,
     Item,
     ItemLink,
@@ -33,6 +34,8 @@ ListParam = Annotated[list[str] | None, Query()]
 
 # Maintained by triggers, see migration 0003. Not a model: SQLAlchemy only needs to name it.
 issue_fts = table("issue_fts", column("rowid"), column("key"), column("summary"), column("description"), column("diff_paths"))
+# Apply results, worst first.
+APPLY_ORDER = ["conflicts", "3way", "applies"]
 # Trigram FTS cannot match terms shorter than this; those fall back to LIKE.
 TRIGRAM = 3
 
@@ -70,6 +73,8 @@ class ItemOut(BaseModel):
     # Pre-scan triage label and why; None until scanned, and for items without diffs.
     triage_label: str | None
     triage_reason: str | None
+    # Worst apply result over the current diffs that were apply-checked; None when none was.
+    apply: str | None
     # Why the pre-scan results are out of date; empty when fresh or never scanned.
     stale: list[str]
 
@@ -327,6 +332,7 @@ def list_items(
     )
     rows = list(rows)
     subjects = _diff_subjects(session, [issue.id for _, issue, *_ in rows])
+    applies = _apply_results(session, [issue.id for _, issue, *_ in rows])
     stale_reasons = stale_items(session, workspace_id, tree, [item.id for item, *_ in rows])
     items = [
         ItemOut(
@@ -346,6 +352,7 @@ def list_items(
             cluster=ClusterRef(id=cluster_id, name=cluster_name) if cluster_id is not None else None,
             triage_label=item.triage_label,
             triage_reason=item.triage_reason,
+            apply=applies.get(issue.id),
             stale=stale_reasons.get(item.id, []),
         )
         for item, issue, count, cluster_id, cluster_name in rows
@@ -367,6 +374,20 @@ def _diff_subjects(session: Session, issue_ids: list[int]) -> dict[int, list[str
             if commit.get("subject") and commit["subject"] not in seen:
                 seen.append(commit["subject"])
     return subjects
+
+
+def _apply_results(session: Session, issue_ids: list[int]) -> dict[int, str]:
+    """Worst apply result of the current diffs per issue; issues without an apply-checked diff are left out."""
+    results: dict[int, str] = {}
+    current = session.execute(
+        select(Attachment.issue_id, DiffScan.apply)
+        .join(DiffScan, DiffScan.attachment_id == Attachment.id)
+        .where(Attachment.issue_id.in_(issue_ids), Attachment.kind == "diff", Attachment.is_current.is_(True), DiffScan.apply.is_not(None))
+    )
+    for issue_id, apply in current:
+        if issue_id not in results or APPLY_ORDER.index(apply) < APPLY_ORDER.index(results[issue_id]):
+            results[issue_id] = apply
+    return results
 
 
 @router.get("/facets")

@@ -228,6 +228,11 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
             {TRIAGE_TEXT[item.triage_label]}
           </span>
         )}
+        {item.apply && item.apply !== item.triage_label && (
+          <span className={triageClass(item.apply)} title="Apply check of the diffs not already in the target">
+            {TRIAGE_TEXT[item.apply]}
+          </span>
+        )}
         {item.stale.length > 0 && (
           <span className="tag tag-warn" title={`Out of date: ${item.stale.join("; ")}`}>
             stale
