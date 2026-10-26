@@ -4,13 +4,14 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.db.models import DiffScan, Item, JiraIssue, PrescanJob, Workspace
 from aosp_migrator.prescan.presence import combine
-from aosp_migrator.prescan.runner import JobConflictError, PrescanRunner, current_diffs, stale_reasons
+from aosp_migrator.prescan.triage import ORDER
+from aosp_migrator.prescan.runner import JobConflictError, PrescanRunner, current_diffs, stale_items
 
 router = APIRouter()
 
@@ -59,10 +60,21 @@ class DiffScanOut(BaseModel):
 
 class ItemPrescanOut(BaseModel):
     scanned: bool
+    # Triage label of the item and why; None until scanned, and for items without diffs.
+    label: str | None
+    label_reason: str | None
     # Combined over the mapped diffs; None until scanned.
     presence: str | None
     stale: list[str]
     diffs: list[DiffScanOut]
+
+
+class PrescanSummaryOut(BaseModel):
+    # Items per triage label, every label in order (worst first), zeros included.
+    labels: dict[str, int]
+    # Items without a label: not scanned yet, or without diffs.
+    unlabeled: int
+    stale: int
 
 
 def _workspace(session: Session, workspace_id: int) -> Workspace:
@@ -130,6 +142,23 @@ def cancel_prescan_job(job_id: int, session: SessionDep) -> PrescanJobOut:
     return PrescanJobOut.model_validate(job)
 
 
+@router.get("/workspaces/{workspace_id}/prescan-summary")
+def get_prescan_summary(workspace_id: int, session: SessionDep) -> PrescanSummaryOut:
+    """Triage counts over the backlog items that are not dropped, for the count bar."""
+    workspace = _workspace(session, workspace_id)
+    rows = session.execute(
+        select(Item.triage_label, func.count()).where(Item.workspace_id == workspace_id, Item.dropped.is_(False)).group_by(Item.triage_label)
+    )
+    counts: dict[str | None, int] = {label: count for label, count in rows}
+    kept = set(session.scalars(select(Item.id).where(Item.workspace_id == workspace_id, Item.dropped.is_(False))))
+    stale = stale_items(session, workspace_id, Path(workspace.target_tree))
+    return PrescanSummaryOut(
+        labels={label: counts.get(label, 0) for label in ORDER},
+        unlabeled=counts.get(None, 0),
+        stale=len(kept & stale.keys()),
+    )
+
+
 @router.get("/workspaces/{workspace_id}/items/{key}/prescan")
 def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPrescanOut:
     """Pre-scan results of one backlog item: per current diff, whether they are stale, and its candidate edges."""
@@ -163,8 +192,10 @@ def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPr
     scanned = [d for d in diffs if d.scanned_at is not None]
     return ItemPrescanOut(
         scanned=bool(scanned),
+        label=item.triage_label,
+        label_reason=item.triage_reason,
         presence=combine(d.presence or "unknown" for d in scanned) if scanned else None,  # type: ignore[misc]
-        stale=stale_reasons(session, issue, Path(workspace.target_tree)),
+        stale=stale_items(session, workspace_id, Path(workspace.target_tree), [item.id]).get(item.id, []),
         diffs=diffs,
     )
 

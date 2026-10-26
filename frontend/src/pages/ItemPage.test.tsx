@@ -260,6 +260,8 @@ describe("ItemPage pre-scan", () => {
   it("shows pre-scan results per diff, staleness and candidate dependencies", async () => {
     const scanned: ItemPrescan = {
       scanned: true,
+      label: "conflicts",
+      label_reason: "frameworks/av: icon.png conflict",
       presence: "partial",
       stale: ["frameworks/av HEAD moved"],
       diffs: [

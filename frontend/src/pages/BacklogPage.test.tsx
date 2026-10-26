@@ -42,6 +42,9 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     diff_count: 1,
     diff_subjects: [],
     cluster: null,
+    triage_label: null,
+    triage_reason: null,
+    stale: [],
     ...overrides,
   };
 }
