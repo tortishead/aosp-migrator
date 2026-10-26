@@ -290,6 +290,7 @@ function unmappedDiff(overrides: Partial<DiffScan> = {}): DiffScan {
     apply: null,
     apply_detail: null,
     target_head: null,
+    patch: null,
     ...overrides,
   };
 }
@@ -326,6 +327,7 @@ describe("ItemPage pre-scan", () => {
           apply: "conflicts",
           apply_detail: { files: { "CameraService.h": "conflicts" }, errors: { "CameraService.h": "3-way merge conflicts" } },
           target_head: "a".repeat(40),
+          patch: null,
         },
         {
           attachment_id: 3,
@@ -340,6 +342,7 @@ describe("ItemPage pre-scan", () => {
           apply: null,
           apply_detail: null,
           target_head: null,
+          patch: null,
         },
       ],
     };

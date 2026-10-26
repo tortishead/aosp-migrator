@@ -17,7 +17,7 @@ from test_import import run_import, session
 
 from aosp_migrator.app import create_app
 from aosp_migrator.config import JIRA_BASE_URL, JIRA_PAT, Config
-from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue
+from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue, MigrationPatch
 from aosp_migrator.jira.datacenter import DataCenterClient
 from aosp_migrator.prescan.runner import PrescanRunner, relabel_items
 
@@ -355,6 +355,53 @@ def test_stale_after_new_diff_version_and_head_move(client: TestClient, workspac
     assert run_prescan(client, workspace_id, ["PROJ-105", "PROJ-106"])["status"] == "done"
     assert prescan(client, workspace_id, "PROJ-105")["stale"] == []
     assert prescan(client, workspace_id, "PROJ-106")["stale"] == []
+
+
+def patch_rows(app: FastAPI, key: str) -> list[tuple[str, str, str | None]]:
+    with session(app) as s:
+        rows = s.execute(
+            select(MigrationPatch.level, MigrationPatch.project, MigrationPatch.base_head)
+            .join(Item, MigrationPatch.item_id == Item.id)
+            .join(JiraIssue, Item.issue_id == JiraIssue.id)
+            .where(JiraIssue.key == key)
+            .order_by(MigrationPatch.id)
+        )
+        return [tuple(row) for row in rows]
+
+
+def test_migration_patch_kept_per_diff(app: FastAPI, client: TestClient, workspace_id: int, target: Path) -> None:
+    tree = RepoTree(target)
+    status = {project: tree.git(project, "status", "--porcelain") for project in tree.projects}
+    assert run_prescan(client, workspace_id)["status"] == "done"
+    head = tree.git("frameworks/av", "rev-parse", "HEAD").strip()
+
+    camera = prescan(client, workspace_id, "PROJ-101")["diffs"][0]
+    patch = camera["patch"]
+    assert (patch["level"], patch["source"], patch["project"], patch["base_head"], patch["attachment_id"]) == (
+        "plain", "original", "frameworks/av", head, camera["attachment_id"]
+    )
+    assert patch["author"] is not None and patch["message"] is not None
+    tree.git("frameworks/av", "apply", "--check", "-", input=patch["diff"])
+    assert patch_rows(app, "PROJ-101") == [("plain", "frameworks/av", head)]
+    # Present and conflicting diffs have none.
+    assert prescan(client, workspace_id, "PROJ-103")["diffs"][0]["patch"] is None
+    assert patch_rows(app, "PROJ-103") == []
+    assert prescan(client, workspace_id, "PROJ-104")["diffs"][0]["patch"] is None
+    assert patch_rows(app, "PROJ-104") == []
+    # The pre-scan writes nothing into the user tree.
+    assert {project: tree.git(project, "status", "--porcelain") for project in tree.projects} == status
+
+    # Same content, same base: no new row.
+    assert run_prescan(client, workspace_id, ["PROJ-101"])["status"] == "done"
+    assert patch_rows(app, "PROJ-101") == [("plain", "frameworks/av", head)]
+
+    # A moved HEAD: the patch stays until the re-scan adds one on the new base; the item shows stale meanwhile.
+    moved = tree.commit("frameworks/av", {"README": "av\n"}, "Add README")
+    stale = prescan(client, workspace_id, "PROJ-101")
+    assert (stale["stale"], stale["diffs"][0]["patch"]["base_head"]) == (["frameworks/av HEAD moved"], head)
+    assert run_prescan(client, workspace_id, ["PROJ-101"])["status"] == "done"
+    assert patch_rows(app, "PROJ-101") == [("plain", "frameworks/av", head), ("plain", "frameworks/av", moved)]
+    assert prescan(client, workspace_id, "PROJ-101")["diffs"][0]["patch"]["base_head"] == moved
 
 
 def pick(client: TestClient, workspace_id: int, key: str, attachment_id: int, project: str | None) -> Any:

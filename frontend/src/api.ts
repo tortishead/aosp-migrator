@@ -353,6 +353,23 @@ export interface DiffScan {
   /** Per checked file; `errors` says why each conflicting file conflicts. */
   apply_detail: { files: Record<string, ApplyResult>; errors?: Record<string, string> } | null;
   target_head: string | null;
+  /** What a build applies for this diff; null unless it applies, as is or 3-way. */
+  patch: MigrationPatch | null;
+}
+
+export interface MigrationPatch {
+  id: number;
+  /** The Jira diff it was made from; null for `ai` patches. */
+  attachment_id: number | null;
+  project: string;
+  source: "original" | "ai";
+  level: "plain" | "3way";
+  /** Project HEAD it was made against; null in a plain tree. */
+  base_head: string | null;
+  diff: string;
+  author: string | null;
+  message: string | null;
+  created_at: string;
 }
 
 export interface ItemPrescan {

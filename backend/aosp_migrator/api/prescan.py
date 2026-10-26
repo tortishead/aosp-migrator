@@ -8,8 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
-from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue, PrescanJob, Workspace
-from aosp_migrator.prescan.runner import JobConflictError, PrescanError, PrescanRunner, current_diffs, diff_scan, stale_items, target_projects
+from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace
+from aosp_migrator.prescan.runner import JobConflictError, PrescanError, PrescanRunner, current_diffs, current_patch, diff_scan, stale_items, target_projects
 from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter()
@@ -40,6 +40,21 @@ class PrescanJobOut(BaseModel):
     finished_at: datetime | None
 
 
+class MigrationPatchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    attachment_id: int | None
+    project: str
+    source: str
+    level: str
+    base_head: str | None
+    diff: str
+    author: str | None
+    message: str | None
+    created_at: datetime
+
+
 class DiffScanOut(BaseModel):
     attachment_id: int
     jira_id: str
@@ -55,9 +70,11 @@ class DiffScanOut(BaseModel):
     apply: str | None
     apply_detail: dict[str, Any] | None
     target_head: str | None
+    # What a build applies for this diff; None unless it applies, as is or 3-way.
+    patch: MigrationPatchOut | None
 
     @classmethod
-    def of(cls, attachment: Attachment, scan: DiffScan | None) -> "DiffScanOut":
+    def of(cls, attachment: Attachment, scan: DiffScan | None, patch: MigrationPatch | None) -> "DiffScanOut":
         return cls(
             attachment_id=attachment.id,
             jira_id=attachment.jira_id,
@@ -71,6 +88,7 @@ class DiffScanOut(BaseModel):
             apply=scan.apply if scan else None,
             apply_detail=scan.apply_detail if scan else None,
             target_head=scan.target_head if scan else None,
+            patch=MigrationPatchOut.model_validate(patch) if patch else None,
         )
 
 
@@ -222,7 +240,10 @@ def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPr
     workspace = _workspace(session, workspace_id)
     item, issue = _item(session, workspace_id, key)
 
-    diffs = [DiffScanOut.of(attachment, diff_scan(session, attachment.id)) for attachment in current_diffs(session, issue.id)]
+    diffs = []
+    for attachment in current_diffs(session, issue.id):
+        scan = diff_scan(session, attachment.id)
+        diffs.append(DiffScanOut.of(attachment, scan, current_patch(session, scan)))
     return ItemPrescanOut(
         scanned=any(d.scanned_at is not None for d in diffs),
         label=item.triage_label,

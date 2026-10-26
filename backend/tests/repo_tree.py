@@ -59,10 +59,11 @@ class RepoTree:
             revs = f"{revs}~1..{revs}"
         return self.git(path, "format-patch", "--stdout", "-M", "--binary", revs)
 
-    def git(self, path: str, *args: str, env: dict[str, str] | None = None) -> str:
+    def git(self, path: str, *args: str, env: dict[str, str] | None = None, input: str | None = None) -> str:
         return subprocess.run(
             ["git", *args],
             cwd=self.root / path,
+            input=input,
             env={**os.environ, **_GIT_ENV, **(env or {})},
             check=True,
             capture_output=True,

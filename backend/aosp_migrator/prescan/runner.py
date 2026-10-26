@@ -2,8 +2,8 @@
 
 A job scans every non-dropped backlog item (`all`) or a list of them (`keys`).
 Stage `scan` maps each current diff to a target project, checks whether it is
-already present and, when not, whether it applies, then sets the item's triage
-label. Each item is written in its own transaction; an item that fails records an
+already present and, when not, whether it applies, keeps the migration patch the
+apply check made, then sets the item's triage label. Each item is written in its own transaction; an item that fails records an
 error (and the label `error`) while the job goes on. Only errors that would hit
 every item (no project list, missing tree) fail the whole job. The local state is
 never touched.
@@ -18,11 +18,12 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, PrescanJob, Workspace, utcnow
+from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
-from aosp_migrator.prescan.apply import check_apply
+from aosp_migrator.prescan.apply import ApplyCheck, check_apply
 from aosp_migrator.prescan.mapping import PROJECT_LIST, ProjectListMissing, discover_projects, map_diff, path_hints, projects_under, read_project_list, repository_hints
+from aosp_migrator.prescan.patch import Patch
 from aosp_migrator.prescan.presence import check_presence
 from aosp_migrator.prescan.triage import Triage, diff_triage, item_triage
 
@@ -163,7 +164,7 @@ class PrescanRunner:
             session.flush()
             try:
                 with session.begin_nested():
-                    scan_item(session, issue, tree, projects, self._upstream_domains())
+                    scan_item(session, item, issue, tree, projects, self._upstream_domains())
                     triage_item(session, item, issue)
             except Exception as exc:
                 log.exception("Pre-scan of %s failed", issue.key)
@@ -231,7 +232,7 @@ class _Job:
         for item, issue in items:
             self._check_cancel()
             try:
-                scan_item(self.session, issue, tree, projects, self.upstream_domains)
+                scan_item(self.session, item, issue, tree, projects, self.upstream_domains)
                 triage_item(self.session, item, issue)
             except Exception as exc:
                 log.exception("Pre-scan of %s failed", issue.key)
@@ -258,8 +259,11 @@ def read_diff_text(attachment: Attachment) -> str | None:
         return None
 
 
-def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:
-    """Map, presence- and apply-check each current diff of `issue`; results replace its earlier diff scans."""
+def scan_item(session: Session, item: Item, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:
+    """Map, presence- and apply-check each current diff of `issue`; results replace its earlier diff scans.
+
+    A diff that applies (as is or 3-way) gets a migration patch, unless its newest one is the same.
+    """
     description = f"{issue.summary}\n{issue.description_raw}"
     hints = path_hints(description, projects)
     repository = repository_hints(description, projects)
@@ -278,12 +282,56 @@ def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str
             presence = check_presence(project_dir, text, upstream_domains)
             scan.presence, scan.presence_detail = presence.status, presence.detail
             scan.apply = scan.apply_detail = None
+            scan.target_head = git.head(project_dir)
             if presence.status != "present":
                 applied = check_apply(project_dir, text, presence.files("present"))
                 scan.apply, scan.apply_detail = applied.status, applied.detail
-            scan.target_head = git.head(project_dir)
+                _keep_patch(session, item, attachment, scan, applied, text)
         scan.scanned_at = utcnow()
     session.flush()
+
+
+def _keep_patch(session: Session, item: Item, attachment: Attachment, scan: DiffScan, applied: ApplyCheck, text: str) -> None:
+    if applied.patch is None:
+        return
+    assert scan.project is not None
+    level = "plain" if applied.status == "applies" else "3way"
+    newest = _newest_patch(session, attachment.id)
+    if newest is not None and (newest.project, newest.level, newest.base_head, newest.diff) == (scan.project, level, scan.target_head, applied.patch):
+        return
+    parsed = Patch.parse(text)
+    session.add(
+        MigrationPatch(
+            item_id=item.id,
+            attachment_id=attachment.id,
+            project=scan.project,
+            source="original",
+            level=level,
+            base_head=scan.target_head,
+            diff=applied.patch,
+            author=parsed.author,
+            message=parsed.message,
+        )
+    )
+
+
+def _newest_patch(session: Session, attachment_id: int) -> MigrationPatch | None:
+    return session.scalar(
+        select(MigrationPatch)
+        .where(MigrationPatch.attachment_id == attachment_id, MigrationPatch.source == "original")
+        .order_by(MigrationPatch.id.desc())
+        .limit(1)
+    )
+
+
+def current_patch(session: Session, scan: DiffScan | None) -> MigrationPatch | None:
+    """The migration patch of a diff as last scanned: None unless it applies, as is or 3-way."""
+    if scan is None or scan.apply not in ("applies", "3way"):
+        return None
+    patch = _newest_patch(session, scan.attachment_id)
+    if patch is None or (patch.project, patch.base_head) != (scan.project, scan.target_head):
+        return None
+    return patch
 
 
 def diff_scan(session: Session, attachment_id: int) -> DiffScan | None:
