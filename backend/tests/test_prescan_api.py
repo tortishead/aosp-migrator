@@ -145,7 +145,10 @@ def test_triage_labels_counts_and_filters(client: TestClient, workspace_id: int)
         "PROJ-102": ("applies", "packages/apps/Settings: applies as is"),
         "PROJ-103": ("present", "frameworks/base: every file reverse-applies"),
         # Partial, but the file still missing conflicts.
-        "PROJ-104": ("conflicts", "frameworks/base: packages/SystemUI/res/drawable-xxhdpi/oem_battery.png conflict"),
+        "PROJ-104": (
+            "conflicts",
+            "frameworks/base: packages/SystemUI/res/drawable-xxhdpi/oem_battery.png conflict; packages/SystemUI/res/values/dimens.xml already in",
+        ),
         "PROJ-105": ("applies", "system/core: applies as is"),
         "PROJ-106": ("applies", "system/core: applies as is"),
         "PROJ-107": ("applies", "hardware/interfaces: applies as is"),
@@ -153,9 +156,6 @@ def test_triage_labels_counts_and_filters(client: TestClient, workspace_id: int)
         "PROJ-109": ("present", labels["PROJ-109"][1]),
         "PROJ-110": ("unmapped", "0001-Build-with-OEM-flag.patch: one of packages/apps/Settings, system/core, hardware/interfaces"),
     }
-    applies = {i["key"]: i["apply"] for i in items(client, workspace_id) if i["apply"]}
-    # Present and unmapped diffs are not apply-checked.
-    assert applies == {key: label for key, (label, _) in labels.items() if label not in ("present", "unmapped")}
     assert labels["PROJ-109"][1].startswith("frameworks/base: in commit ") and labels["PROJ-109"][1].endswith(" (change_id)")
     assert prescan(client, workspace_id, "PROJ-104")["label"] == "conflicts"
     # The pre-scan never touches the local state.

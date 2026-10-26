@@ -44,7 +44,6 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     cluster: null,
     triage_label: null,
     triage_reason: null,
-    apply: null,
     stale: [],
     ...overrides,
   };
@@ -501,10 +500,6 @@ describe("Backlog pre-scan overview", () => {
           item("PROJ-101", { triage_label: "present", triage_reason: "Change-Id I1234 in abc1234" }),
           item("PROJ-102", { triage_label: "conflicts", triage_reason: "0001.patch: Foo.java", stale: ["frameworks/base HEAD moved"] }),
           item("PROJ-103", { diff_count: 0 }),
-          item("PROJ-104", { triage_label: "partial", triage_reason: "frameworks/base: Foo.java already in", apply: "3way" }),
-          item("PROJ-105", { triage_label: "applies", apply: "applies" }),
-          item("PROJ-106", { triage_label: "unknown", triage_reason: "frameworks/av: history unavailable", apply: "conflicts" }),
-          item("PROJ-107", { triage_label: "applies", apply: "conflicts" }),
         ]),
     });
     renderRoute("/workspaces/1");
@@ -516,16 +511,6 @@ describe("Backlog pre-scan overview", () => {
     expect(within(second).getByText("stale")).toHaveAttribute("title", "Out of date: frameworks/base HEAD moved");
     const third = screen.getByRole("link", { name: "PROJ-103" }).closest("tr")!;
     expect(third.querySelectorAll(".tag")).toHaveLength(0);
-    // The apply result replaces a present label.
-    const fourth = screen.getByRole("link", { name: "PROJ-104" }).closest("tr")!;
-    expect([...fourth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["3-way merge"]);
-    const fifth = screen.getByRole("link", { name: "PROJ-105" }).closest("tr")!;
-    expect([...fifth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Applies"]);
-    // One verdict per item: the label wins over any other apply result.
-    const sixth = screen.getByRole("link", { name: "PROJ-106" }).closest("tr")!;
-    expect([...sixth.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Unknown"]);
-    const seventh = screen.getByRole("link", { name: "PROJ-107" }).closest("tr")!;
-    expect([...seventh.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Applies"]);
   });
 
   it("counts items per label and filters by a click", async () => {

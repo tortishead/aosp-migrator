@@ -32,17 +32,18 @@ def test_order_is_worst_first() -> None:
         ("not_present", "applies", "applies"),
         ("not_present", "3way", "3way"),
         ("not_present", "conflicts", "conflicts"),
-        # The rest of a partial diff decides when it is worse.
-        ("partial", "applies", "partial"),
-        ("partial", "3way", "partial"),
+        # Apply over presence: an apply-checked diff takes its apply result.
+        ("partial", "applies", "applies"),
+        ("partial", "3way", "3way"),
         ("partial", "conflicts", "conflicts"),
-        # A patch that is already in conflicts; that says nothing new.
-        ("likely_present", "conflicts", "likely_present"),
-        # A patch that applies is not in the working tree, whatever the history could not tell.
+        ("likely_present", "conflicts", "conflicts"),
         ("unknown", "applies", "applies"),
         ("unknown", "3way", "3way"),
-        # It may conflict because it is already in.
-        ("unknown", "conflicts", "unknown"),
+        ("unknown", "conflicts", "conflicts"),
+        # Without an apply result the presence label stays.
+        ("partial", None, "partial"),
+        ("likely_present", None, "likely_present"),
+        ("unknown", None, "unknown"),
         ("not_present", None, "unknown"),
     ],
 )
@@ -62,14 +63,13 @@ def test_reasons() -> None:
     conflicts = scan("not_present", "conflicts", apply_detail={"files": {"a.c": "conflicts", "b.c": "applies"}})
     assert diff_triage(conflicts, "p").reason == "system/core: a.c conflict"
     partial = scan("partial", "3way", presence_detail={"files": {"a.c": "present", "b.c": "not_present"}}, apply_detail={"files": {"b.c": "3way"}})
-    assert diff_triage(partial, "p").reason == "system/core: a.c already in"
+    assert diff_triage(partial, "p").reason == "system/core: b.c need a 3-way merge; a.c already in"
     unknown = {"reason": "history unavailable"}
-    assert diff_triage(scan("unknown", "conflicts", presence_detail=unknown), "p").reason == "system/core: history unavailable"
+    assert diff_triage(scan("unknown", presence_detail=unknown), "p").reason == "system/core: presence unknown: history unavailable"
     applies = diff_triage(scan("unknown", "applies", presence_detail=unknown), "p")
     assert applies.reason == "system/core: applies as is; presence unknown: history unavailable"
-    likely = scan("likely_present", "conflicts", presence_detail={"files": {"a.c": "likely_present"}})
-    assert diff_triage(likely, "p").reason == "system/core: lines of a.c found in the target"
-
+    likely = scan("likely_present", "conflicts", presence_detail={"files": {"a.c": "likely_present"}}, apply_detail={"files": {"a.c": "conflicts"}})
+    assert diff_triage(likely, "p").reason == "system/core: a.c conflict; lines of a.c found in the target"
 
 def test_item_takes_the_worst_diff() -> None:
     assert item_triage([]) is None

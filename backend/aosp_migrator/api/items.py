@@ -5,19 +5,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import (
-    ColumnElement,
-    Integer,
-    Select,
-    cast,
-    column,
-    exists,
-    func,
-    literal_column,
-    or_,
-    select,
-    table,
-)
+from sqlalchemy import ColumnElement, Integer, Select, cast, column, exists, func, literal_column, or_, select, table
 from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
@@ -27,7 +15,6 @@ from aosp_migrator.db.models import (
     Cluster,
     ClusterMember,
     Comment,
-    DiffScan,
     HistoryEvent,
     Item,
     ItemLink,
@@ -36,7 +23,6 @@ from aosp_migrator.db.models import (
     Note,
     Workspace,
 )
-from aosp_migrator.prescan import apply
 from aosp_migrator.prescan.runner import stale_items
 from aosp_migrator.prescan.triage import ORDER
 
@@ -84,8 +70,6 @@ class ItemOut(BaseModel):
     # Pre-scan triage label and why; None until scanned, and for items without diffs.
     triage_label: str | None
     triage_reason: str | None
-    # Worst apply result over the current diffs that were apply-checked; None when none was.
-    apply: str | None
     # Why the pre-scan results are out of date; empty when fresh or never scanned.
     stale: list[str]
 
@@ -343,7 +327,6 @@ def list_items(
     )
     rows = list(rows)
     subjects = _diff_subjects(session, [issue.id for _, issue, *_ in rows])
-    applies = _apply_results(session, [issue.id for _, issue, *_ in rows])
     stale_reasons = stale_items(session, workspace_id, tree, [item.id for item, *_ in rows])
     items = [
         ItemOut(
@@ -363,7 +346,6 @@ def list_items(
             cluster=ClusterRef(id=cluster_id, name=cluster_name) if cluster_id is not None else None,
             triage_label=item.triage_label,
             triage_reason=item.triage_reason,
-            apply=applies.get(issue.id),
             stale=stale_reasons.get(item.id, []),
         )
         for item, issue, count, cluster_id, cluster_name in rows
@@ -385,19 +367,6 @@ def _diff_subjects(session: Session, issue_ids: list[int]) -> dict[int, list[str
             if commit.get("subject") and commit["subject"] not in seen:
                 seen.append(commit["subject"])
     return subjects
-
-
-def _apply_results(session: Session, issue_ids: list[int]) -> dict[int, str]:
-    """Worst apply result of the current diffs per issue; issues without an apply-checked diff are left out."""
-    statuses: dict[int, list[Any]] = {}
-    current = session.execute(
-        select(Attachment.issue_id, DiffScan.apply)
-        .join(DiffScan, DiffScan.attachment_id == Attachment.id)
-        .where(Attachment.issue_id.in_(issue_ids), Attachment.kind == "diff", Attachment.is_current.is_(True), DiffScan.apply.is_not(None))
-    )
-    for issue_id, status in current:
-        statuses.setdefault(issue_id, []).append(status)
-    return {issue_id: worst for issue_id, results in statuses.items() if (worst := apply.worst(results))}
 
 
 @router.get("/facets")
