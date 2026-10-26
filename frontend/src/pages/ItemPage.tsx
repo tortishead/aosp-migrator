@@ -6,6 +6,8 @@ import { api, type Attachment, type Issue, type IssueLink, type ItemDetail, type
 import { facetsKey, itemsKey, POLL_MS } from "../backlog/ImportPanel";
 import { STATE_LABELS } from "../backlog/params";
 import { confirmingDissolve, memberWarning, useRefreshClusters } from "../clusters/shared";
+import { BuildPanel, useStartBuild } from "../build/BuildPanel";
+import { BuildRuns } from "../build/BuildRuns";
 import { DiffTabs } from "../item/DiffViewer";
 import { HistoryTimeline } from "../item/History";
 import { JiraHtml } from "../item/JiraHtml";
@@ -15,7 +17,7 @@ import { PrescanSection } from "../prescan/PrescanSection";
 type Tab = "overview" | "patches" | "migration";
 
 // Diffs live in their own tab, apart from the ticket itself; the pre-scan verdict leads the overview.
-// Migration holds what a build applies: the patches the pre-scan made from the diffs.
+// Migration holds the builds and what they apply: the patches the pre-scan made from the diffs.
 const TABS: Record<Tab, string> = { overview: "Overview", patches: "Patches", migration: "Migration" };
 
 export const itemKey = (workspaceId: number, key: string) => ["item", workspaceId, key];
@@ -120,13 +122,33 @@ export function ItemPage() {
             <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
           </section>
         ) : (
-          <section aria-label="Migration patches">
-            <h2>Migration patches</h2>
-            <MigrationTab workspaceId={workspaceId} itemKey={key} />
-          </section>
+          <>
+            <section aria-label="Builds">
+              <h2>Builds</h2>
+              <BuildActions workspaceId={workspaceId} itemKey={key} />
+              <BuildRuns workspaceId={workspaceId} itemKey={key} />
+            </section>
+            <section aria-label="Migration patches">
+              <h2>Migration patches</h2>
+              <MigrationTab workspaceId={workspaceId} itemKey={key} />
+            </section>
+          </>
         )}
       </div>
     </article>
+  );
+}
+
+function BuildActions({ workspaceId, itemKey }: { workspaceId: number; itemKey: string }) {
+  const build = useStartBuild(workspaceId);
+  return (
+    <div className="actions">
+      <button onClick={() => build.mutate({ keys: [itemKey] })} disabled={build.isPending}>
+        Build
+      </button>
+      <BuildPanel workspaceId={workspaceId} />
+      {build.isError && <span className="error">{build.error.message}</span>}
+    </div>
   );
 }
 

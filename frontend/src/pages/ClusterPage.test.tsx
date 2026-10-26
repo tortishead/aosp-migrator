@@ -156,3 +156,38 @@ describe("ClustersPage", () => {
     expect(screen.getByText("2 to check")).toBeInTheDocument();
   });
 });
+
+describe("ClusterPage build", () => {
+  it("builds the cluster as one unit", async () => {
+    const calls = clusterApi({
+      "GET /workspaces/1/build-jobs": () => [],
+      "POST /workspaces/1/build": () => ({
+        status: 202,
+        body: {
+          id: 4,
+          workspace_id: 1,
+          scope: "cluster",
+          issue_keys: ["PROJ-103", "PROJ-101"],
+          cluster_id: 5,
+          skipped: [{ key: "PROJ-104", reason: "not pre-scanned" }],
+          status: "running",
+          done: 0,
+          total: 1,
+          errors: [],
+          error: null,
+          cancel_requested: false,
+          started_at: "2026-10-26T20:00:00Z",
+          finished_at: null,
+          unit_keys: null,
+          log_tail: null,
+        },
+      }),
+    });
+    renderRoute(URL);
+    const section = await screen.findByRole("region", { name: "Build" });
+    await userEvent.click(within(section).getByRole("button", { name: "Build cluster" }));
+    expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/build")?.body).toEqual({ cluster_id: 5 });
+    expect(await within(section).findByText(/Building … \(0 \/ 1\)/)).toBeInTheDocument();
+    expect(within(section).getByText("1 item not built")).toBeInTheDocument();
+  });
+});

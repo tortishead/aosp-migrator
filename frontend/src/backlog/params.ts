@@ -3,7 +3,7 @@ import type { LocalState } from "../api";
 export const PAGE_SIZE = 50;
 
 /** Multi-value filters: repeated URL params, e.g. `?label=a&label=b`. */
-export const LIST_FILTERS = ["status", "label", "triage"] as const;
+export const LIST_FILTERS = ["status", "label", "triage", "build"] as const;
 export type ListFilter = (typeof LIST_FILTERS)[number];
 
 const FILTERS = [...LIST_FILTERS, "q", "has_error", "cluster", "stale"];

@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  type BuildJob,
+  type BuildRun,
   type DiffScan,
   type HistoryEvent,
   type ImportJob,
@@ -605,5 +607,132 @@ describe("ItemPage migration tab", () => {
     const section = await screen.findByRole("region", { name: "Migration patches" });
     expect(await within(section).findByText(/No migration patch\..*diffs that conflict or are already present have none/)).toBeInTheDocument();
     expect(within(section).queryByRole("table", { name: "Patches" })).toBeNull();
+  });
+});
+
+function buildRun(overrides: Partial<BuildRun> = {}): BuildRun {
+  return {
+    id: 12,
+    job_id: 4,
+    keys: ["PROJ-101"],
+    cluster_id: null,
+    patch_ids: [7],
+    tool: "mmm",
+    modules: ["frameworks/av"],
+    command: "source build/envsetup.sh && lunch aosp_x86_64-eng && mmm frameworks/av",
+    status: "build_failed",
+    summary: "CameraService.cpp:12: error: use of undeclared identifier",
+    log_url: "/api/workspaces/1/build-runs/12/log",
+    started_at: "2026-10-26T20:00:00Z",
+    finished_at: "2026-10-26T20:10:00Z",
+    ...overrides,
+  };
+}
+
+describe("ItemPage builds", () => {
+  it("lists build runs with status, modules and summary, and opens the full log", async () => {
+    const calls = itemApi({
+      "GET /workspaces/1/items/PROJ-101/patches": () => [],
+      "GET /workspaces/1/build-jobs": () => [],
+      "GET /workspaces/1/items/PROJ-101/builds": () => [
+        buildRun(),
+        buildRun({ id: 11, keys: ["PROJ-100", "PROJ-101"], cluster_id: 5, status: "build_successful", summary: "nothing to build", tool: null, modules: [], log_url: "/api/workspaces/1/build-runs/11/log" }),
+        buildRun({ id: 10, status: "apply_failed", summary: "project dirty: frameworks/av", tool: null, modules: [], log_url: null }),
+      ],
+      "GET /workspaces/1/build-runs/12/log": () => "lunch aosp_x86_64-eng\nmmm frameworks/av\nFAILED: CameraService.o",
+    });
+    renderRoute(`${URL}?tab=migration`);
+    const section = await screen.findByRole("region", { name: "Builds" });
+    const rows = within(await within(section).findByRole("table", { name: "Build runs" })).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByText("Build failed")).toHaveClass("tag-error");
+    expect(within(rows[0]).getByText("mmm frameworks/av")).toHaveAttribute("title", expect.stringContaining("lunch aosp_x86_64-eng"));
+    expect(rows[0]).toHaveTextContent("CameraService.cpp:12: error: use of undeclared identifier");
+    expect(within(rows[1]).getByText("Built")).toHaveClass("tag-ok");
+    expect(rows[1]).toHaveTextContent("with PROJ-100");
+    expect(rows[1]).toHaveTextContent("nothing to build");
+    expect(within(rows[2]).getByText("Apply failed")).toBeInTheDocument();
+    expect(within(rows[2]).queryByRole("button", { name: "Full log" })).toBeNull();
+
+    await userEvent.click(within(rows[0]).getByRole("button", { name: "Full log" }));
+    expect(await within(section).findByLabelText("Log of build 12")).toHaveTextContent("FAILED: CameraService.o");
+    expect(calls.some((c) => c.path === "/workspaces/1/build-runs/12/log")).toBe(true);
+    await userEvent.click(within(section).getByRole("button", { name: "Hide log" }));
+    expect(within(section).queryByLabelText("Log of build 12")).toBeNull();
+  });
+
+  it("builds the item and refetches its runs when the build finishes", async () => {
+    const running: BuildJob = {
+      id: 4,
+      workspace_id: 1,
+      scope: "keys",
+      issue_keys: ["PROJ-101"],
+      cluster_id: null,
+      skipped: [],
+      status: "running",
+      done: 0,
+      total: 1,
+      errors: [],
+      error: null,
+      cancel_requested: false,
+      started_at: "2026-10-26T20:00:00Z",
+      finished_at: null,
+      unit_keys: ["PROJ-101"],
+      log_tail: "mmm frameworks/av",
+    };
+    let jobs: BuildJob[] = [];
+    let runs: BuildRun[] = [];
+    const calls = itemApi({
+      "GET /workspaces/1/items/PROJ-101/patches": () => [],
+      "GET /workspaces/1/build-jobs": () => jobs,
+      "GET /workspaces/1/items/PROJ-101/builds": () => runs,
+      "POST /workspaces/1/build": () => {
+        jobs = [running];
+        return { status: 202, body: running };
+      },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderRoute(`${URL}?tab=migration`);
+      const section = await screen.findByRole("region", { name: "Builds" });
+      expect(await within(section).findByText("Not built yet.")).toBeInTheDocument();
+      await userEvent.click(within(section).getByRole("button", { name: "Build" }));
+      expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/build")?.body).toEqual({ keys: ["PROJ-101"] });
+      expect(await within(section).findByText(/Building PROJ-101 \(0 \/ 1\)/)).toBeInTheDocument();
+      jobs = [{ ...running, status: "done", done: 1, finished_at: "2026-10-26T20:10:00Z" }];
+      runs = [buildRun({ status: "build_successful", summary: "" })];
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(await within(section).findByText("Build done: 1 unit")).toBeInTheDocument();
+      expect(await within(section).findByText("Built")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows why a build could not start", async () => {
+    itemApi({
+      "GET /workspaces/1/items/PROJ-101/patches": () => [],
+      "GET /workspaces/1/build-jobs": () => [],
+      "GET /workspaces/1/items/PROJ-101/builds": () => [],
+      "POST /workspaces/1/build": () => ({ status: 409, body: { detail: "A build is already running for this workspace" } }),
+    });
+    renderRoute(`${URL}?tab=migration`);
+    await userEvent.click(await screen.findByRole("button", { name: "Build" }));
+    expect(await screen.findByText("A build is already running for this workspace")).toBeInTheDocument();
+  });
+
+  it("describes build events in the history", async () => {
+    const events: HistoryEvent[] = [
+      { id: 1, type: "build_started", payload: { run_id: 12, job_id: 4 }, created_at: "2026-10-26T20:00:00Z" },
+      { id: 2, type: "build_finished", payload: { run_id: 12, status: "build_failed", summary: "FAILED: CameraService.o" }, created_at: "2026-10-26T20:10:00Z" },
+      { id: 3, type: "tree_restored", payload: { run_id: 13 }, created_at: "2026-10-26T21:00:00Z" },
+    ];
+    itemApi({ "GET /workspaces/1/items/PROJ-101": () => ({ ...itemDetail(), history: events }) });
+    renderRoute(URL);
+    const history = await screen.findByRole("region", { name: "History" });
+    expect(within(history).getByText("Build started (run 12)")).toBeInTheDocument();
+    expect(within(history).getByText("Build: Build failed (run 12)")).toBeInTheDocument();
+    expect(within(history).getByText("FAILED: CameraService.o")).toBeInTheDocument();
+    expect(within(history).getByText("Target tree restored after interrupted build run 13")).toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 import type { HistoryEvent } from "../api";
 import { STATE_LABELS } from "../backlog/params";
+import { BUILD_TEXT } from "../build/build";
 
 const FIELD_LABELS: Record<string, string> = {
   summary: "summary",
@@ -68,6 +69,15 @@ function describe(event: HistoryEvent): Description {
       return { title: "Note", details: [String(p.text ?? "")] };
     case "project_picked":
       return { title: `Target project for ${p.filename}: ${p.new ?? "mapped automatically"}`, details: [] };
+    case "build_started":
+      return { title: `Build started (run ${p.run_id})`, details: [] };
+    case "build_finished":
+      return {
+        title: `Build: ${BUILD_TEXT[p.status as keyof typeof BUILD_TEXT] ?? String(p.status)} (run ${p.run_id})`,
+        details: p.summary ? [String(p.summary)] : [],
+      };
+    case "tree_restored":
+      return { title: `Target tree restored after interrupted build run ${p.run_id}`, details: [] };
     case "cluster_joined":
       return { title: `Added to cluster ${p.name}`, details: [] };
     case "cluster_left":
