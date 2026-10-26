@@ -108,3 +108,19 @@ def test_jira_test_against_fake_jira(config: Config, jira_url: str, fake_jira) -
     assert body == {"ok": True, "user": "Jane Doe"}
     body = client.post("/api/settings/jira/test", json={"base_url": jira_url, "pat": "wrong"}).json()
     assert body == {"ok": False, "error": "Authentication failed (HTTP 401)"}
+
+
+def test_upstream_domains(client: TestClient, config: Config) -> None:
+    assert client.get("/api/settings").json()["prescan"]["upstream_domains"] == {"source": "unset", "value": ["google.com", "android.com"]}
+    body = client.put("/api/settings", json={"prescan": {"upstream_domains": " Google.com, @partner.example.com,google.com "}}).json()
+    assert body["prescan"]["upstream_domains"] == {"source": "file", "value": ["google.com", "partner.example.com"]}
+    assert config.upstream_domains() == ["google.com", "partner.example.com"]
+
+    response = client.put("/api/settings", json={"prescan": {"upstream_domains": "google.com, dev@oem.com, localhost"}})
+    assert response.status_code == 422
+    assert "dev@oem.com, localhost" in response.json()["detail"]
+    # Other settings leave them alone; "" restores the defaults.
+    client.put("/api/settings", json={"jira": {"base_url": "https://jira.example.com"}})
+    assert config.upstream_domains() == ["google.com", "partner.example.com"]
+    client.put("/api/settings", json={"prescan": {"upstream_domains": ""}})
+    assert client.get("/api/settings").json()["prescan"]["upstream_domains"] == {"source": "unset", "value": ["google.com", "android.com"]}

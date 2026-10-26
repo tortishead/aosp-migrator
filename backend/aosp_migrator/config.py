@@ -124,4 +124,6 @@ class Config:
             else:
                 entry["value"] = value
             view.setdefault(field.section, {})[field.key] = entry
+        # The domains in effect: the defaults while unset.
+        view["prescan"] = {"upstream_domains": {"source": self.get_with_source(UPSTREAM_DOMAINS)[1], "value": self.upstream_domains()}}
         return view

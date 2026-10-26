@@ -2,9 +2,11 @@
 
 A job scans every non-dropped backlog item (`all`) or a list of them (`keys`).
 Stage `scan` maps each current diff to a target project, checks whether it is
-already present and, when not, whether it applies; each item is written in its own transaction, and an item that
-fails records an error while the job goes on. Only errors that would hit every
-item (no project list, missing tree) fail the whole job.
+already present and, when not, whether it applies, then sets the item's triage
+label. Each item is written in its own transaction; an item that fails records an
+error (and the label `error`) while the job goes on. Only errors that would hit
+every item (no project list, missing tree) fail the whole job. The local state is
+never touched.
 """
 
 import logging
@@ -22,6 +24,7 @@ from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import check_apply
 from aosp_migrator.prescan.mapping import ProjectListMissing, discover_projects, map_diff, path_hints, read_project_list
 from aosp_migrator.prescan.presence import check_presence
+from aosp_migrator.prescan.triage import diff_triage, item_triage
 
 log = logging.getLogger(__name__)
 
@@ -168,11 +171,13 @@ class _Job:
             self._check_cancel()
             try:
                 scan_item(self.session, issue, tree, projects, self.upstream_domains)
+                triage_item(self.session, item, issue)
             except Exception as exc:
                 log.exception("Pre-scan of %s failed", issue.key)
                 self.session.rollback()
                 # Reassign: in-place changes to a JSON column are not tracked.
                 self.job.errors = [*self.job.errors, {"key": issue.key, "message": str(exc)}]
+                item.triage_label, item.triage_reason, item.triaged_at = "error", str(exc), utcnow()
             self.job.done += 1
             self.session.commit()
 
@@ -222,25 +227,52 @@ def scan_item(session: Session, issue: JiraIssue, tree: Path, projects: list[str
     session.flush()
 
 
-def stale_reasons(session: Session, issue: JiraIssue, tree: Path) -> list[str]:
-    """Why the item's scan results are out of date; empty when fresh or never scanned."""
-    attachments = current_diffs(session, issue.id)
-    scans = {
-        scan.attachment_id: scan
-        for scan in session.scalars(select(DiffScan).join(Attachment, DiffScan.attachment_id == Attachment.id).where(Attachment.issue_id == issue.id))
-    }
-    if not scans:
-        return []
-    reasons: list[str] = []
-    if any(a.id not in scans for a in attachments):
-        reasons.append("new diff version")
+def triage_item(session: Session, item: Item, issue: JiraIssue) -> None:
+    """Label `item` from the scans of its current diffs; None when it has none or one is not scanned yet."""
+    triages = []
+    for attachment in current_diffs(session, issue.id):
+        scan = session.scalar(select(DiffScan).where(DiffScan.attachment_id == attachment.id))
+        if scan is None:
+            triages = []
+            break
+        triages.append(diff_triage(scan, attachment.filename))
+    triage = item_triage(triages)
+    item.triage_label = triage.label if triage else None
+    item.triage_reason = triage.reason if triage else None
+    item.triaged_at = utcnow()
+
+
+def stale_items(session: Session, workspace_id: int, tree: Path, item_ids: list[int] | None = None) -> dict[int, list[str]]:
+    """Why each scanned item's results are out of date (all items, or `item_ids`); fresh or never scanned items are left out."""
+    query = (
+        select(Item.id, Attachment, DiffScan)
+        .join(Attachment, Attachment.issue_id == Item.issue_id)
+        .outerjoin(DiffScan, DiffScan.attachment_id == Attachment.id)
+        .where(Item.workspace_id == workspace_id, Attachment.kind == "diff")
+        .order_by(Item.id, Attachment.created, Attachment.id)
+    )
+    if item_ids is not None:
+        query = query.where(Item.id.in_(item_ids))
+    rows: dict[int, list[tuple[Attachment, DiffScan | None]]] = {}
+    for item_id, attachment, scan in session.execute(query):
+        rows.setdefault(item_id, []).append((attachment, scan))
+
     heads: dict[str, str | None] = {}
-    for attachment in attachments:
-        scan = scans.get(attachment.id)
-        if scan is None or scan.project is None:
+    stale: dict[int, list[str]] = {}
+    for item_id, attachments in rows.items():
+        if all(scan is None for _, scan in attachments):
             continue
-        if scan.project not in heads:
-            heads[scan.project] = git.head(tree / scan.project) if (tree / scan.project).is_dir() else None
-        if heads[scan.project] != scan.target_head:
-            reasons.append(f"{scan.project} HEAD moved")
-    return list(dict.fromkeys(reasons))
+        reasons: list[str] = []
+        current = [(a, scan) for a, scan in attachments if a.is_current and a.local_path is not None]
+        if any(scan is None for _, scan in current):
+            reasons.append("new diff version")
+        for _, scan in current:
+            if scan is None or scan.project is None:
+                continue
+            if scan.project not in heads:
+                heads[scan.project] = git.head(tree / scan.project) if (tree / scan.project).is_dir() else None
+            if heads[scan.project] != scan.target_head:
+                reasons.append(f"{scan.project} HEAD moved")
+        if reasons:
+            stale[item_id] = list(dict.fromkeys(reasons))
+    return stale

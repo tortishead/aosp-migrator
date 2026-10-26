@@ -118,6 +118,75 @@ def test_job_over_fixture_workspace(client: TestClient, workspace_id: int, targe
     assert (filler["scanned"], filler["presence"], filler["diffs"]) == (False, None, [])
 
 
+def items(client: TestClient, workspace_id: int, **params: Any) -> list[dict[str, Any]]:
+    response = client.get(f"/api/workspaces/{workspace_id}/items", params={"limit": 500, **params})
+    assert response.status_code == 200, response.text
+    return response.json()["items"]
+
+
+def keys(client: TestClient, workspace_id: int, **params: Any) -> list[str]:
+    return [i["key"] for i in items(client, workspace_id, **params)]
+
+
+def summary(client: TestClient, workspace_id: int) -> dict[str, Any]:
+    response = client.get(f"/api/workspaces/{workspace_id}/prescan-summary")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_triage_labels_counts_and_filters(client: TestClient, workspace_id: int) -> None:
+    client.post(f"/api/workspaces/{workspace_id}/items/state", json={"keys": ["PROJ-103"], "state": "not_relevant"})
+    assert summary(client, workspace_id)["unlabeled"] == 25
+    run_prescan(client, workspace_id)
+
+    labels = {i["key"]: (i["triage_label"], i["triage_reason"]) for i in items(client, workspace_id) if i["triage_label"]}
+    assert labels == {
+        "PROJ-101": ("applies", "frameworks/av: applies as is"),
+        "PROJ-102": ("applies", "packages/apps/Settings: applies as is"),
+        "PROJ-103": ("present", "frameworks/base: every file reverse-applies"),
+        # Partial, but the file still missing conflicts.
+        "PROJ-104": ("conflicts", "frameworks/base: packages/SystemUI/res/drawable-xxhdpi/oem_battery.png conflict"),
+        "PROJ-105": ("applies", "system/core: applies as is"),
+        "PROJ-106": ("applies", "system/core: applies as is"),
+        "PROJ-107": ("applies", "hardware/interfaces: applies as is"),
+        "PROJ-108": ("applies", "frameworks/av: applies as is"),
+        "PROJ-109": ("present", labels["PROJ-109"][1]),
+        "PROJ-110": ("unmapped", "0001-Build-with-OEM-flag.patch: one of packages/apps/Settings, system/core, hardware/interfaces"),
+    }
+    assert labels["PROJ-109"][1].startswith("frameworks/base: in commit ") and labels["PROJ-109"][1].endswith(" (change_id)")
+    assert prescan(client, workspace_id, "PROJ-104")["label"] == "conflicts"
+    # The pre-scan never touches the local state.
+    assert [i["local_state"] for i in items(client, workspace_id) if i["key"] in ("PROJ-101", "PROJ-103")] == ["new", "not_relevant"]
+
+    counts = summary(client, workspace_id)
+    assert list(counts["labels"]) == ["error", "unmapped", "unknown", "conflicts", "partial", "3way", "applies", "likely_present", "present"]
+    assert {k: v for k, v in counts["labels"].items() if v} == {"unmapped": 1, "conflicts": 1, "applies": 6, "present": 2}
+    assert (counts["unlabeled"], counts["stale"]) == (15, 0)
+
+    assert keys(client, workspace_id, triage="present") == ["PROJ-103", "PROJ-109"]
+    assert keys(client, workspace_id, triage=["unmapped", "conflicts"]) == ["PROJ-104", "PROJ-110"]
+    assert len(keys(client, workspace_id, triage="none")) == 15
+    assert len(keys(client, workspace_id, triage=["none", "present"])) == 17
+    assert client.get(f"/api/workspaces/{workspace_id}/items", params={"triage": "bogus"}).status_code == 422
+    assert client.get("/api/workspaces/999/prescan-summary").status_code == 404
+
+
+def test_stale_filter_and_count(client: TestClient, workspace_id: int, target: Path) -> None:
+    run_prescan(client, workspace_id)
+    assert keys(client, workspace_id, stale=True) == []
+    RepoTree(target).commit("system/core", {"init/README": "init\n"}, "Add README")
+
+    # PROJ-110 has no project, so no HEAD to move.
+    assert [(i["key"], i["stale"]) for i in items(client, workspace_id, stale=True)] == [
+        ("PROJ-105", ["system/core HEAD moved"]),
+        ("PROJ-106", ["system/core HEAD moved"]),
+    ]
+    assert len(keys(client, workspace_id, stale=False)) == 23
+    assert summary(client, workspace_id)["stale"] == 2
+    # Combines with the label filter.
+    assert keys(client, workspace_id, stale=True, triage="present") == []
+
+
 def test_single_item_and_validation(client: TestClient, workspace_id: int) -> None:
     job = run_prescan(client, workspace_id, ["PROJ-103"])
     assert (job["status"], job["scope"], job["issue_keys"], job["done"], job["total"]) == ("done", "keys", ["PROJ-103"], 1, 1)
@@ -197,6 +266,9 @@ def test_item_error_does_not_stop_the_job(app: FastAPI, client: TestClient, work
     assert "reimport" in job["errors"][0]["message"]
     assert prescan(client, workspace_id, "PROJ-105")["scanned"] is False
     assert prescan(client, workspace_id, "PROJ-106")["presence"] == "not_present"
+    failed = items(client, workspace_id, q="PROJ-105")[0]
+    assert failed["triage_label"] == "error"
+    assert "reimport" in failed["triage_reason"]
 
 
 def test_cancel_and_one_job_per_workspace(app: FastAPI, client: TestClient, workspace_id: int) -> None:
@@ -259,8 +331,11 @@ def test_rescan_keeps_manual_mapping(app: FastAPI, client: TestClient, workspace
         scan.project, scan.mapping_source = "system/core", "manual"
         s.commit()
     run_prescan(client, workspace_id, ["PROJ-110"])
-    diff = prescan(client, workspace_id, "PROJ-110")["diffs"][0]
+    result = prescan(client, workspace_id, "PROJ-110")
+    diff = result["diffs"][0]
     assert (diff["project"], diff["mapping_source"], diff["presence"]) == ("system/core", "manual", "not_present")
+    # The label follows the re-run.
+    assert (result["label"], result["label_reason"]) == ("applies", "system/core: applies as is")
 
 
 def test_jobs_running_at_startup_are_marked_failed(app: FastAPI, client: TestClient, workspace_id: int, config: Config) -> None:

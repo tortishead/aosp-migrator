@@ -12,6 +12,7 @@ function settings(overrides: Partial<Settings["jira"]> = {}): Settings {
       pat: { source: "file", is_set: true },
       ...overrides,
     },
+    prescan: { upstream_domains: { source: "unset", value: ["google.com", "android.com"] } },
   };
 }
 

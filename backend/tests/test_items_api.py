@@ -54,6 +54,9 @@ def test_list_fields_and_natural_key_order(client: TestClient, imported: int) ->
         "diff_count": 1,
         "diff_subjects": ["[PATCH] camera: fix null deref on resume"],
         "cluster": None,
+        "triage_label": None,
+        "triage_reason": None,
+        "stale": [],
     }
     assert [i["diff_count"] for i in page["items"][1:4]] == [1, 1, 1]
 

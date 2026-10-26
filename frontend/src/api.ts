@@ -34,6 +34,10 @@ export interface Settings {
     base_url: { source: Source; value: string | null };
     pat: { source: Source; is_set: boolean };
   };
+  prescan: {
+    /** The domains in effect: the defaults while unset. */
+    upstream_domains: { source: Source; value: string[] };
+  };
 }
 
 export interface JiraTestResult {
@@ -94,6 +98,11 @@ export interface Item {
   /** Commit subjects from the format-patch headers of the current diffs. */
   diff_subjects: string[];
   cluster: ClusterRef | null;
+  /** Null until pre-scanned, and for items without diffs. */
+  triage_label: TriageLabel | null;
+  triage_reason: string | null;
+  /** Why the pre-scan results are out of date; empty when fresh or never scanned. */
+  stale: string[];
 }
 
 export interface ItemPage {
@@ -292,6 +301,27 @@ export interface PrescanJob {
 
 export type Presence = "present" | "likely_present" | "not_present" | "partial" | "unknown";
 export type ApplyResult = "applies" | "3way" | "conflicts";
+/** Worst first. */
+export const TRIAGE_LABELS = [
+  "error",
+  "unmapped",
+  "unknown",
+  "conflicts",
+  "partial",
+  "3way",
+  "applies",
+  "likely_present",
+  "present",
+] as const;
+export type TriageLabel = (typeof TRIAGE_LABELS)[number];
+
+export interface PrescanSummary {
+  /** Items per label, every label in order, zeros included. Dropped items are not counted. */
+  labels: Record<TriageLabel, number>;
+  /** Not scanned yet, or without diffs. */
+  unlabeled: number;
+  stale: number;
+}
 
 export interface DiffScan {
   attachment_id: number;
@@ -324,6 +354,8 @@ export interface DiffScan {
 
 export interface ItemPrescan {
   scanned: boolean;
+  label: TriageLabel | null;
+  label_reason: string | null;
   presence: Presence | null;
   /** Why the results are out of date; empty when fresh. */
   stale: string[];
@@ -336,7 +368,7 @@ export const api = {
     apiFetch<{ authenticated: boolean }>("/auth/login", { method: "POST", body: JSON.stringify({ token }) }),
   logout: () => apiFetch<{ authenticated: boolean }>("/auth/logout", { method: "POST" }),
   settings: () => apiFetch<Settings>("/settings"),
-  updateSettings: (update: { jira: { base_url?: string; pat?: string } }) =>
+  updateSettings: (update: { jira?: { base_url?: string; pat?: string }; prescan?: { upstream_domains: string } }) =>
     apiFetch<Settings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
   testJira: (values: { base_url?: string; pat?: string }) =>
     apiFetch<JiraTestResult>("/settings/jira/test", { method: "POST", body: JSON.stringify(values) }),
@@ -413,6 +445,7 @@ export const api = {
   prescanJobs: (workspaceId: number, limit: number) =>
     apiFetch<PrescanJob[]>(`/workspaces/${workspaceId}/prescan-jobs?limit=${limit}`),
   cancelPrescan: (jobId: number) => apiFetch<PrescanJob>(`/prescan-jobs/${jobId}/cancel`, { method: "POST" }),
+  prescanSummary: (workspaceId: number) => apiFetch<PrescanSummary>(`/workspaces/${workspaceId}/prescan-summary`),
   itemPrescan: (workspaceId: number, key: string) =>
     apiFetch<ItemPrescan>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/prescan`),
 };

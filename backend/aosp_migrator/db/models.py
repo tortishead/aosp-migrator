@@ -84,6 +84,10 @@ class Item(Base):
     local_state: Mapped[str] = mapped_column(String, default="new")
     dropped: Mapped[bool] = mapped_column(default=False)
     last_import_error: Mapped[str | None] = mapped_column(Text)
+    # Pre-scan verdict over the current diffs (see prescan/triage.py); None until scanned or without diffs.
+    triage_label: Mapped[str | None] = mapped_column(String, index=True)
+    triage_reason: Mapped[str | None] = mapped_column(Text)
+    triaged_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

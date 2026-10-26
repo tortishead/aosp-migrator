@@ -23,6 +23,8 @@ from aosp_migrator.db.models import (
     Note,
     Workspace,
 )
+from aosp_migrator.prescan.runner import stale_items
+from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/items")
 
@@ -65,6 +67,11 @@ class ItemOut(BaseModel):
     # Commit subjects from the format-patch headers of the current diffs.
     diff_subjects: list[str]
     cluster: ClusterRef | None
+    # Pre-scan triage label and why; None until scanned, and for items without diffs.
+    triage_label: str | None
+    triage_reason: str | None
+    # Why the pre-scan results are out of date; empty when fresh or never scanned.
+    stale: list[str]
 
 
 class ItemPage(BaseModel):
@@ -230,6 +237,15 @@ def _in_cluster(cluster: str) -> ColumnElement[bool]:
     raise HTTPException(status_code=422, detail="cluster must be any, none or a cluster id")
 
 
+def _triage(labels: list[str]) -> ColumnElement[bool]:
+    """Any of the triage labels; `none` matches items without one."""
+    if unknown := [label for label in labels if label != "none" and label not in ORDER]:
+        raise HTTPException(status_code=422, detail=f"Unknown triage label: {', '.join(unknown)}")
+    known = [label for label in labels if label != "none"]
+    condition = Item.triage_label.in_(known)
+    return or_(condition, Item.triage_label.is_(None)) if "none" in labels else condition
+
+
 def _sort_key(sort: Sort) -> list[Any]:
     name = sort.removeprefix("-")
     if name == "key":
@@ -257,12 +273,15 @@ def list_items(
     has_diff: bool | None = None,
     has_error: bool | None = None,
     cluster: str | None = None,
+    triage: ListParam = None,
+    stale: bool | None = None,
     sort: Sort = "key",
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> ItemPage:
     """Backlog items. Filters combine with AND; several values of one filter match any of them."""
-    _workspace(session, workspace_id)
+    workspace = _workspace(session, workspace_id)
+    tree = Path(workspace.target_tree)
     conditions: list[ColumnElement[bool]] = []
     if state:
         conditions.append(Item.local_state.in_(state))
@@ -282,6 +301,12 @@ def list_items(
         conditions.append(Item.last_import_error.is_not(None) if has_error else Item.last_import_error.is_(None))
     if cluster:
         conditions.append(_in_cluster(cluster))
+    if triage:
+        conditions.append(_triage(triage))
+    if stale is not None:
+        # Needs every scanned item's HEADs, so only when asked for.
+        stale_ids = list(stale_items(session, workspace_id, tree))
+        conditions.append(Item.id.in_(stale_ids) if stale else Item.id.not_in(stale_ids))
     if q:
         conditions.extend(_text_term(term) for term in q.split())
 
@@ -302,6 +327,7 @@ def list_items(
     )
     rows = list(rows)
     subjects = _diff_subjects(session, [issue.id for _, issue, *_ in rows])
+    stale_reasons = stale_items(session, workspace_id, tree, [item.id for item, *_ in rows])
     items = [
         ItemOut(
             id=item.id,
@@ -318,6 +344,9 @@ def list_items(
             diff_count=count,
             diff_subjects=subjects.get(issue.id, []),
             cluster=ClusterRef(id=cluster_id, name=cluster_name) if cluster_id is not None else None,
+            triage_label=item.triage_label,
+            triage_reason=item.triage_reason,
+            stale=stale_reasons.get(item.id, []),
         )
         for item, issue, count, cluster_id, cluster_name in rows
     ]
