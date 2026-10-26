@@ -88,7 +88,11 @@ export function PrescanStatus({ job }: { job: PrescanJob }) {
       return (
         <span className="job-status" role="status">
           <progress value={job.done} max={job.total ?? undefined} aria-label="Pre-scan progress" />
-          {job.stage === "graph" ? "Pre-scan: building dependency graph…" : `Pre-scanning… ${job.done} / ${job.total ?? "?"}`}
+          {job.stage === "projects"
+            ? "Pre-scan: finding target projects…"
+            : job.stage === "graph"
+              ? "Pre-scan: building dependency graph…"
+              : `Pre-scanning… ${job.done} / ${job.total ?? "?"}`}
           {job.cancel_requested && " (canceling)"}
         </span>
       );
