@@ -38,32 +38,47 @@ export function useLatestPrescan(workspaceId: number) {
   return job;
 }
 
+/** Starts a pre-scan of the whole backlog; the latest job's status is the tooltip. */
+export function PrescanButton({ workspaceId }: { workspaceId: number }) {
+  const job = useLatestPrescan(workspaceId);
+  const start = useStartPrescan(workspaceId);
+  return (
+    <>
+      <button
+        onClick={() => start.mutate(undefined)}
+        disabled={job?.status === "running" || start.isPending}
+        title={job ? prescanStatusText(job) : "No pre-scan yet"}
+      >
+        Pre-scan backlog
+      </button>
+      {start.isError && <span className="error">{start.error.message}</span>}
+    </>
+  );
+}
+
+/** The latest pre-scan job: status, cancel and failed items. */
 export function PrescanPanel({ workspaceId }: { workspaceId: number }) {
   const queryClient = useQueryClient();
   const job = useLatestPrescan(workspaceId);
-  const start = useStartPrescan(workspaceId);
   const cancel = useMutation({
     mutationFn: api.cancelPrescan,
     onSuccess: (job) => queryClient.setQueryData(prescanJobsKey(workspaceId), [job]),
   });
-  const running = job?.status === "running";
+  if (!job) return <p className="hint">No pre-scan yet.</p>;
+  const running = job.status === "running";
 
   return (
     <section className="import-panel" aria-label="Pre-scan">
       <div className="actions">
-        <button onClick={() => start.mutate(undefined)} disabled={running || start.isPending}>
-          Pre-scan backlog
-        </button>
+        <PrescanStatus job={job} />
         {running && (
           <button onClick={() => cancel.mutate(job.id)} disabled={job.cancel_requested || cancel.isPending}>
             Cancel pre-scan
           </button>
         )}
-        {job && <PrescanStatus job={job} />}
       </div>
-      {start.isError && <p className="error">{start.error.message}</p>}
       {cancel.isError && <p className="error">{cancel.error.message}</p>}
-      {job && job.errors.length > 0 && (
+      {job.errors.length > 0 && (
         <details className="import-errors">
           <summary>
             {job.errors.length} {job.errors.length === 1 ? "item" : "items"} failed to pre-scan
@@ -81,38 +96,30 @@ export function PrescanPanel({ workspaceId }: { workspaceId: number }) {
   );
 }
 
-export function PrescanStatus({ job }: { job: PrescanJob }) {
-  // The finish time only in the tooltip: it would double the line in the backlog header.
-  const when = job.finished_at ? `Finished ${new Date(job.finished_at).toLocaleString()}` : undefined;
+export function prescanStatusText(job: PrescanJob): string {
   const items = (n: number) => `${n} ${n === 1 ? "item" : "items"}`;
   switch (job.status) {
     case "running":
       return (
-        <span className="job-status" role="status">
-          <progress value={job.done} max={job.total ?? undefined} aria-label="Pre-scan progress" />
-          {job.stage === "projects"
-            ? "Pre-scan: finding target projects…"
-            : `Pre-scanning… ${job.done} / ${job.total ?? "?"}`}
-          {job.cancel_requested && " (canceling)"}
-        </span>
+        (job.stage === "projects" ? "Pre-scan: finding target projects…" : `Pre-scanning… ${job.done} / ${job.total ?? "?"}`) +
+        (job.cancel_requested ? " (canceling)" : "")
       );
     case "done":
-      return (
-        <span className="job-status" role="status" title={when}>
-          Pre-scan done: {items(job.done)}
-        </span>
-      );
+      return `Pre-scan done: ${items(job.done)}`;
     case "canceled":
-      return (
-        <span className="job-status" role="status" title={when}>
-          Pre-scan canceled after {job.done} of {job.total ?? "?"}
-        </span>
-      );
+      return `Pre-scan canceled after ${job.done} of ${job.total ?? "?"}`;
     case "failed":
-      return (
-        <span className="job-status error" role="status">
-          Pre-scan failed: {job.error}
-        </span>
-      );
+      return `Pre-scan failed: ${job.error}`;
   }
+}
+
+export function PrescanStatus({ job }: { job: PrescanJob }) {
+  // The finish time only in the tooltip: it would double the line.
+  const when = job.finished_at ? `Finished ${new Date(job.finished_at).toLocaleString()}` : undefined;
+  return (
+    <span className={job.status === "failed" ? "job-status error" : "job-status"} role="status" title={when}>
+      {job.status === "running" && <progress value={job.done} max={job.total ?? undefined} aria-label="Pre-scan progress" />}
+      {prescanStatusText(job)}
+    </span>
+  );
 }

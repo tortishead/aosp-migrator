@@ -4,13 +4,16 @@ import { Link, useParams, useSearchParams } from "react-router";
 
 import { api, type Cluster, type ClusterRef, type Item, type LocalState } from "../api";
 import { Filters } from "../backlog/Filters";
-import { BuildBar } from "../build/BuildBar";
-import { BuildPanel, useStartBuild } from "../build/BuildPanel";
-import { BuildTag } from "../build/BuildTag";
-import { facetsKey, ImportPanel, itemsKey, useStartImport } from "../backlog/ImportPanel";
+import { facetsKey, ImportButton, itemsKey, useStartImport } from "../backlog/ImportPanel";
+import { JobsPopup } from "../backlog/JobsPopup";
 import { apiParams, currentPage, hasFilters, PAGE_SIZE, STATE_LABELS } from "../backlog/params";
+import { BuildBar } from "../build/BuildBar";
+import { BUILD_TEXT } from "../build/build";
+import { useStartBuild } from "../build/BuildPanel";
+import { BuildTag } from "../build/BuildTag";
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
-import { PrescanPanel, useStartPrescan } from "../prescan/PrescanPanel";
+import { PrescanButton, useStartPrescan } from "../prescan/PrescanPanel";
+import { TRIAGE_TEXT } from "../prescan/triage";
 import { TriageBar } from "../prescan/TriageBar";
 import { TriageTags } from "../prescan/TriageTags";
 import { workspacesKey } from "../queryClient";
@@ -26,9 +29,33 @@ const SORTS: [string, string][] = [
 
 const COLUMNS = 12;
 
-/** Heading of the item's group when the backlog is grouped by target project. */
-function projectGroup(item: Item): string {
-  return item.target_projects.join(", ");
+type Group = "project" | "cluster" | "triage" | "build" | "status" | "state";
+
+const GROUPS: [Group, string][] = [
+  ["project", "Target project"],
+  ["cluster", "Cluster"],
+  ["triage", "Pre-scan"],
+  ["build", "Build"],
+  ["status", "Jira status"],
+  ["state", "State"],
+];
+
+// The items API orders by the group first, so a group's rows stay together across pages.
+function groupOf(item: Item, group: Group): string {
+  switch (group) {
+    case "project":
+      return item.target_projects.join(", ") || "No target project";
+    case "cluster":
+      return item.cluster?.name ?? "Not in a cluster";
+    case "triage":
+      return item.triage_label ? TRIAGE_TEXT[item.triage_label] : "Not scanned";
+    case "build":
+      return item.build_status ? BUILD_TEXT[item.build_status] : "Not built";
+    case "status":
+      return item.status;
+    case "state":
+      return STATE_LABELS[item.local_state];
+  }
 }
 
 export function BacklogPage() {
@@ -79,11 +106,12 @@ export function BacklogPage() {
     });
   }
 
+  const group = GROUPS.find(([value]) => value === search.get("group"))?.[0];
   const page = items.data;
   const rows = page?.items ?? [];
-  const grouped = search.get("group") === "project";
-  // Target project groups folded away, by heading.
+  // Groups folded away, by heading; a different grouping starts unfolded.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  useEffect(() => setCollapsed(new Set()), [group]);
   const pageCount = page ? Math.max(1, Math.ceil(page.total / PAGE_SIZE)) : 1;
 
   function toggleGroup(group: string) {
@@ -115,35 +143,46 @@ export function BacklogPage() {
           </>
         )}
         <div className="header-jobs">
-          <ImportPanel workspaceId={workspaceId} />
-          <PrescanPanel workspaceId={workspaceId} />
-          <BuildPanel workspaceId={workspaceId} />
+          <ImportButton workspaceId={workspaceId} />
+          <PrescanButton workspaceId={workspaceId} />
+          <JobsPopup workspaceId={workspaceId} />
         </div>
       </div>
-      <TriageBar workspaceId={workspaceId} search={search} update={update} />
-      <BuildBar workspaceId={workspaceId} search={search} update={update} />
-      <Filters search={search} facets={facets.data} clusters={clusters.data} update={update} />
+      <div className="count-bars">
+        <TriageBar workspaceId={workspaceId} search={search} update={update} />
+        <BuildBar workspaceId={workspaceId} search={search} update={update} />
+      </div>
+      <div className="filter-row">
+        <Filters search={search} facets={facets.data} clusters={clusters.data} update={update} />
+        <div className="view-options" role="group" aria-label="View">
+          <select aria-label="Sort" value={search.get("sort") ?? "key"} onChange={(e) => update((next) => next.set("sort", e.target.value))}>
+            {SORTS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Group"
+            value={group ?? ""}
+            onChange={(e) =>
+              update((next) => {
+                if (e.target.value) next.set("group", e.target.value);
+                else next.delete("group");
+              })
+            }
+          >
+            <option value="">No grouping</option>
+            {GROUPS.map(([value, label]) => (
+              <option key={value} value={value}>
+                Group by {label.toLowerCase()}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {/* Stays on top while scrolling the list, so the selection can be acted on from anywhere. */}
       <div className="backlog-toolbar">
-        <select aria-label="Sort" value={search.get("sort") ?? "key"} onChange={(e) => update((next) => next.set("sort", e.target.value))}>
-          {SORTS.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Group"
-          value={search.get("group") ?? ""}
-          onChange={(e) =>
-            update((next) => {
-              if (e.target.value) next.set("group", e.target.value);
-              else next.delete("group");
-            })
-          }
-        >
-          <option value="">No grouping</option>
-          <option value="project">Group: Target project</option>
-        </select>
         {selected.size > 0 && (
           <BulkActions
             workspaceId={workspaceId}
@@ -198,17 +237,17 @@ export function BacklogPage() {
           </thead>
           <tbody>
             {rows.map((item, i) => {
-              const group = projectGroup(item);
-              const folded = grouped && collapsed.has(group);
+              const heading = group && groupOf(item, group);
+              const folded = heading !== undefined && collapsed.has(heading);
               return (
                 <Fragment key={item.id}>
-                  {grouped && (i === 0 || projectGroup(rows[i - 1]) !== group) && (
+                  {heading !== undefined && (i === 0 || heading !== groupOf(rows[i - 1], group!)) && (
                     <tr className="group-row">
                       <th colSpan={COLUMNS} scope="rowgroup">
-                        <button className="link-button" aria-expanded={!folded} onClick={() => toggleGroup(group)}>
-                          <span aria-hidden="true">{folded ? "▸" : "▾"}</span> {group || "No target project"}
+                        <button className="link-button" aria-expanded={!folded} onClick={() => toggleGroup(heading)}>
+                          <span aria-hidden="true">{folded ? "▸" : "▾"}</span> {heading}
                         </button>
-                        <span className="group-count">{rows.filter((r) => projectGroup(r) === group).length}</span>
+                        <span className="group-count">{rows.filter((r) => groupOf(r, group!) === heading).length}</span>
                       </th>
                     </tr>
                   )}

@@ -140,6 +140,12 @@ function lastItemQuery(calls: ApiCall[]): URLSearchParams {
   return queries[queries.length - 1];
 }
 
+/** The import, pre-scan and build panels live in the "Job status" popup. */
+async function openJobs() {
+  await userEvent.click(await screen.findByRole("button", { name: /^Job status/ }));
+  return screen.getByRole("dialog", { name: "Job status" });
+}
+
 function backlogApi(handlers: Parameters<typeof mockApi>[0] = {}) {
   return mockApi({
     "GET /workspaces": () => [workspace],
@@ -180,6 +186,7 @@ describe("BacklogPage", () => {
     const second = screen.getByRole("link", { name: "PROJ-102" }).closest("tr")!;
     expect(within(second).getByText("dropped")).toBeInTheDocument();
     expect(within(second).getByText("import error")).toHaveAttribute("title", "HTTP 500");
+    expect(screen.getByRole("link", { name: "Summary of PROJ-102" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-102");
     expect(screen.getByText("1–2 of 2")).toBeInTheDocument();
   });
 
@@ -211,7 +218,7 @@ describe("BacklogPage", () => {
     expect(screen.queryByRole("rowheader")).toBeNull();
     expect(lastItemQuery(calls).has("group")).toBe(false);
 
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Group" }), "Group: Target project");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Group" }), "Group by target project");
     await waitFor(() => expect(lastItemQuery(calls).get("group")).toBe("project"));
     expect(lastItemQuery(calls).get("offset")).toBe("0");
     const headings = await screen.findAllByRole("rowheader");
@@ -233,6 +240,41 @@ describe("BacklogPage", () => {
     expect(screen.queryByRole("rowheader")).toBeNull();
   });
 
+  it("groups the rows under a heading per group", async () => {
+    backlogApi({
+      "GET /workspaces/1/items": () =>
+        page([
+          item("PROJ-104", { triage_label: "conflicts" }),
+          item("PROJ-101", { triage_label: "applies" }),
+          item("PROJ-102", { triage_label: "applies" }),
+          item("PROJ-103"),
+        ]),
+    });
+    renderRoute("/workspaces/1?group=triage");
+    await screen.findByRole("link", { name: "PROJ-101" });
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows.map((r) => (r.querySelector("th") ? `# ${r.querySelector("button")!.textContent}` : r.querySelector("a")?.textContent))).toEqual([
+      "# ▾ Conflicts",
+      "PROJ-104",
+      "# ▾ Applies",
+      "PROJ-101",
+      "PROJ-102",
+      "# ▾ Not scanned",
+      "PROJ-103",
+    ]);
+  });
+
+  it("shows the pre-scan and build counts on one line", async () => {
+    backlogApi({
+      "GET /workspaces/1/prescan-summary": () => summary({ applies: 3 }),
+      "GET /workspaces/1/build-summary": () => buildSummary({ build_successful: 1 }),
+    });
+    renderRoute("/workspaces/1");
+    const triage = await screen.findByRole("group", { name: "Pre-scan counts" });
+    const build = await screen.findByRole("group", { name: "Build counts" });
+    expect(triage.parentElement).toBe(build.parentElement);
+  });
+
   it("shows empty states", async () => {
     backlogApi({ "GET /workspaces/1/items": () => page([]) });
     renderRoute("/workspaces/1");
@@ -241,7 +283,7 @@ describe("BacklogPage", () => {
 
   it("reads filters from the URL into the controls and the API query", async () => {
     const calls = backlogApi({ "GET /workspaces/1/items": () => page([], 0) });
-    renderRoute("/workspaces/1?q=camera&label=camera&label=oem-patch&has_error=true&sort=-updated&page=3&junk=1&state=closed");
+    renderRoute("/workspaces/1?q=camera&label=camera&label=oem-patch&has_error=true&sort=-updated&group=triage&page=3&junk=1&state=closed");
     expect(await screen.findByText("No items match the filters.")).toBeInTheDocument();
 
     const query = lastItemQuery(calls);
@@ -249,6 +291,7 @@ describe("BacklogPage", () => {
     expect(query.getAll("label")).toEqual(["camera", "oem-patch"]);
     expect(query.get("has_error")).toBe("true");
     expect(query.get("sort")).toBe("-updated");
+    expect(query.get("group")).toBe("triage");
     expect([query.get("offset"), query.get("limit")]).toEqual(["100", "50"]);
     expect(query.has("page") || query.has("junk") || query.has("state")).toBe(false);
 
@@ -256,10 +299,12 @@ describe("BacklogPage", () => {
     expect(screen.getByText("Labels (2)")).toBeInTheDocument();
     const labels = screen.getByRole("group", { name: "Labels" });
     expect(within(labels).getByRole("checkbox", { name: "camera" })).toBeChecked();
-    expect(screen.getByRole("combobox", { name: "Import error" })).toHaveValue("true");
     for (const name of ["State", "Components", "Fix version"]) expect(screen.queryByRole("group", { name })).toBeNull();
-    for (const name of ["Diff", "Dropped"]) expect(screen.queryByRole("combobox", { name })).toBeNull();
-    expect(screen.getByRole("combobox", { name: "Sort" })).toHaveValue("-updated");
+    // Import errors and staleness are reached from the row tags and the count bar.
+    for (const name of ["Diff", "Dropped", "Import error", "Stale"]) expect(screen.queryByRole("combobox", { name })).toBeNull();
+    const view = screen.getByRole("group", { name: "View" });
+    expect(within(view).getByRole("combobox", { name: "Sort" })).toHaveValue("-updated");
+    expect(within(view).getByRole("combobox", { name: "Group" })).toHaveValue("triage");
   });
 
   it("closes an open filter dropdown on a click outside it", async () => {
@@ -292,20 +337,20 @@ describe("BacklogPage", () => {
     expect(url().has("page")).toBe(false);
 
     await userEvent.click(within(screen.getByRole("group", { name: "Jira status" })).getByRole("checkbox", { name: "Open" }));
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Import error" }), "Without import error");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Group" }), "Group by pre-scan");
     expect(url().getAll("status")).toEqual(["In Progress"]);
-    expect(url().get("has_error")).toBe("false");
+    expect(url().get("group")).toBe("triage");
 
     await userEvent.type(screen.getByRole("searchbox", { name: "Search" }), "CameraService.cpp");
     await waitFor(() => expect(url().get("q")).toBe("CameraService.cpp"));
     await waitFor(() => expect(lastItemQuery(calls).get("q")).toBe("CameraService.cpp"));
     expect(lastItemQuery(calls).getAll("status")).toEqual(["In Progress"]);
-    expect(lastItemQuery(calls).get("has_error")).toBe("false");
+    expect(lastItemQuery(calls).get("group")).toBe("triage");
 
-    // The URL alone restores the same view.
+    // The URL alone restores the same view. Clearing the filters keeps the grouping.
     router.navigate(`/workspaces/1?${url()}`);
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(router.state.location.search).toBe("");
+    expect(router.state.location.search).toBe("?group=triage");
     await waitFor(() => expect(screen.getByRole("searchbox", { name: "Search" })).toHaveValue(""));
   });
 
@@ -374,7 +419,8 @@ describe("BacklogPage", () => {
     await userEvent.click(await screen.findByRole("checkbox", { name: "Select PROJ-102" }));
     await userEvent.click(screen.getByRole("button", { name: "Reimport selected" }));
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ keys: ["PROJ-102"] });
-    expect(await screen.findByText(/Reimporting… 0 \/ 1/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import from Jira" })).toHaveAttribute("title", "Reimporting… 0 / 1"));
+    expect(within(await openJobs()).getByText(/Reimporting… 0 \/ 1/)).toBeInTheDocument();
   });
 
   it("shows a bulk action error", async () => {
@@ -416,11 +462,14 @@ describe("ImportPanel", () => {
     renderRoute("/workspaces/1");
     await userEvent.click(await screen.findByRole("button", { name: "Import from Jira" }));
     expect(calls.find((c) => c.method === "POST")).toMatchObject({ path: "/workspaces/1/import", body: {} });
-    expect(await screen.findByText(/Importing… 3 \/ 25/)).toBeInTheDocument();
+    // The status line is the button's tooltip; the popup has the whole job.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import from Jira" })).toHaveAttribute("title", "Importing… 3 / 25"));
     expect(screen.getByRole("button", { name: "Import from Jira" })).toBeDisabled();
+    const popup = await openJobs();
+    expect(within(popup).getByText(/Importing… 3 \/ 25/)).toBeInTheDocument();
 
     const before = itemQueries(calls).length;
-    const done = await screen.findByText(/Import done: 25 tickets/, {}, { timeout: POLL_MS * 4 });
+    const done = await within(popup).findByText(/Import done: 25 tickets/, {}, { timeout: POLL_MS * 4 });
     // The finish time sits in the tooltip, not the line.
     expect(done).toHaveTextContent(/^Import done: 25 tickets$/);
     expect(done).toHaveAttribute("title", `Finished ${new Date("2026-10-25T20:01:00Z").toLocaleString()}`);
@@ -428,7 +477,8 @@ describe("ImportPanel", () => {
     expect(screen.getByRole("button", { name: "Import from Jira" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Cancel import" })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByText("1 ticket failed"));
+    expect(screen.getByRole("button", { name: /^Job status/ })).toHaveAccessibleName("Job status with errors");
+    await userEvent.click(within(popup).getByText("1 ticket failed"));
     expect(screen.getByRole("link", { name: "PROJ-110" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-110");
     expect(screen.getByText(/Jira returned HTTP 500/)).toBeInTheDocument();
   });
@@ -439,6 +489,8 @@ describe("ImportPanel", () => {
       "POST /import-jobs/7/cancel": () => ({ status: 202, body: job({ done: 5, total: 25, cancel_requested: true }) }),
     });
     renderRoute("/workspaces/1");
+    expect(await screen.findByRole("button", { name: "Job status running" })).toBeInTheDocument();
+    await openJobs();
     await userEvent.click(await screen.findByRole("button", { name: "Cancel import" }));
     expect(calls.some((c) => c.method === "POST" && c.path === "/import-jobs/7/cancel")).toBe(true);
     expect(await screen.findByText(/\(canceling\)/)).toBeInTheDocument();
@@ -448,7 +500,12 @@ describe("ImportPanel", () => {
   it("shows a running import waiting out Jira's rate limit", async () => {
     backlogApi({ "GET /workspaces/1/import-jobs": () => [job({ done: 40, total: 120, rate_limit_wait: 12 })] });
     renderRoute("/workspaces/1");
-    expect(await screen.findByText(/Importing… 40 \/ 120 \(Jira rate limit, resuming in 12s\)/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import from Jira" })).toHaveAttribute(
+        "title",
+        "Importing… 40 / 120 (Jira rate limit, resuming in 12s)",
+      ),
+    );
   });
 
   it("shows why the last import failed", async () => {
@@ -456,7 +513,12 @@ describe("ImportPanel", () => {
       "GET /workspaces/1/import-jobs": () => [job({ status: "failed", error: "Jira rejected the token", finished_at: "2026-10-25T20:01:00Z" })],
     });
     renderRoute("/workspaces/1");
-    expect(await screen.findByText(/Import failed: Jira rejected the token/)).toBeInTheDocument();
+    const jobs = await openJobs();
+    expect(await within(jobs).findByText(/Import failed: Jira rejected the token/)).toBeInTheDocument();
+    expect(within(jobs).getByText("No pre-scan yet.")).toBeInTheDocument();
+    expect(within(jobs).getByText("No build yet.")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("shows a start error", async () => {
@@ -554,15 +616,18 @@ describe("Backlog clusters", () => {
       renderRoute("/workspaces/1");
       await userEvent.click(await screen.findByRole("button", { name: "Pre-scan backlog" }));
       expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({});
-      expect(await screen.findByText(/Pre-scanning… 0 \/ 25/)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Pre-scan backlog" })).toBeDisabled();
+      const button = screen.getByRole("button", { name: "Pre-scan backlog" });
+      await waitFor(() => expect(button).toHaveAttribute("title", "Pre-scanning… 0 / 25"));
+      expect(button).toBeDisabled();
       await vi.advanceTimersByTimeAsync(POLL_MS);
-      expect(await screen.findByText(/Pre-scanning… 10 \/ 25/)).toBeInTheDocument();
+      await waitFor(() => expect(button).toHaveAttribute("title", "Pre-scanning… 10 / 25"));
       await vi.advanceTimersByTimeAsync(POLL_MS);
-      expect(await screen.findByText(/Pre-scan done: 25 items/)).toBeInTheDocument();
+      await waitFor(() => expect(button).toHaveAttribute("title", "Pre-scan done: 25 items"));
     } finally {
       vi.useRealTimers();
     }
+    await openJobs();
+    expect(await screen.findByText(/Pre-scan done: 25 items/)).toBeInTheDocument();
     await userEvent.click(screen.getByText("1 item failed to pre-scan"));
     expect(screen.getByRole("link", { name: "PROJ-105" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-105");
   });
@@ -573,6 +638,7 @@ describe("Backlog clusters", () => {
       "POST /prescan-jobs/3/cancel": () => ({ status: 202, body: prescanJob({ done: 5, cancel_requested: true }) }),
     });
     renderRoute("/workspaces/1");
+    await openJobs();
     await userEvent.click(await screen.findByRole("button", { name: "Cancel pre-scan" }));
     expect(calls.some((c) => c.method === "POST" && c.path === "/prescan-jobs/3/cancel")).toBe(true);
     expect(await screen.findByText(/\(canceling\)/)).toBeInTheDocument();
@@ -585,17 +651,24 @@ describe("Backlog clusters", () => {
       ],
     });
     renderRoute("/workspaces/1");
+    await openJobs();
     expect(await screen.findByText(/Pre-scan failed: .*run `repo sync`/)).toBeInTheDocument();
   });
 
   it("pre-scans the selected items", async () => {
+    let jobs: PrescanJob[] = [];
     const calls = backlogApi({
-      "POST /workspaces/1/prescan": () => ({ status: 202, body: prescanJob({ scope: "keys", issue_keys: ["PROJ-102"], total: 1 }) }),
+      "POST /workspaces/1/prescan": () => {
+        jobs = [prescanJob({ scope: "keys", issue_keys: ["PROJ-102"], total: 1 })];
+        return { status: 202, body: jobs[0] };
+      },
+      "GET /workspaces/1/prescan-jobs": () => jobs,
     });
     renderRoute("/workspaces/1");
     await userEvent.click(await screen.findByRole("checkbox", { name: "Select PROJ-102" }));
     await userEvent.click(screen.getByRole("button", { name: "Pre-scan selected" }));
     expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({ keys: ["PROJ-102"] });
+    await openJobs();
     expect(await screen.findByText(/Pre-scanning… 0 \/ 1/)).toBeInTheDocument();
   });
 });
@@ -657,7 +730,7 @@ describe("Backlog pre-scan overview", () => {
     expect(screen.queryByRole("group", { name: "Pre-scan counts" })).not.toBeInTheDocument();
   });
 
-  it("filters by label and staleness", async () => {
+  it("filters by label", async () => {
     const calls = backlogApi();
     renderRoute("/workspaces/1");
     await screen.findByRole("link", { name: "PROJ-101" });
@@ -666,8 +739,6 @@ describe("Backlog pre-scan overview", () => {
     await userEvent.click(within(labels).getByLabelText("Conflicts"));
     await userEvent.click(within(labels).getByLabelText("Not scanned"));
     await waitFor(() => expect(lastItemQuery(calls).getAll("triage")).toEqual(["conflicts", "none"]));
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Stale" }), "Not stale");
-    await waitFor(() => expect(lastItemQuery(calls).get("stale")).toBe("false"));
   });
 
   it("refreshes labels and counts while a pre-scan runs", async () => {
@@ -681,10 +752,11 @@ describe("Backlog pre-scan overview", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       renderRoute("/workspaces/1");
-      await screen.findByText(/Pre-scanning… 1 \/ 25/);
+      const button = await screen.findByRole("button", { name: "Pre-scan backlog" });
+      await waitFor(() => expect(button).toHaveAttribute("title", "Pre-scanning… 1 / 25"));
       const before = calls.filter((c) => c.path === "/workspaces/1/prescan-summary").length;
       await vi.advanceTimersByTimeAsync(POLL_MS);
-      await screen.findByText(/Pre-scan done/);
+      await waitFor(() => expect(button).toHaveAttribute("title", "Pre-scan done: 25 items"));
       await waitFor(() => expect(calls.filter((c) => c.path === "/workspaces/1/prescan-summary").length).toBeGreaterThan(before));
     } finally {
       vi.useRealTimers();
@@ -694,11 +766,13 @@ describe("Backlog pre-scan overview", () => {
 
 describe("Backlog build", () => {
   it("builds the selected items and lists the skipped ones", async () => {
+    let jobs: BuildJob[] = [];
     const calls = backlogApi({
-      "POST /workspaces/1/build": () => ({
-        status: 202,
-        body: buildJob({ issue_keys: ["PROJ-101"], total: 1, skipped: [{ key: "PROJ-102", reason: "pre-scan: conflicts" }] }),
-      }),
+      "POST /workspaces/1/build": () => {
+        jobs = [buildJob({ issue_keys: ["PROJ-101"], total: 1, skipped: [{ key: "PROJ-102", reason: "pre-scan: conflicts" }] })];
+        return { status: 202, body: jobs[0] };
+      },
+      "GET /workspaces/1/build-jobs": () => jobs,
     });
     renderRoute("/workspaces/1");
     expect(await screen.findByRole("link", { name: "PROJ-101" })).toBeInTheDocument();
@@ -706,6 +780,8 @@ describe("Backlog build", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: "Select all on this page" }));
     await userEvent.click(screen.getByRole("button", { name: "Build selected" }));
     expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/build")?.body).toEqual({ keys: ["PROJ-101", "PROJ-102"] });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Job status/ })).toHaveAttribute("title", "Building … (0 / 1)"));
+    await openJobs();
     const panel = await screen.findByRole("region", { name: "Build" });
     expect(within(panel).getByRole("status")).toHaveTextContent("Building … (0 / 1)");
     await userEvent.click(within(panel).getByText("1 item not built"));
@@ -717,7 +793,8 @@ describe("Backlog build", () => {
     const calls = backlogApi({
       "GET /workspaces/1/build-jobs": () => {
         polls += 1;
-        if (polls === 1) return [buildJob({ unit_keys: ["PROJ-101"], log_tail: "lunch aosp_x86_64-eng\nmmm system/core" })];
+        // The header's fetch and the popup's on opening.
+        if (polls <= 2) return [buildJob({ unit_keys: ["PROJ-101"], log_tail: "lunch aosp_x86_64-eng\nmmm system/core" })];
         return [buildJob({ done: 1, unit_keys: ["PROJ-102"], log_tail: "mmm packages/apps/Settings" })];
       },
       "POST /build-jobs/4/cancel": () => ({ status: 202, body: buildJob({ done: 1, unit_keys: ["PROJ-102"], cancel_requested: true }) }),
@@ -725,6 +802,7 @@ describe("Backlog build", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       renderRoute("/workspaces/1");
+      await openJobs();
       const panel = await screen.findByRole("region", { name: "Build" });
       expect(within(panel).getByRole("status")).toHaveTextContent("Building PROJ-101 (0 / 2)");
       await userEvent.click(within(panel).getByText("Live log"));
@@ -750,6 +828,7 @@ describe("Backlog build", () => {
   ])("shows a finished build: %#", async (job, text) => {
     backlogApi({ "GET /workspaces/1/build-jobs": () => [job] });
     renderRoute("/workspaces/1");
+    await openJobs();
     expect(await screen.findByText(text)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancel build" })).toBeNull();
   });
@@ -757,6 +836,7 @@ describe("Backlog build", () => {
   it("lists units that failed unexpectedly", async () => {
     backlogApi({ "GET /workspaces/1/build-jobs": () => [buildJob({ status: "done", done: 2, errors: [{ keys: ["PROJ-102"], message: "disk full" }] })] });
     renderRoute("/workspaces/1");
+    await openJobs();
     await userEvent.click(await screen.findByText("1 unit failed unexpectedly"));
     expect(screen.getByText("PROJ-102: disk full")).toBeInTheDocument();
   });

@@ -266,6 +266,19 @@ History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`
 
 Sub-plan: [PLAN-MS6.md](PLAN-MS6.md).
 
+## Backlog: UI refinement (backlog page)
+
+Done. Playwright specs updated but not yet run after the change.
+
+- Done as: header shows `ImportButton`, `PrescanButton` (status line as `title`) and `JobsPopup` ("Job status" button: all three status lines as tooltip, a running / error dot, popup with `ImportPanel`, `PrescanPanel`, `BuildPanel`; Escape or backdrop closes). Status texts in `importStatusText` / `prescanStatusText` / `buildStatusText`. `TriageBar` + `BuildBar` in one `.count-bars` row. "Import error" and "Stale" filters gone (URL params still work; "Clear filters" keeps `sort` and `group`). Sort and Group in a "View" box right of the filters. Group: items API `group` (`project` from the earlier target-project grouping, plus `cluster`, `triage`, `build`, `status`, `state`) orders by it ahead of the sort (labels and build statuses worst first, none last); the table puts a collapsible heading row with its page count before each group. Summary cell links to the item. Bulk toolbar is sticky under the app header.
+
+- **Job status off the header line:** the import / pre-scan / build panels show only their buttons ("Import from Jira", "Pre-scan backlog"; build has none). The latest job's status line moves into the button's tooltip.
+- **Job status popup:** a job's full status (progress, cancel, failed items, build log tail) opens in a popup window from the header, one each for import, pre-scan and build.
+- **One count bar line:** the build count badges (`BuildBar`) sit on the same line as the pre-scan count badges (`TriageBar`).
+- **Filters:** drop the "Import error" and "Stale" filters (stale stays reachable from the count bar). Sort and group move to the right of the filters, in their own area. (Group is new: by cluster, pre-scan label or build status, to settle when started.)
+- **Summary clickable:** the summary cell links to the item page, like the key.
+- **Floating bulk toolbar:** with a selection, the bulk actions toolbar stays on top (sticky) while scrolling the list.
+
 ## MS2-2 — Copilot on demand, dependencies, clusters
 
 Needs grilling. Input from the first MS2 plan, to revisit:

@@ -30,9 +30,9 @@ test("build a 3-way item and a failing one, the tree stays clean", async ({ page
   await page.getByRole("button", { name: "Create" }).click();
   await page.getByRole("link", { name: "Build", exact: true }).click();
   await page.getByRole("button", { name: "Import from Jira" }).click();
-  await expect(page.getByText("Import done: 25 tickets")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Import from Jira" })).toHaveAttribute("title", "Import done: 25 tickets", { timeout: 30_000 });
   await page.getByRole("button", { name: "Pre-scan backlog" }).click();
-  await expect(page.getByText(/^Pre-scan done: 25 items/)).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: "Pre-scan backlog" })).toHaveAttribute("title", /^Pre-scan done: 25 items/, { timeout: 60_000 });
 
   const heads = PROJECTS.map((p) => git(p, "rev-parse", "HEAD"));
   for (const p of PROJECTS) expect(git(p, "status", "--porcelain")).toBe("");
@@ -40,10 +40,14 @@ test("build a 3-way item and a failing one, the tree stays clean", async ({ page
   // Build selected: PROJ-105 needs a 3-way merge and builds, PROJ-102 fails to compile, PROJ-103 is present.
   for (const key of ["PROJ-102", "PROJ-103", "PROJ-105"]) await page.getByRole("checkbox", { name: `Select ${key}` }).check();
   await page.getByRole("group", { name: "Bulk actions" }).getByRole("button", { name: "Build selected" }).click();
-  const panel = page.getByRole("region", { name: "Build" });
-  await expect(panel.getByRole("status")).toHaveText("Build done: 2 units", { timeout: 60_000 });
+  const jobs = page.getByRole("button", { name: /^Job status/ });
+  await expect(jobs).toHaveAttribute("title", /Build done: 2 units$/, { timeout: 60_000 });
+  await jobs.click();
+  const panel = page.getByRole("dialog", { name: "Job status" }).getByRole("region", { name: "Build" });
+  await expect(panel.getByRole("status")).toHaveText("Build done: 2 units");
   await panel.getByText("1 item not built").click();
   await expect(panel).toContainText("PROJ-103: pre-scan: present");
+  await page.keyboard.press("Escape");
 
   // Count bar, filter, column.
   const counts = page.getByRole("group", { name: "Build counts" });

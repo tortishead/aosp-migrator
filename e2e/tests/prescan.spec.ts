@@ -25,11 +25,11 @@ test("pre-scan the backlog, pick a project by hand, close present items", async 
   await page.getByRole("button", { name: "Create" }).click();
   await page.getByRole("link", { name: "Pre-scan", exact: true }).click();
   await page.getByRole("button", { name: "Import from Jira" }).click();
-  await expect(page.getByText("Import done: 25 tickets")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Import from Jira" })).toHaveAttribute("title", "Import done: 25 tickets", { timeout: 30_000 });
 
   // Pre-scan, then the count bar.
   await page.getByRole("button", { name: "Pre-scan backlog" }).click();
-  await expect(page.getByText(/^Pre-scan done: 25 items/)).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: "Pre-scan backlog" })).toHaveAttribute("title", /^Pre-scan done: 25 items/, { timeout: 60_000 });
   const counts = page.getByRole("group", { name: "Pre-scan counts" });
   await expect(counts.getByRole("button")).toHaveText(["1 unmapped", "1 conflicts", "6 applies", "2 present", "15 not scanned"]);
   const rows = page.locator("table.backlog tbody tr");
@@ -54,7 +54,7 @@ test("pre-scan the backlog, pick a project by hand, close present items", async 
   // A full re-run keeps the pick.
   await page.getByRole("link", { name: "← Backlog" }).click();
   await page.getByRole("button", { name: "Pre-scan backlog" }).click();
-  await expect(page.getByText(/^Pre-scan done: 25 items/)).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: "Pre-scan backlog" })).toHaveAttribute("title", /^Pre-scan done: 25 items/, { timeout: 60_000 });
   await expect(counts.getByRole("button")).toHaveText(["1 conflicts", "7 applies", "2 present", "15 not scanned"]);
 
   // Close present items: count bar filter, select the page, bulk state change.

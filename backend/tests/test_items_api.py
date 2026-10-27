@@ -105,6 +105,24 @@ def test_filter_import_errors(app: FastAPI, client: TestClient, imported: int) -
     assert len(keys(client, imported, has_error="false")) == 24
 
 
+def test_group_keeps_groups_together_ahead_of_sort(app: FastAPI, client: TestClient, imported: int) -> None:
+    with session(app) as s:
+        by_key = {key: item for item, key in s.execute(select(Item, JiraIssue.key).join(JiraIssue, Item.issue_id == JiraIssue.id))}
+        by_key["PROJ-104"].triage_label = "conflicts"
+        by_key["PROJ-102"].triage_label = by_key["PROJ-103"].triage_label = "applies"
+        by_key["PROJ-103"].build_status = "build_successful"
+        by_key["PROJ-105"].build_status = "build_failed"
+        s.commit()
+    assert client.post(f"/api/workspaces/{imported}/clusters", json={"keys": ["PROJ-103", "PROJ-110"], "name": "power"}).status_code == 201
+
+    # Labels worst first, then the sort inside each label; unlabeled items last.
+    assert keys(client, imported, group="triage", sort="-key")[:4] == ["PROJ-104", "PROJ-103", "PROJ-102", "PROJ-125"]
+    assert keys(client, imported, group="build")[:3] == ["PROJ-105", "PROJ-103", "PROJ-101"]
+    assert keys(client, imported, group="cluster")[:3] == ["PROJ-103", "PROJ-110", "PROJ-101"]
+    assert keys(client, imported, group="status")[0] == "PROJ-101"
+    assert client.get(f"/api/workspaces/{imported}/items", params={"group": "nope"}).status_code == 422
+
+
 def test_filters_combine_with_and(client: TestClient, imported: int) -> None:
     assert keys(client, imported, label="oem-patch", component="Framework") == ["PROJ-103"]
     assert keys(client, imported, label="oem-patch", fix_version="2026.Q4", status="Open") == ["PROJ-102"]

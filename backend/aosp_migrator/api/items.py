@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import ColumnElement, Integer, Select, cast, column, exists, func, literal_column, or_, select, table
+from sqlalchemy import ColumnElement, Integer, Select, case, cast, column, exists, func, literal_column, or_, select, table
 from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
@@ -39,7 +39,7 @@ issue_fts = table("issue_fts", column("rowid"), column("key"), column("summary")
 TRIGRAM = 3
 
 Sort = Literal["key", "-key", "updated", "-updated", "status", "-status", "state", "-state"]
-Group = Literal["project"]
+Group = Literal["project", "cluster", "triage", "build", "status", "state"]
 
 
 def natural_key(key: str) -> tuple[str, int]:
@@ -276,13 +276,6 @@ def _project_group() -> Any:
     return select(func.group_concat(projects.c.project, ", ")).scalar_subquery()
 
 
-def _group_key(group: Group | None) -> list[Any]:
-    if group is None:
-        return []
-    projects = _project_group()
-    return [projects.is_(None), projects]
-
-
 def _sort_key(sort: Sort) -> list[Any]:
     name = sort.removeprefix("-")
     if name == "key":
@@ -294,6 +287,22 @@ def _sort_key(sort: Sort) -> list[Any]:
     if sort.startswith("-"):
         columns = [c.desc() for c in columns]
     return [*columns, Item.id]
+
+
+def _group_key(group: Group | None) -> list[Any]:
+    """Keeps each group's items together across pages, ahead of the sort: labels and build statuses worst first, no value last."""
+    if group is None:
+        return []
+    column: Any
+    if group == "project":
+        column = _project_group()
+    elif group == "triage":
+        column = case({label: i for i, label in enumerate(ORDER)}, value=Item.triage_label)
+    elif group == "build":
+        column = case({status: i for i, status in enumerate(BUILD_STATUSES)}, value=Item.build_status)
+    else:
+        column = {"cluster": Cluster.name, "status": JiraIssue.status, "state": Item.local_state}[group]
+    return [column.is_(None), column]
 
 
 @router.get("")
@@ -320,7 +329,8 @@ def list_items(
 ) -> ItemPage:
     """Backlog items. Filters combine with AND; several values of one filter match any of them.
 
-    `group=project` orders by target projects first (items without one last), then by `sort`.
+    `group` orders by that value first (target projects, cluster, pre-scan label, build status, Jira status or state;
+    items without one last), then by `sort`.
     """
     workspace = _workspace(session, workspace_id)
     tree = Path(workspace.target_tree)

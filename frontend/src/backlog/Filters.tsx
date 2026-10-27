@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { BUILD_STATUSES, TRIAGE_LABELS, type Cluster, type Facets } from "../api";
 import { BUILD_TEXT } from "../build/build";
 import { TRIAGE_TEXT } from "../prescan/triage";
-import { hasFilters, type ListFilter } from "./params";
+import { hasFilters, type ListFilter, VIEW_PARAMS } from "./params";
 
 export const SEARCH_DEBOUNCE_MS = 300;
 
@@ -24,9 +24,7 @@ export function Filters({ search, facets, clusters, update }: Props) {
       <SearchBox value={search.get("q") ?? ""} update={update} />
       <MultiFilter label="Jira status" param="status" options={pairs(facets?.statuses)} search={search} update={update} />
       <MultiFilter label="Labels" param="label" options={pairs(facets?.labels)} search={search} update={update} />
-      <FlagFilter label="Import error" param="has_error" yes="With import error" no="Without import error" search={search} update={update} />
       <MultiFilter label="Pre-scan" param="triage" options={triage} search={search} update={update} />
-      <FlagFilter label="Stale" param="stale" yes="Stale only" no="Not stale" search={search} update={update} />
       <MultiFilter label="Build" param="build" options={build} search={search} update={update} />
       <ClusterFilter clusters={clusters} search={search} update={update} />
       {hasFilters(search) && (
@@ -34,7 +32,7 @@ export function Filters({ search, facets, clusters, update }: Props) {
           type="button"
           onClick={() =>
             update((next) => {
-              for (const name of [...next.keys()]) if (name !== "sort") next.delete(name);
+              for (const name of [...next.keys()]) if (!VIEW_PARAMS.includes(name)) next.delete(name);
             })
           }
           className="link-button"
@@ -156,34 +154,6 @@ function ClusterFilter({ clusters, search, update }: { clusters: Cluster[] | und
       ))}
       {/* A cluster from an old link that no longer exists, so it can be cleared. */}
       {!known && <option value={value}>Cluster {value}</option>}
-    </select>
-  );
-}
-
-interface FlagFilterProps {
-  label: string;
-  param: string;
-  yes: string;
-  no: string;
-  search: URLSearchParams;
-  update: Update;
-}
-
-function FlagFilter({ label, param, yes, no, search, update }: FlagFilterProps) {
-  return (
-    <select
-      aria-label={label}
-      value={search.get(param) ?? ""}
-      onChange={(e) =>
-        update((next) => {
-          if (e.target.value) next.set(param, e.target.value);
-          else next.delete(param);
-        })
-      }
-    >
-      <option value="">{label}: any</option>
-      <option value="true">{yes}</option>
-      <option value="false">{no}</option>
     </select>
   );
 }

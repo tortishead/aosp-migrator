@@ -33,7 +33,7 @@ test("import from fake Jira, triage an item, reimport keeps local state", async 
   await page.getByRole("link", { name: "Android 15 OEM", exact: true }).click();
   await expect(page.getByText("No items yet")).toBeVisible();
   await page.getByRole("button", { name: "Import from Jira" }).click();
-  await expect(page.getByText("Import done: 25 tickets")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Import from Jira" })).toHaveAttribute("title", "Import done: 25 tickets", { timeout: 30_000 });
   await expect(page.getByText("1–25 of 25")).toBeVisible();
 
   // Filter: label facet, then free text over diff paths.

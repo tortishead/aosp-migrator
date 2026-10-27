@@ -96,35 +96,26 @@ export function BuildPanel({ workspaceId }: { workspaceId: number }) {
   );
 }
 
-function BuildStatus({ job }: { job: BuildJob }) {
-  const when = job.finished_at ? `Finished ${new Date(job.finished_at).toLocaleString()}` : undefined;
+export function buildStatusText(job: BuildJob): string {
   const units = (n: number) => `${n} ${n === 1 ? "unit" : "units"}`;
   switch (job.status) {
     case "running":
-      return (
-        <span className="job-status" role="status">
-          <progress value={job.done} max={job.total} aria-label="Build progress" />
-          Building {job.unit_keys?.join(", ") ?? "…"} ({job.done} / {job.total})
-          {job.cancel_requested && " (canceling)"}
-        </span>
-      );
+      return `Building ${job.unit_keys?.join(", ") ?? "…"} (${job.done} / ${job.total})` + (job.cancel_requested ? " (canceling)" : "");
     case "done":
-      return (
-        <span className="job-status" role="status" title={when}>
-          {job.total === 0 ? "Build: nothing eligible" : `Build done: ${units(job.done)}`}
-        </span>
-      );
+      return job.total === 0 ? "Build: nothing eligible" : `Build done: ${units(job.done)}`;
     case "canceled":
-      return (
-        <span className="job-status" role="status" title={when}>
-          Build canceled after {job.done} of {units(job.total)}
-        </span>
-      );
+      return `Build canceled after ${job.done} of ${units(job.total)}`;
     case "failed":
-      return (
-        <span className="job-status error" role="status">
-          Build failed: {job.error}
-        </span>
-      );
+      return `Build failed: ${job.error}`;
   }
+}
+
+function BuildStatus({ job }: { job: BuildJob }) {
+  const when = job.finished_at ? `Finished ${new Date(job.finished_at).toLocaleString()}` : undefined;
+  return (
+    <span className={job.status === "failed" ? "job-status error" : "job-status"} role="status" title={when}>
+      {job.status === "running" && <progress value={job.done} max={job.total} aria-label="Build progress" />}
+      {buildStatusText(job)}
+    </span>
+  );
 }

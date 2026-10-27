@@ -9,6 +9,8 @@ export type ListFilter = (typeof LIST_FILTERS)[number];
 const FILTERS = [...LIST_FILTERS, "q", "has_error", "cluster", "stale"];
 // URL params the items API understands; `page` is turned into offset/limit.
 const API_PARAMS = [...FILTERS, "sort", "group"];
+/** How the list is shown, not which items: kept by "Clear filters". */
+export const VIEW_PARAMS = ["sort", "group"];
 
 export const STATE_LABELS: Record<LocalState, string> = {
   new: "New",
