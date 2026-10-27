@@ -230,6 +230,8 @@ export interface HistoryEvent {
   type: string;
   payload: Record<string, unknown>;
   created_at: string;
+  /** `stacked_prescan` only: why its result is out of date, empty when fresh. */
+  stale?: string[] | null;
 }
 
 export interface ItemCluster extends ClusterRef {
@@ -302,7 +304,8 @@ export interface ImportJob {
 export interface PrescanJob {
   id: number;
   workspace_id: number;
-  scope: "all" | "keys";
+  /** `stacked`: `issue_keys` in stack order, results in each item's history. */
+  scope: "all" | "keys" | "stacked";
   issue_keys: string[];
   status: JobStatus;
   /** While running: `projects` (git/plain trees only), then `scan` (repo mapping, already-present check). */
@@ -543,8 +546,8 @@ export const api = {
   importJob: (jobId: number) => apiFetch<ImportJob>(`/import-jobs/${jobId}`),
   cancelImport: (jobId: number) => apiFetch<ImportJob>(`/import-jobs/${jobId}/cancel`, { method: "POST" }),
   // No keys: every backlog item that is not dropped.
-  startPrescan: (workspaceId: number, keys?: string[]) =>
-    apiFetch<PrescanJob>(`/workspaces/${workspaceId}/prescan`, { method: "POST", body: JSON.stringify({ keys }) }),
+  startPrescan: (workspaceId: number, keys?: string[], stacked = false) =>
+    apiFetch<PrescanJob>(`/workspaces/${workspaceId}/prescan`, { method: "POST", body: JSON.stringify(stacked ? { keys, stacked } : { keys }) }),
   prescanJobs: (workspaceId: number, limit: number) =>
     apiFetch<PrescanJob[]>(`/workspaces/${workspaceId}/prescan-jobs?limit=${limit}`),
   cancelPrescan: (jobId: number) => apiFetch<PrescanJob>(`/prescan-jobs/${jobId}/cancel`, { method: "POST" }),

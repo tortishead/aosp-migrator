@@ -1,4 +1,8 @@
-"""Read-only git calls into user trees. Nothing here may fetch, write refs or touch the index."""
+"""Read-only git calls into user trees. Nothing here may fetch, write refs or touch the index.
+
+A scratch env (`scratch_env`) points git at a temp index and a temp object dir with the
+project's objects as alternate: writes go there, never into the project.
+"""
 
 import os
 import subprocess
@@ -56,3 +60,17 @@ def is_shallow(cwd: Path) -> bool:
 def apply(cwd: Path, patch: str, *options: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """`git apply` of `patch` from stdin with `options`; the caller reads the return code."""
     return git(cwd, "apply", *options, strip_option(patch), "-", input=patch, check=False, env=env)
+
+
+def scratch_env(cwd: Path, scratch: Path) -> dict[str, str]:
+    """Git env with an index of HEAD and an object dir in `scratch`, the project's objects as alternate."""
+    objects = Path(git(cwd, "rev-parse", "--git-path", "objects").stdout.strip())
+    objects = (objects if objects.is_absolute() else cwd / objects).resolve()
+    (scratch / "objects").mkdir(parents=True)
+    env = {
+        "GIT_INDEX_FILE": str(scratch / "index"),
+        "GIT_OBJECT_DIRECTORY": str(scratch / "objects"),
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(objects),
+    }
+    git(cwd, "read-tree", "HEAD", env=env)
+    return env

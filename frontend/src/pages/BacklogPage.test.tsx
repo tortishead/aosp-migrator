@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -670,6 +670,46 @@ describe("Backlog clusters", () => {
     expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({ keys: ["PROJ-102"] });
     await openJobs();
     expect(await screen.findByText(/Pre-scanning… 0 \/ 1/)).toBeInTheDocument();
+  });
+
+  it("stacks the selected items in the order dragged into", async () => {
+    let jobs: PrescanJob[] = [];
+    const calls = backlogApi({
+      "GET /workspaces/1/items": () =>
+        page([item("PROJ-10"), item("PROJ-9", { local_state: "closed" }), item("PROJ-11", { dropped: true }), item("PROJ-12")]),
+      "POST /workspaces/1/prescan": () => {
+        jobs = [prescanJob({ scope: "stacked", issue_keys: ["PROJ-10", "PROJ-9", "PROJ-11"], total: 3 })];
+        return { status: 202, body: jobs[0] };
+      },
+      "GET /workspaces/1/prescan-jobs": () => jobs,
+    });
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select PROJ-11" }));
+    expect(screen.getByRole("button", { name: "Stacked pre-scan…" })).toBeDisabled();
+    for (const key of ["PROJ-10", "PROJ-9"]) await userEvent.click(screen.getByRole("checkbox", { name: `Select ${key}` }));
+    await userEvent.click(screen.getByRole("button", { name: "Stacked pre-scan…" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Stacked pre-scan" });
+    const rows = () => within(dialog).getAllByRole("listitem");
+    // By key, PROJ-9 before PROJ-10; closed and dropped items are only warned about.
+    expect(rows().map((r) => r.querySelector("strong")?.textContent)).toEqual(["PROJ-9", "PROJ-10", "PROJ-11"]);
+    expect(within(rows()[0]).getByText("closed")).toBeInTheDocument();
+    expect(within(rows()[2]).getByText("dropped")).toBeInTheDocument();
+
+    // Drag PROJ-9 down onto PROJ-10.
+    fireEvent.dragStart(rows()[0], { dataTransfer: { effectAllowed: "", setData: vi.fn() } });
+    fireEvent.dragEnter(rows()[1]);
+    fireEvent.dragEnd(rows()[1]);
+    expect(rows().map((r) => r.querySelector("strong")?.textContent)).toEqual(["PROJ-10", "PROJ-9", "PROJ-11"]);
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start stacked pre-scan" }));
+    expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({
+      keys: ["PROJ-10", "PROJ-9", "PROJ-11"],
+      stacked: true,
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Stacked pre-scan" })).not.toBeInTheDocument());
+    await openJobs();
+    expect(await screen.findByText(/Stacking… 0 \/ 3/)).toBeInTheDocument();
   });
 });
 

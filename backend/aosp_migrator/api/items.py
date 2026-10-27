@@ -25,7 +25,7 @@ from aosp_migrator.db.models import (
     Note,
     Workspace,
 )
-from aosp_migrator.prescan.runner import stale_items
+from aosp_migrator.prescan.runner import stacked_stale, stale_items
 from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/items")
@@ -166,6 +166,8 @@ class HistoryOut(BaseModel):
     type: str
     payload: dict[str, Any]
     created_at: datetime
+    # `stacked_prescan` only: why its result is out of date, empty when fresh.
+    stale: list[str] | None = None
 
 
 class SiblingOut(BaseModel):
@@ -593,8 +595,17 @@ def get_item(workspace_id: int, key: str, request: Request, session: SessionDep)
             for link, linked, linked_item_id in links
         ],
         notes=[NoteOut(id=n.id, text=n.text, created_at=n.created_at) for n in notes],
-        history=[HistoryOut(id=h.id, type=h.type, payload=h.payload, created_at=h.created_at) for h in history],
+        history=[_history_out(session, workspace_id, h) for h in history],
     )
+
+
+def _history_out(session: Session, workspace_id: int, event: HistoryEvent) -> HistoryOut:
+    stale = None
+    if event.type == "stacked_prescan":
+        workspace = session.get(Workspace, workspace_id)
+        assert workspace is not None
+        stale = stacked_stale(session, workspace_id, Path(workspace.target_tree), event.payload)
+    return HistoryOut(id=event.id, type=event.type, payload=event.payload, created_at=event.created_at, stale=stale)
 
 
 @router.post("/{key}/notes", status_code=201)

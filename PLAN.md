@@ -279,6 +279,15 @@ Done. Playwright specs updated but not yet run after the change.
 - **Summary clickable:** the summary cell links to the item page, like the key.
 - **Floating bulk toolbar:** with a selection, the bulk actions toolbar stays on top (sticky) while scrolling the list.
 
+## Backlog: stacked pre-scan
+
+Done. For building a cluster by hand: patches that build on each other, checked in a chosen order.
+
+- Bulk "Stacked pre-scan…" (2+ selected) opens a popup: the selected items, by key (natural order) at first, reordered by drag and drop; dropped / not relevant / closed items only get a warning. Start sends `POST …/prescan` `{keys, stacked: true}` (422 below 2 keys). No link to clusters: the user clusters by hand.
+- Runs as a pre-scan job with scope `stacked` (one job per workspace, progress, cancel as before). Per item in order, each current diff (project as last scanned, else mapped now; files present on HEAD left out) goes into a scratch index per project on top of the items stacked before it: plain `git apply --cached`, else `--3way --cached`. An item with a conflicting or unmapped diff is left out whole and the rest stack without it; a fully present diff is skipped.
+- Results only in each item's history (`stacked_prescan`): order, position, base keys, keys left out before it, status (`applied` / `left_out` / `no_diffs` / `error`) with reason, project HEADs, per diff status and stacked patch (its project's index after it against before it, so the patches apply in stack order on HEAD). No scan rows, labels or migration patches change; the user tree is never touched. The item API adds `stale` per such event: new diff version of a stacked item, or a HEAD moved. Item history shows it with each stacked patch (view, download as `NN-<file>`).
+- Done as: `prescan/stack.py` (`Stack.add`), `_Job.stack` in `prescan/runner.py`, `stacked_stale`; `git.scratch_env` now shared by apply check, stack and build. UI: `prescan/StackedPrescanDialog.tsx`, `describeStacked` in `item/History.tsx`. Cluster builds still use the per-item patches (`--3way`); using stacked patches there is for later.
+
 ## MS2-2 — Copilot on demand, dependencies, clusters
 
 Needs grilling. Input from the first MS2 plan, to revisit:

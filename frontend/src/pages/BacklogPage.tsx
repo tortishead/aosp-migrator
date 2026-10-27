@@ -13,6 +13,7 @@ import { useStartBuild } from "../build/BuildPanel";
 import { BuildTag } from "../build/BuildTag";
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
 import { PrescanButton, useStartPrescan } from "../prescan/PrescanPanel";
+import { StackedPrescanDialog } from "../prescan/StackedPrescanDialog";
 import { TRIAGE_TEXT } from "../prescan/triage";
 import { TriageBar } from "../prescan/TriageBar";
 import { TriageTags } from "../prescan/TriageTags";
@@ -187,6 +188,7 @@ export function BacklogPage() {
           <BulkActions
             workspaceId={workspaceId}
             keys={[...selected]}
+            items={rows.filter((item) => selected.has(item.key))}
             clusters={clusters.data ?? []}
             onStateChanged={() => {
               setSelected(new Set());
@@ -345,13 +347,16 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
 interface BulkProps {
   workspaceId: number;
   keys: string[];
+  // The selected rows; a selection never reaches beyond the page on screen.
+  items: Item[];
   clusters: Cluster[];
   onStateChanged: () => void;
   onClustered: (cluster: ClusterRef) => void;
 }
 
-function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered }: BulkProps) {
+function BulkActions({ workspaceId, keys, items, clusters, onStateChanged, onClustered }: BulkProps) {
   const [state, setState] = useState<LocalState | "">("");
+  const [stacking, setStacking] = useState(false);
   const changeState = useMutation({
     mutationFn: (to: LocalState) => api.changeState(workspaceId, keys, to),
     onSuccess: () => {
@@ -399,6 +404,14 @@ function BulkActions({ workspaceId, keys, clusters, onStateChanged, onClustered 
       <button onClick={() => prescan.mutate(keys)} disabled={prescan.isPending}>
         Pre-scan selected
       </button>
+      <button
+        onClick={() => setStacking(true)}
+        disabled={keys.length < 2}
+        title={keys.length < 2 ? "A stacked pre-scan needs at least two items" : "Apply the selected items' diffs on top of each other, in an order you choose"}
+      >
+        Stacked pre-scan…
+      </button>
+      {stacking && <StackedPrescanDialog workspaceId={workspaceId} items={items} onClose={() => setStacking(false)} />}
       <button onClick={() => build.mutate({ keys })} disabled={build.isPending} title="Items the pre-scan found applying, as is or 3-way">
         Build selected
       </button>

@@ -522,3 +522,57 @@ def test_target_projects_and_grouping(client: TestClient, workspace_id: int) -> 
     reversed_av = [i["key"] for i in items(client, workspace_id, group="project", sort="-key") if i["target_projects"] == ["frameworks/av"]]
     assert reversed_av == av[::-1]
     assert client.get(f"/api/workspaces/{workspace_id}/items", params={"group": "nope"}).status_code == 422
+
+
+def stacked_events(client: TestClient, workspace_id: int, key: str) -> list[dict[str, Any]]:
+    history = client.get(f"/api/workspaces/{workspace_id}/items/{key}").json()["history"]
+    return [h for h in history if h["type"] == "stacked_prescan"]
+
+
+def test_stacked_prescan_records_history_only(client: TestClient, workspace_id: int, target: Path) -> None:
+    order = ["PROJ-108", "PROJ-110", "PROJ-101", "PROJ-103"]
+    response = client.post(f"/api/workspaces/{workspace_id}/prescan", json={"keys": order, "stacked": True})
+    assert response.status_code == 202, response.text
+    job = wait(client, response.json()["id"])
+    assert (job["status"], job["scope"], job["issue_keys"], job["done"], job["total"], job["errors"]) == ("done", "stacked", order, 4, 4, [])
+
+    def event(key: str) -> dict[str, Any]:
+        [found] = stacked_events(client, workspace_id, key)
+        assert found["payload"]["order"] == order
+        return found
+
+    hal_user = event("PROJ-108")
+    assert (hal_user["payload"]["status"], hal_user["payload"]["base"], hal_user["stale"]) == ("applied", [], [])
+    head = RepoTree(target).git("frameworks/av", "rev-parse", "HEAD").strip()
+    assert hal_user["payload"]["heads"] == {"frameworks/av": head}
+    unmapped = event("PROJ-110")["payload"]
+    assert (unmapped["status"], unmapped["diffs"][0]["status"]) == ("left_out", "unmapped")
+    assert unmapped["reason"].startswith("0001-Build-with-OEM-flag.patch: ")
+    # Same file as PROJ-108, stacked on it; PROJ-110 is left out of its base.
+    camera = event("PROJ-101")["payload"]
+    assert (camera["status"], camera["position"], camera["base"], camera["left_out"]) == ("applied", 3, ["PROJ-108"], ["PROJ-110"])
+    assert camera["diffs"][0]["status"] in ("applies", "3way") and camera["diffs"][0]["patch"]
+    assert set(camera["attachments"]) == {"PROJ-108", "PROJ-101"}
+    present = event("PROJ-103")["payload"]
+    assert (present["status"], present["diffs"][0]["status"], present["base"]) == ("applied", "present", ["PROJ-108", "PROJ-101"])
+
+    # The stacked patches apply in order on HEAD.
+    tree = RepoTree(target)
+    for payload in (hal_user["payload"], camera):
+        tree.git("frameworks/av", "apply", "--check", "-", input=payload["diffs"][0]["patch"])
+        tree.git("frameworks/av", "apply", "-", input=payload["diffs"][0]["patch"])
+    tree.git("frameworks/av", "checkout", "--", ".")
+
+    # Nothing else is written: no labels, no scans.
+    assert all(i["triage_label"] is None for i in items(client, workspace_id))
+
+    tree.commit("frameworks/av", {"NOTES": "moved\n"}, "move on")
+    assert event("PROJ-101")["stale"] == ["frameworks/av HEAD moved"]
+    assert event("PROJ-103")["stale"] == []
+
+
+def test_stacked_prescan_validation(client: TestClient, workspace_id: int) -> None:
+    url = f"/api/workspaces/{workspace_id}/prescan"
+    assert client.post(url, json={"keys": ["PROJ-101"], "stacked": True}).status_code == 422
+    assert client.post(url, json={"stacked": True}).status_code == 422
+    assert client.post(url, json={"keys": ["PROJ-101", "PROJ-999"], "stacked": True}).status_code == 404

@@ -99,17 +99,8 @@ def apply_patches(tree: Path, patches: Sequence[UnitPatch], three_way: bool = Fa
 
 
 def _scratch_env(cwd: Path, scratch: Path) -> dict[str, str]:
-    """Git env with an index of HEAD and an object dir in `scratch`, the project's objects as alternate."""
-    objects = Path(git.git(cwd, "rev-parse", "--git-path", "objects").stdout.strip())
-    objects = (objects if objects.is_absolute() else cwd / objects).resolve()
-    (scratch / "objects").mkdir(parents=True)
-    env = {
-        "GIT_INDEX_FILE": str(scratch / "index"),
-        "GIT_OBJECT_DIRECTORY": str(scratch / "objects"),
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(objects),
-    }
-    git.git(cwd, "read-tree", "HEAD", env=env)
-    # Stat info, so the working tree matches the index (it is clean: `prepare` checked).
+    """`git.scratch_env` with stat info, so the working tree matches the index (it is clean: `prepare` checked)."""
+    env = git.scratch_env(cwd, scratch)
     git.git(cwd, "update-index", "-q", "--refresh", env=env)
     return env
 

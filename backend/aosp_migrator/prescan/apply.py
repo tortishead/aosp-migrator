@@ -98,18 +98,10 @@ def _three_way(project_dir: Path, patches: dict[str, str], result: dict[str, str
         return _Merge({})
     if git.head(project_dir) is None:
         return _Merge(dict.fromkeys(patches, NO_HISTORY))
-    objects = Path(git.git(project_dir, "rev-parse", "--git-path", "objects").stdout.strip())
-    objects = (objects if objects.is_absolute() else project_dir / objects).resolve()
     with tempfile.TemporaryDirectory(prefix="aosp-migrator-apply-") as tmp:
-        env = {
-            "GIT_INDEX_FILE": str(Path(tmp) / "index"),
-            "GIT_OBJECT_DIRECTORY": str(Path(tmp) / "objects"),
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(objects),
-        }
-        (Path(tmp) / "objects").mkdir()
-        git.git(project_dir, "read-tree", "HEAD", env=env)
+        env = git.scratch_env(project_dir, Path(tmp))
         # One index for all files: each merge only touches its own entries.
-        merge = _Merge({path: _merge(project_dir, patch, env) for path, patch in patches.items()})
+        merge = _Merge({path: merge_patch(project_dir, patch, env) for path, patch in patches.items()})
         if result and not any(merge.errors.values()):
             merge.patch = _merged_patch(project_dir, result, env)
         return merge
@@ -119,7 +111,7 @@ def _merged_patch(project_dir: Path, patches: dict[str, str], env: dict[str, str
     """Every patch merged into a fresh temp index, diffed against HEAD; None if one no longer merges."""
     git.git(project_dir, "read-tree", "HEAD", env=env)
     for patch in patches.values():
-        if _merge(project_dir, patch, env) is not None:
+        if merge_patch(project_dir, patch, env) is not None:
             return None
     # Fixed prefixes and no external tools, whatever the user's git config says.
     diff = git.git(
@@ -129,7 +121,8 @@ def _merged_patch(project_dir: Path, patches: dict[str, str], env: dict[str, str
     return diff.stdout or None
 
 
-def _merge(project_dir: Path, patch: str, env: dict[str, str]) -> str | None:
+def merge_patch(project_dir: Path, patch: str, env: dict[str, str]) -> str | None:
+    """`git apply --3way --cached` into the index of `env`; None when clean, else why not."""
     result = git.apply(project_dir, patch, "--3way", "--cached", env=env)
     if result.returncode == 0:
         return None

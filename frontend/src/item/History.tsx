@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { HistoryEvent } from "../api";
 import { STATE_LABELS } from "../backlog/params";
 import { BUILD_TEXT } from "../build/build";
@@ -48,6 +50,68 @@ function describeUpdate(payload: Record<string, unknown>): string[] {
 interface Description {
   title: string;
   details: string[];
+  // Shown below the details.
+  body?: ReactNode;
+}
+
+const STACK_STATUS: Record<string, string> = {
+  applied: "stacked",
+  left_out: "left out",
+  no_diffs: "no diffs",
+  error: "error",
+};
+
+const STACKED_DIFF: Record<string, string> = {
+  applies: "applies as is",
+  "3way": "applies 3-way",
+  conflicts: "conflicts",
+  present: "already present",
+  unmapped: "unmapped",
+};
+
+interface StackedDiff {
+  filename: string;
+  project: string | null;
+  status: string;
+  error: string | null;
+  patch: string | null;
+}
+
+function describeStacked(event: HistoryEvent): Description {
+  const p = event.payload;
+  const order = (p.order ?? []) as string[];
+  const base = (p.base ?? []) as string[];
+  const leftOut = (p.left_out ?? []) as string[];
+  const diffs = (p.diffs ?? []) as StackedDiff[];
+  const status = String(p.status);
+  const details = [
+    `Order: ${order.join(", ")}`,
+    `On top of: ${["HEAD", ...base].join(" + ")}`,
+    ...(leftOut.length > 0 ? [`Left out before it: ${leftOut.join(", ")}`] : []),
+    ...diffs.map((d) => `${d.filename}${d.project ? ` (${d.project})` : ""}: ${STACKED_DIFF[d.status] ?? d.status}${d.error ? ` — ${d.error}` : ""}`),
+    ...(status === "error" ? [String(p.reason ?? "")] : []),
+    ...(event.stale && event.stale.length > 0 ? [`Stale: ${event.stale.join(", ")}`] : []),
+  ];
+  const patches = diffs.filter((d) => d.patch);
+  return {
+    title: `Stacked pre-scan: ${STACK_STATUS[status] ?? status} (${String(p.position)} of ${order.length})`,
+    details,
+    body: patches.map((d) => (
+      <details key={d.filename} className="stacked-patch">
+        <summary>
+          Stacked patch: {d.filename}{" "}
+          <a
+            href={`data:text/x-diff;charset=utf-8,${encodeURIComponent(d.patch ?? "")}`}
+            download={`${String(p.position).padStart(2, "0")}-${d.filename}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            Download
+          </a>
+        </summary>
+        <pre>{d.patch}</pre>
+      </details>
+    )),
+  };
 }
 
 function describe(event: HistoryEvent): Description {
@@ -78,6 +142,8 @@ function describe(event: HistoryEvent): Description {
       };
     case "tree_restored":
       return { title: `Target tree restored after interrupted build run ${p.run_id}`, details: [] };
+    case "stacked_prescan":
+      return describeStacked(event);
     case "cluster_joined":
       return { title: `Added to cluster ${p.name}`, details: [] };
     case "cluster_left":
@@ -127,7 +193,7 @@ export function HistoryTimeline({ events, describe: describeEvent = describe }: 
   return (
     <ol className="timeline" aria-label="History">
       {[...events].reverse().map((event) => {
-        const { title, details } = describeEvent(event);
+        const { title, details, body } = describeEvent(event);
         return (
           <li key={event.id} className={`timeline-${event.type}`}>
             <time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
@@ -140,6 +206,7 @@ export function HistoryTimeline({ events, describe: describeEvent = describe }: 
                   ))}
                 </ul>
               )}
+              {body}
             </div>
           </li>
         );

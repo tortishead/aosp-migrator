@@ -676,7 +676,59 @@ p.tag {
   display: none;
 }
 
-.backlog-toolbar .bulk-actions {
+.backlog-toolbar .stacked-patch pre {
+  overflow-x: auto;
+  max-height: 400px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  font-size: 0.85em;
+}
+
+.stack-order {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: stack;
+}
+
+.stack-order li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: grab;
+  counter-increment: stack;
+}
+
+.stack-order li::before {
+  content: counter(stack);
+  min-width: 1.5em;
+  color: var(--fg-muted);
+  text-align: right;
+}
+
+.stack-order li.dragging {
+  opacity: 0.5;
+}
+
+.stack-order .drag-handle {
+  color: var(--fg-muted);
+}
+
+.stack-order li > span:not(.drag-handle):not(.tag) {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bulk-actions {
   box-shadow: var(--shadow);
 }
 

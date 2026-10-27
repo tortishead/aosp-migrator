@@ -1,19 +1,25 @@
 """Pre-scan jobs: run in a background thread, one at a time per workspace.
 
-A job scans every non-dropped backlog item (`all`) or a list of them (`keys`).
+A job scans every non-dropped backlog item (`all`) or a list of them (`keys`), or
+stacks a list of them in the given order (`stacked`, see `_Job.stack`).
 Stage `scan` maps each current diff to a target project, checks whether it is
 already present and, when not, whether it applies, keeps the migration patch the
 apply check made, then sets the item's triage label. Each item is written in its own transaction; an item that fails records an
 error (and the label `error`) while the job goes on. Only errors that would hit
 every item (no project list, missing tree) fail the whole job. The local state is
 never touched.
+
+A stacked job writes nothing but one `stacked_prescan` history event per item: no scan
+rows, labels or migration patches.
 """
 
 import logging
+import tempfile
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -25,6 +31,7 @@ from aosp_migrator.prescan.apply import ApplyCheck, check_apply
 from aosp_migrator.prescan.mapping import PROJECT_LIST, ProjectListMissing, discover_projects, map_diff, path_hints, projects_under, read_project_list, repository_hints
 from aosp_migrator.prescan.patch import Patch
 from aosp_migrator.prescan.presence import check_presence
+from aosp_migrator.prescan.stack import Stack, StackDiff
 from aosp_migrator.prescan.triage import Triage, diff_triage, item_triage
 
 log = logging.getLogger(__name__)
@@ -121,13 +128,14 @@ class PrescanRunner:
         self._executor = executor
         self._lock = threading.Lock()
 
-    def start(self, workspace_id: int, keys: list[str] | None = None) -> PrescanJob:
-        """Create the job and run it in the background. `keys` None scans the whole backlog."""
+    def start(self, workspace_id: int, keys: list[str] | None = None, stacked: bool = False) -> PrescanJob:
+        """Create the job and run it in the background. `keys` None scans the whole backlog; `stacked` stacks `keys` in order."""
+        assert not stacked or keys is not None
         with self._lock, self._sessions() as session:
             self._check_free(session, workspace_id)
             job = PrescanJob(
                 workspace_id=workspace_id,
-                scope="all" if keys is None else "keys",
+                scope="all" if keys is None else "stacked" if stacked else "keys",
                 issue_keys=keys or [],
                 total=None if keys is None else len(keys),
                 errors=[],
@@ -216,19 +224,25 @@ class _Job:
         self.session.commit()
         tree, projects = target_projects(workspace)
 
-        query = (
-            select(Item, JiraIssue)
-            .join(JiraIssue, Item.issue_id == JiraIssue.id)
-            .where(Item.workspace_id == workspace.id, Item.dropped.is_(False))
-            .order_by(Item.id)
-        )
-        if self.job.scope == "keys":
+        query = select(Item, JiraIssue).join(JiraIssue, Item.issue_id == JiraIssue.id).where(Item.workspace_id == workspace.id).order_by(Item.id)
+        if self.job.scope == "all":
+            query = query.where(Item.dropped.is_(False))
+        else:
+            # Dropped items only when asked for by key: the user was warned.
             query = query.where(JiraIssue.key.in_(self.job.issue_keys))
         items = list(self.session.execute(query))
         self.job.total = len(items)
         self.job.stage = "scan"
         self.session.commit()
 
+        if self.job.scope == "stacked":
+            order = {key: n for n, key in enumerate(self.job.issue_keys)}
+            self.stack(tree, projects, sorted(items, key=lambda row: order[row[1].key]))
+            return
+        if self.job.scope == "keys":
+            items = [(item, issue) for item, issue in items if not item.dropped]
+            self.job.total = len(items)
+            self.session.commit()
         for item, issue in items:
             self._check_cancel()
             try:
@@ -242,6 +256,79 @@ class _Job:
                 _label_error(item, exc)
             self.job.done += 1
             self.session.commit()
+
+    def stack(self, tree: Path, projects: list[str], items: list[tuple[Item, JiraIssue]]) -> None:
+        """Stack each item's diffs on the items before it that applied; record the outcome in its history.
+
+        Event `stacked_prescan`: the job's `order`, the item's `position` in it (from 1), `base` (keys stacked below this item),
+        `left_out` (earlier keys left out of the stack), `status` (`applied`, `left_out`,
+        `no_diffs`, `error`) with `reason`, `heads` of its projects, `attachments` ({key:
+        attachment ids} of the base and the item, for staleness), and per diff its
+        filename, project, status, error and stacked patch.
+        """
+        order = [issue.key for _, issue in items]
+        base: list[str] = []
+        left_out: list[str] = []
+        attachments: dict[str, list[int]] = {}
+        with tempfile.TemporaryDirectory(prefix="aosp-migrator-stack-") as tmp:
+            stack = Stack(tree, Path(tmp))
+            for position, (item, issue) in enumerate(items, 1):
+                self._check_cancel()
+                payload: dict[str, Any] = {
+                    "job_id": self.job.id,
+                    "order": order,
+                    "position": position,
+                    "base": list(base),
+                    "left_out": list(left_out),
+                }
+                try:
+                    diffs = current_diffs(self.session, issue.id)
+                    stacked = stack.add([self._stack_diff(attachment, issue, tree, projects) for attachment in diffs])
+                except Exception as exc:
+                    log.exception("Stacked pre-scan of %s failed", issue.key)
+                    self.session.rollback()
+                    self.job.errors = [*self.job.errors, {"key": issue.key, "message": str(exc)}]
+                    payload |= {"status": "error", "reason": str(exc), "diffs": []}
+                else:
+                    own = {key: ids for key, ids in attachments.items() if key in base}
+                    own[issue.key] = [a.id for a in diffs]
+                    failed = next((d for d in stacked.diffs if d.status in ("conflicts", "unmapped")), None)
+                    status = "no_diffs" if not diffs else "applied" if stacked.applied else "left_out"
+                    payload |= {
+                        "status": status,
+                        "reason": f"{failed.filename}: {failed.error}" if failed else None,
+                        "heads": {d.project: stack.heads.get(d.project) for d in stacked.diffs if d.project is not None},
+                        "attachments": own,
+                        "diffs": [
+                            {"attachment_id": a.id, "filename": d.filename, "project": d.project, "status": d.status, "error": d.error, "patch": d.patch}
+                            for a, d in zip(diffs, stacked.diffs, strict=True)
+                        ],
+                    }
+                    if status == "applied":
+                        base.append(issue.key)
+                        attachments[issue.key] = own[issue.key]
+                    elif status == "left_out":
+                        left_out.append(issue.key)
+                self.session.add(HistoryEvent(item_id=item.id, type="stacked_prescan", payload=payload))
+                self.job.done += 1
+                self.session.commit()
+
+    def _stack_diff(self, attachment: Attachment, issue: JiraIssue, tree: Path, projects: list[str]) -> StackDiff:
+        """The diff's project as last scanned (else mapped now) and its files already in that project."""
+        text = read_diff_text(attachment)
+        if text is None:
+            raise PrescanError(f"{attachment.filename}: downloaded file is missing; reimport the ticket")
+        scan = diff_scan(self.session, attachment.id)
+        project = scan.project if scan is not None else None
+        if project is None:
+            description = f"{issue.summary}\n{issue.description_raw}"
+            hints, repository = path_hints(description, projects), repository_hints(description, projects)
+            project = map_diff(tree, projects, parse_diff(text).files, hints, repository).project
+        if project is None:
+            return StackDiff(attachment.filename, None, text)
+        presence = check_presence(tree / project, text, self.upstream_domains)
+        present = [s.path for s in Patch.parse(text).files] if presence.status == "present" else presence.files("present")
+        return StackDiff(attachment.filename, project, text, present)
 
     def _check_cancel(self) -> None:
         self.session.refresh(self.job, ["cancel_requested"])
@@ -403,3 +490,24 @@ def stale_items(session: Session, workspace_id: int, tree: Path, item_ids: list[
         if reasons:
             stale[item_id] = list(dict.fromkeys(reasons))
     return stale
+
+
+def stacked_stale(session: Session, workspace_id: int, tree: Path, payload: dict[str, Any]) -> list[str]:
+    """Why a `stacked_prescan` event's result is out of date: a stacked item's diffs changed or a HEAD moved."""
+    recorded: dict[str, list[int]] = payload.get("attachments", {})
+    reasons: list[str] = []
+    if recorded:
+        rows = session.execute(
+            select(JiraIssue.key, Attachment.id)
+            .join(Attachment, Attachment.issue_id == JiraIssue.id)
+            .where(JiraIssue.workspace_id == workspace_id, JiraIssue.key.in_(recorded), Attachment.kind == "diff", Attachment.is_current.is_(True), Attachment.local_path.is_not(None))
+        )
+        current: dict[str, set[int]] = {key: set() for key in recorded}
+        for key, attachment_id in rows:
+            current[key].add(attachment_id)
+        if any(current[key] != set(ids) for key, ids in recorded.items()):
+            reasons.append("new diff version")
+    for project, head in payload.get("heads", {}).items():
+        if (git.head(tree / project) if (tree / project).is_dir() else None) != head:
+            reasons.append(f"{project} HEAD moved")
+    return reasons

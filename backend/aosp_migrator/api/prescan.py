@@ -20,6 +20,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 class PrescanRequest(BaseModel):
     # Omitted: scan every backlog item that is not dropped. Otherwise these items (one for a single-item re-run).
     keys: list[str] | None = None
+    # Stack `keys` on each other in the given order instead; results go into the items' history.
+    stacked: bool = False
 
 
 class PrescanJobOut(BaseModel):
@@ -148,9 +150,11 @@ def start_prescan(workspace_id: int, body: PrescanRequest, request: Request, ses
         if not keys:
             raise HTTPException(status_code=422, detail="No ticket keys given")
         _backlog_keys(session, workspace_id, keys)
+    if body.stacked and (keys is None or len(keys) < 2):
+        raise HTTPException(status_code=422, detail="A stacked pre-scan needs at least two tickets")
     runner: PrescanRunner = request.app.state.prescan_runner
     try:
-        job = runner.start(workspace_id, keys)
+        job = runner.start(workspace_id, keys, stacked=body.stacked)
     except JobConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return PrescanJobOut.model_validate(job)

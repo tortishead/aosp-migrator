@@ -9,11 +9,13 @@ export const prescanJobsKey = (workspaceId: number) => ["prescanJobs", workspace
 export const itemPrescanKey = (workspaceId: number, key?: string) =>
   key === undefined ? ["itemPrescan", workspaceId] : ["itemPrescan", workspaceId, key];
 
-/** Start a pre-scan (all, or the given keys); whoever shows the latest job picks it up and polls it. */
-export function useStartPrescan(workspaceId: number) {
+/**
+ * Start a pre-scan (all, or the given keys; `stacked`: the keys stacked in order); whoever shows the latest job picks it up and polls it.
+ */
+export function useStartPrescan(workspaceId: number, stacked = false) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (keys?: string[]) => api.startPrescan(workspaceId, keys),
+    mutationFn: (keys?: string[]) => api.startPrescan(workspaceId, keys, stacked),
     onSuccess: (job) => queryClient.setQueryData(prescanJobsKey(workspaceId), [job]),
   });
 }
@@ -34,6 +36,8 @@ export function useLatestPrescan(workspaceId: number) {
     seen.current = progress;
     void queryClient.invalidateQueries({ queryKey: itemPrescanKey(workspaceId) });
     void queryClient.invalidateQueries({ queryKey: itemsKey(workspaceId) });
+    // A stacked pre-scan's results are in the items' history.
+    void queryClient.invalidateQueries({ queryKey: ["item", workspaceId] });
   }, [progress, queryClient, workspaceId]);
   return job;
 }
@@ -98,18 +102,21 @@ export function PrescanPanel({ workspaceId }: { workspaceId: number }) {
 
 export function prescanStatusText(job: PrescanJob): string {
   const items = (n: number) => `${n} ${n === 1 ? "item" : "items"}`;
+  const name = job.scope === "stacked" ? "Stacked pre-scan" : "Pre-scan";
   switch (job.status) {
     case "running":
       return (
-        (job.stage === "projects" ? "Pre-scan: finding target projects…" : `Pre-scanning… ${job.done} / ${job.total ?? "?"}`) +
+        (job.stage === "projects"
+          ? `${name}: finding target projects…`
+          : `${job.scope === "stacked" ? "Stacking" : "Pre-scanning"}… ${job.done} / ${job.total ?? "?"}`) +
         (job.cancel_requested ? " (canceling)" : "")
       );
     case "done":
-      return `Pre-scan done: ${items(job.done)}`;
+      return `${name} done: ${items(job.done)}` + (job.scope === "stacked" ? ", results in their history" : "");
     case "canceled":
-      return `Pre-scan canceled after ${job.done} of ${job.total ?? "?"}`;
+      return `${name} canceled after ${job.done} of ${job.total ?? "?"}`;
     case "failed":
-      return `Pre-scan failed: ${job.error}`;
+      return `${name} failed: ${job.error}`;
   }
 }
 

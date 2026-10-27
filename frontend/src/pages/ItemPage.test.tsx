@@ -735,4 +735,37 @@ describe("ItemPage builds", () => {
     expect(within(history).getByText("FAILED: CameraService.o")).toBeInTheDocument();
     expect(within(history).getByText("Target tree restored after interrupted build run 13")).toBeInTheDocument();
   });
+
+  it("describes stacked pre-scans in the history, with the stacked patch", async () => {
+    const patch = "diff --git a/x.c b/x.c\n--- a/x.c\n+++ b/x.c\n@@ -1 +1 @@\n-a\n+b\n";
+    const events: HistoryEvent[] = [
+      {
+        id: 1,
+        type: "stacked_prescan",
+        payload: {
+          job_id: 5,
+          order: ["PROJ-100", "PROJ-110", "PROJ-101"],
+          position: 3,
+          base: ["PROJ-100"],
+          left_out: ["PROJ-110"],
+          status: "applied",
+          reason: null,
+          diffs: [{ attachment_id: 7, filename: "0001-fix.patch", project: "frameworks/av", status: "3way", error: null, patch }],
+        },
+        created_at: "2026-10-27T09:00:00Z",
+        stale: ["frameworks/av HEAD moved"],
+      },
+    ];
+    itemApi({ "GET /workspaces/1/items/PROJ-101": () => ({ ...itemDetail(), history: events }) });
+    renderRoute(URL);
+    const history = await screen.findByRole("region", { name: "History" });
+    expect(within(history).getByText("Stacked pre-scan: stacked (3 of 3)")).toBeInTheDocument();
+    expect(within(history).getByText("On top of: HEAD + PROJ-100")).toBeInTheDocument();
+    expect(within(history).getByText("Left out before it: PROJ-110")).toBeInTheDocument();
+    expect(within(history).getByText("0001-fix.patch (frameworks/av): applies 3-way")).toBeInTheDocument();
+    expect(within(history).getByText("Stale: frameworks/av HEAD moved")).toBeInTheDocument();
+    const download = within(history).getByRole("link", { name: "Download" });
+    expect(download).toHaveAttribute("download", "03-0001-fix.patch");
+    expect(decodeURIComponent(download.getAttribute("href") ?? "")).toContain("+b");
+  });
 });
