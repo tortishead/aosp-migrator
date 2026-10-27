@@ -82,7 +82,17 @@ export function BacklogPage() {
   const page = items.data;
   const rows = page?.items ?? [];
   const grouped = search.get("group") === "project";
+  // Target project groups folded away, by heading.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const pageCount = page ? Math.max(1, Math.ceil(page.total / PAGE_SIZE)) : 1;
+
+  function toggleGroup(group: string) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (!next.delete(group)) next.add(group);
+      return next;
+    });
+  }
 
   function toggle(key: string, on: boolean) {
     setSelected((current) => {
@@ -187,18 +197,25 @@ export function BacklogPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((item, i) => (
-              <Fragment key={item.id}>
-                {grouped && (i === 0 || projectGroup(rows[i - 1]) !== projectGroup(item)) && (
-                  <tr className="group-row">
-                    <th colSpan={COLUMNS} scope="rowgroup">
-                      {projectGroup(item) || "No target project"}
-                    </th>
-                  </tr>
-                )}
-                <Row workspaceId={workspaceId} item={item} selected={selected.has(item.key)} toggle={toggle} />
-              </Fragment>
-            ))}
+            {rows.map((item, i) => {
+              const group = projectGroup(item);
+              const folded = grouped && collapsed.has(group);
+              return (
+                <Fragment key={item.id}>
+                  {grouped && (i === 0 || projectGroup(rows[i - 1]) !== group) && (
+                    <tr className="group-row">
+                      <th colSpan={COLUMNS} scope="rowgroup">
+                        <button className="link-button" aria-expanded={!folded} onClick={() => toggleGroup(group)}>
+                          <span aria-hidden="true">{folded ? "▸" : "▾"}</span> {group || "No target project"}
+                        </button>
+                        <span className="group-count">{rows.filter((r) => projectGroup(r) === group).length}</span>
+                      </th>
+                    </tr>
+                  )}
+                  {!folded && <Row workspaceId={workspaceId} item={item} selected={selected.has(item.key)} toggle={toggle} />}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       )}

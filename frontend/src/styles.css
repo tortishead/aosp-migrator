@@ -1088,7 +1088,19 @@ p.tag {
 
 .table.backlog tr.group-row th {
   font-family: var(--mono);
+  font-size: 1.05em;
   color: var(--fg);
+  white-space: normal;
+}
+
+.table.backlog tr.group-row .link-button {
+  color: var(--fg);
+}
+
+.group-count {
+  margin-left: 8px;
+  color: var(--fg-muted);
+  font-weight: normal;
 }
 
 .diff-layout {

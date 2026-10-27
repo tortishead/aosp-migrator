@@ -215,7 +215,18 @@ describe("BacklogPage", () => {
     await waitFor(() => expect(lastItemQuery(calls).get("group")).toBe("project"));
     expect(lastItemQuery(calls).get("offset")).toBe("0");
     const headings = await screen.findAllByRole("rowheader");
-    expect(headings.map((h) => h.textContent)).toEqual(["frameworks/av", "frameworks/av, system/core", "No target project"]);
+    expect(headings.map((h) => within(h).getByRole("button").textContent)).toEqual(["▾ frameworks/av", "▾ frameworks/av, system/core", "▾ No target project"]);
+    expect(headings.map((h) => h.querySelector(".group-count")?.textContent)).toEqual(["2", "1", "1"]);
+
+    const av = screen.getByRole("button", { name: "frameworks/av" });
+    await userEvent.click(av);
+    expect(av).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "PROJ-101" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "PROJ-102" })).toBeNull();
+    expect(screen.getByRole("link", { name: "PROJ-103" })).toBeInTheDocument();
+    await userEvent.click(av);
+    expect(av).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "PROJ-101" })).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Group" }), "No grouping");
     await waitFor(() => expect(lastItemQuery(calls).has("group")).toBe(false));
