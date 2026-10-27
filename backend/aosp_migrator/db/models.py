@@ -343,7 +343,7 @@ class BuildRun(Base):
     # First error lines of the build, the apply error, or why it was not built.
     summary: Mapped[str | None] = mapped_column(Text)
     log_path: Mapped[str | None] = mapped_column(String)
-    # `build.tree.InFlight` while patches may be in the tree; None once restored.
-    inflight: Mapped[dict[str, Any] | None]
+    # `build.tree.InFlight` while patches may be in the tree; None (SQL NULL, not JSON null) once restored.
+    inflight: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     finished_at: Mapped[datetime | None]

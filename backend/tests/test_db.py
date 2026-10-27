@@ -22,7 +22,7 @@ def test_upgrade_is_idempotent(tmp_path: Path) -> None:
     db.upgrade(engine)
     db.upgrade(engine)
     with engine.connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0015"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0016"
 
 
 def test_foreign_keys_enabled(tmp_path: Path) -> None:

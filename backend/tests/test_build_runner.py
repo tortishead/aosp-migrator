@@ -272,3 +272,10 @@ def test_restart_restores_a_unit_in_flight(app: FastAPI, client: TestClient, con
     assert (stored.status, stored.inflight) == ("interrupted", None)
     assert events(restarted, "PROJ-102")[-1] == ("tree_restored", {"run_id": stored.id})
     assert item(restarted, "PROJ-102").build_status is None
+
+
+def test_restart_after_finished_builds(app: FastAPI, config: Config, workspace: int, target: Path) -> None:
+    job = runner(app, config).start(workspace, keys=["PROJ-105"])
+    assert all(run.inflight is None for run in runs(app, job.id))
+    create_app(config)
+    create_app(config)
