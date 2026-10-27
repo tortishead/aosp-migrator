@@ -53,6 +53,7 @@ def test_list_fields_and_natural_key_order(client: TestClient, imported: int) ->
         # Two versions of one patch count once; the screenshot is not a diff.
         "diff_count": 1,
         "diff_subjects": ["[PATCH] camera: fix null deref on resume"],
+        "target_projects": [],
         "cluster": None,
         "triage_label": None,
         "triage_reason": None,

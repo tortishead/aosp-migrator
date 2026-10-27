@@ -504,3 +504,21 @@ def test_plain_tree_with_shallow_project(client: TestClient, target: Path, fake_
     item = prescan(client, workspace_id, "PROJ-109")
     assert item["diffs"][0]["project"] == "frameworks/base"
     assert (item["diffs"][0]["presence"], item["diffs"][0]["presence_detail"]["reason"]) == ("unknown", "history unavailable")
+
+
+def test_target_projects_and_grouping(client: TestClient, workspace_id: int) -> None:
+    assert {i["key"]: i["target_projects"] for i in items(client, workspace_id)}["PROJ-101"] == []
+    run_prescan(client, workspace_id)
+    projects = {i["key"]: i["target_projects"] for i in items(client, workspace_id)}
+    assert (projects["PROJ-101"], projects["PROJ-107"], projects["PROJ-110"], projects["PROJ-111"]) == (["frameworks/av"], ["hardware/interfaces"], [], [])
+
+    grouped = items(client, workspace_id, group="project")
+    groups = [", ".join(i["target_projects"]) for i in grouped]
+    # Sorted by project, items without one last; within a group by key.
+    mapped = [g for g in groups if g]
+    assert mapped == sorted(mapped) and groups == mapped + [""] * (len(groups) - len(mapped))
+    av = [i["key"] for i in grouped if i["target_projects"] == ["frameworks/av"]]
+    assert av == sorted(av, key=lambda k: int(k.split("-")[1]))
+    reversed_av = [i["key"] for i in items(client, workspace_id, group="project", sort="-key") if i["target_projects"] == ["frameworks/av"]]
+    assert reversed_av == av[::-1]
+    assert client.get(f"/api/workspaces/{workspace_id}/items", params={"group": "nope"}).status_code == 422

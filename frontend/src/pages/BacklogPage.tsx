@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
 import { api, type Cluster, type ClusterRef, type Item, type LocalState } from "../api";
@@ -23,6 +23,13 @@ const SORTS: [string, string][] = [
   ["status", "Jira status"],
   ["state", "State"],
 ];
+
+const COLUMNS = 12;
+
+/** Heading of the item's group when the backlog is grouped by target project. */
+function projectGroup(item: Item): string {
+  return item.target_projects.join(", ");
+}
 
 export function BacklogPage() {
   const workspaceId = Number(useParams().workspaceId);
@@ -74,6 +81,7 @@ export function BacklogPage() {
 
   const page = items.data;
   const rows = page?.items ?? [];
+  const grouped = search.get("group") === "project";
   const pageCount = page ? Math.max(1, Math.ceil(page.total / PAGE_SIZE)) : 1;
 
   function toggle(key: string, on: boolean) {
@@ -112,6 +120,19 @@ export function BacklogPage() {
               {label}
             </option>
           ))}
+        </select>
+        <select
+          aria-label="Group"
+          value={search.get("group") ?? ""}
+          onChange={(e) =>
+            update((next) => {
+              if (e.target.value) next.set("group", e.target.value);
+              else next.delete("group");
+            })
+          }
+        >
+          <option value="">No grouping</option>
+          <option value="project">Group: Target project</option>
         </select>
         {selected.size > 0 && (
           <BulkActions
@@ -158,6 +179,7 @@ export function BacklogPage() {
               <th>State</th>
               <th>Labels</th>
               <th>Diffs</th>
+              <th>Target project</th>
               <th>Pre-scan</th>
               <th>Build</th>
               <th>Cluster</th>
@@ -165,8 +187,17 @@ export function BacklogPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((item) => (
-              <Row key={item.id} workspaceId={workspaceId} item={item} selected={selected.has(item.key)} toggle={toggle} />
+            {rows.map((item, i) => (
+              <Fragment key={item.id}>
+                {grouped && (i === 0 || projectGroup(rows[i - 1]) !== projectGroup(item)) && (
+                  <tr className="group-row">
+                    <th colSpan={COLUMNS} scope="rowgroup">
+                      {projectGroup(item) || "No target project"}
+                    </th>
+                  </tr>
+                )}
+                <Row workspaceId={workspaceId} item={item} selected={selected.has(item.key)} toggle={toggle} />
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -213,7 +244,9 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
         <Link to={`/workspaces/${workspaceId}/items/${item.key}`}>{item.key}</Link>
       </td>
       <td>
-        {item.summary}
+        <Link to={`/workspaces/${workspaceId}/items/${item.key}`} className="summary-link">
+          {item.summary}
+        </Link>
         {item.dropped && (
           <span className="tag tag-warn" title="No longer matched by the workspace JQL">
             dropped
@@ -236,6 +269,11 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
       <td className="nowrap">{STATE_LABELS[item.local_state]}</td>
       <td>{item.labels.join(", ")}</td>
       <td>{item.diff_count || ""}</td>
+      <td className="mono">
+        {item.target_projects.map((project) => (
+          <div key={project}>{project}</div>
+        ))}
+      </td>
       <td className="nowrap">
         <TriageTags item={item} />
       </td>

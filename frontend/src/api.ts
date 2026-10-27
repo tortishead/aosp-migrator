@@ -109,6 +109,8 @@ export interface Item {
   diff_count: number;
   /** Commit subjects from the format-patch headers of the current diffs. */
   diff_subjects: string[];
+  /** Distinct target projects the current diffs are mapped to, sorted; empty until mapped. */
+  target_projects: string[];
   cluster: ClusterRef | null;
   /** Null until pre-scanned, and for items without diffs. */
   triage_label: TriageLabel | null;

@@ -45,6 +45,7 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     last_import_error: null,
     diff_count: 1,
     diff_subjects: [],
+    target_projects: [],
     cluster: null,
     triage_label: null,
     triage_reason: null,
@@ -180,6 +181,45 @@ describe("BacklogPage", () => {
     expect(within(second).getByText("dropped")).toBeInTheDocument();
     expect(within(second).getByText("import error")).toHaveAttribute("title", "HTTP 500");
     expect(screen.getByText("1–2 of 2")).toBeInTheDocument();
+  });
+
+  it("opens the ticket from its summary and shows its target projects", async () => {
+    backlogApi({
+      "GET /workspaces/1/items": () => page([item("PROJ-101", { target_projects: ["frameworks/av", "system/core"] })]),
+    });
+    renderRoute("/workspaces/1");
+    const summary = await screen.findByRole("link", { name: "Summary of PROJ-101" });
+    expect(summary).toHaveAttribute("href", "/workspaces/1/items/PROJ-101");
+    expect(screen.getByRole("columnheader", { name: "Target project" })).toBeInTheDocument();
+    const row = summary.closest("tr")!;
+    expect(within(row).getByText("frameworks/av")).toBeInTheDocument();
+    expect(within(row).getByText("system/core")).toBeInTheDocument();
+  });
+
+  it("groups by target project", async () => {
+    const calls = backlogApi({
+      "GET /workspaces/1/items": () =>
+        page([
+          item("PROJ-101", { target_projects: ["frameworks/av"] }),
+          item("PROJ-102", { target_projects: ["frameworks/av"] }),
+          item("PROJ-103", { target_projects: ["frameworks/av", "system/core"] }),
+          item("PROJ-104"),
+        ]),
+    });
+    renderRoute("/workspaces/1?page=2");
+    await screen.findByRole("link", { name: "PROJ-101" });
+    expect(screen.queryByRole("rowheader")).toBeNull();
+    expect(lastItemQuery(calls).has("group")).toBe(false);
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Group" }), "Group: Target project");
+    await waitFor(() => expect(lastItemQuery(calls).get("group")).toBe("project"));
+    expect(lastItemQuery(calls).get("offset")).toBe("0");
+    const headings = await screen.findAllByRole("rowheader");
+    expect(headings.map((h) => h.textContent)).toEqual(["frameworks/av", "frameworks/av, system/core", "No target project"]);
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Group" }), "No grouping");
+    await waitFor(() => expect(lastItemQuery(calls).has("group")).toBe(false));
+    expect(screen.queryByRole("rowheader")).toBeNull();
   });
 
   it("shows empty states", async () => {

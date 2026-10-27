@@ -1082,6 +1082,15 @@ p.tag {
   font-size: 0.85em;
 }
 
+.summary-link {
+  color: inherit;
+}
+
+.table.backlog tr.group-row th {
+  font-family: var(--mono);
+  color: var(--fg);
+}
+
 .diff-layout {
   display: grid;
   grid-template-columns: minmax(160px, 260px) 1fr;

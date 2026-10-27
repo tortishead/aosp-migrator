@@ -16,6 +16,7 @@ from aosp_migrator.db.models import (
     Cluster,
     ClusterMember,
     Comment,
+    DiffScan,
     HistoryEvent,
     Item,
     ItemLink,
@@ -38,6 +39,7 @@ issue_fts = table("issue_fts", column("rowid"), column("key"), column("summary")
 TRIGRAM = 3
 
 Sort = Literal["key", "-key", "updated", "-updated", "status", "-status", "state", "-state"]
+Group = Literal["project"]
 
 
 def natural_key(key: str) -> tuple[str, int]:
@@ -67,6 +69,8 @@ class ItemOut(BaseModel):
     diff_count: int
     # Commit subjects from the format-patch headers of the current diffs.
     diff_subjects: list[str]
+    # Distinct target projects the current diffs are mapped to, sorted; empty until mapped.
+    target_projects: list[str]
     cluster: ClusterRef | None
     # Pre-scan triage label and why; None until scanned, and for items without diffs.
     triage_label: str | None
@@ -258,6 +262,27 @@ def _build(statuses: list[str]) -> ColumnElement[bool]:
     return or_(condition, Item.build_status.is_(None)) if "none" in statuses else condition
 
 
+def _project_group() -> Any:
+    """The item's target projects, sorted and joined with ", "; NULL while none is mapped."""
+    projects = (
+        select(DiffScan.project)
+        .distinct()
+        .join(Attachment, DiffScan.attachment_id == Attachment.id)
+        .where(Attachment.issue_id == JiraIssue.id, Attachment.kind == "diff", Attachment.is_current.is_(True), DiffScan.project.is_not(None))
+        .order_by(DiffScan.project)
+        .correlate(JiraIssue)
+        .subquery()
+    )
+    return select(func.group_concat(projects.c.project, ", ")).scalar_subquery()
+
+
+def _group_key(group: Group | None) -> list[Any]:
+    if group is None:
+        return []
+    projects = _project_group()
+    return [projects.is_(None), projects]
+
+
 def _sort_key(sort: Sort) -> list[Any]:
     name = sort.removeprefix("-")
     if name == "key":
@@ -289,10 +314,14 @@ def list_items(
     stale: bool | None = None,
     build: ListParam = None,
     sort: Sort = "key",
+    group: Group | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> ItemPage:
-    """Backlog items. Filters combine with AND; several values of one filter match any of them."""
+    """Backlog items. Filters combine with AND; several values of one filter match any of them.
+
+    `group=project` orders by target projects first (items without one last), then by `sort`.
+    """
     workspace = _workspace(session, workspace_id)
     tree = Path(workspace.target_tree)
     conditions: list[ColumnElement[bool]] = []
@@ -336,12 +365,13 @@ def list_items(
         query.add_columns(diff_count, Cluster.id, Cluster.name)
         .outerjoin(ClusterMember, ClusterMember.item_id == Item.id)
         .outerjoin(Cluster, ClusterMember.cluster_id == Cluster.id)
-        .order_by(*_sort_key(sort))
+        .order_by(*_group_key(group), *_sort_key(sort))
         .offset(offset)
         .limit(limit)
     )
     rows = list(rows)
     subjects = _diff_subjects(session, [issue.id for _, issue, *_ in rows])
+    projects = _target_projects(session, [issue.id for _, issue, *_ in rows])
     stale_reasons = stale_items(session, workspace_id, tree, [item.id for item, *_ in rows])
     items = [
         ItemOut(
@@ -358,6 +388,7 @@ def list_items(
             last_import_error=item.last_import_error,
             diff_count=count,
             diff_subjects=subjects.get(issue.id, []),
+            target_projects=projects.get(issue.id, []),
             cluster=ClusterRef(id=cluster_id, name=cluster_name) if cluster_id is not None else None,
             triage_label=item.triage_label,
             triage_reason=item.triage_reason,
@@ -384,6 +415,21 @@ def _diff_subjects(session: Session, issue_ids: list[int]) -> dict[int, list[str
             if commit.get("subject") and commit["subject"] not in seen:
                 seen.append(commit["subject"])
     return subjects
+
+
+def _target_projects(session: Session, issue_ids: list[int]) -> dict[int, list[str]]:
+    """Distinct mapped target projects of the current diffs per issue, sorted."""
+    projects: dict[int, list[str]] = {}
+    mapped = session.execute(
+        select(Attachment.issue_id, DiffScan.project)
+        .distinct()
+        .join(DiffScan, DiffScan.attachment_id == Attachment.id)
+        .where(Attachment.issue_id.in_(issue_ids), Attachment.kind == "diff", Attachment.is_current.is_(True), DiffScan.project.is_not(None))
+        .order_by(DiffScan.project)
+    )
+    for issue_id, project in mapped:
+        projects.setdefault(issue_id, []).append(project)
+    return projects
 
 
 @router.get("/facets")
