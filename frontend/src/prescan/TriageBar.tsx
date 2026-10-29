@@ -29,6 +29,7 @@ export function TriageBar({ workspaceId, search, update }: Props) {
 
   const triage = search.getAll("triage");
   const staleOnly = search.get("stale") === "true";
+  const dependsOnly = search.get("depends") === "true";
 
   function pick(label: string) {
     const active = triage.length === 1 && triage[0] === label;
@@ -64,6 +65,22 @@ export function TriageBar({ workspaceId, search, update }: Props) {
           }
         >
           <strong>{data.stale}</strong> stale
+        </button>
+      )}
+      {data.dependencies > 0 && (
+        <button
+          type="button"
+          className="chip chip-warn"
+          aria-pressed={dependsOnly}
+          title="Items whose diffs build on another item's diff not in the target yet, or on a base no diff has"
+          onClick={() =>
+            update((next) => {
+              if (dependsOnly) next.delete("depends");
+              else next.set("depends", "true");
+            })
+          }
+        >
+          <strong>{data.dependencies}</strong> {data.dependencies === 1 ? "dependency" : "dependencies"}
         </button>
       )}
     </div>

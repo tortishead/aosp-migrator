@@ -25,7 +25,7 @@ from aosp_migrator.db.models import (
     Note,
     Workspace,
 )
-from aosp_migrator.prescan.runner import stacked_stale, stale_items
+from aosp_migrator.prescan.runner import stacked_stale, stale_items, unresolved_dependencies
 from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/items")
@@ -77,6 +77,9 @@ class ItemOut(BaseModel):
     triage_reason: str | None
     # Why the pre-scan results are out of date; empty when fresh or never scanned.
     stale: list[str]
+    # What the current diffs still need, as of the last pre-scan: `KEY (path)` of another item's diff not in
+    # the target yet, `path: base in no diff`; empty when nothing.
+    dependencies: list[str]
     # Result of the last finished build and why; None until built.
     build_status: str | None
     build_reason: str | None
@@ -323,6 +326,7 @@ def list_items(
     cluster: str | None = None,
     triage: ListParam = None,
     stale: bool | None = None,
+    depends: bool | None = None,
     build: ListParam = None,
     sort: Sort = "key",
     group: Group | None = None,
@@ -363,6 +367,9 @@ def list_items(
         # Needs every scanned item's HEADs, so only when asked for.
         stale_ids = list(stale_items(session, workspace_id, tree))
         conditions.append(Item.id.in_(stale_ids) if stale else Item.id.not_in(stale_ids))
+    if depends is not None:
+        depends_ids = list(unresolved_dependencies(session, workspace_id))
+        conditions.append(Item.id.in_(depends_ids) if depends else Item.id.not_in(depends_ids))
     if q:
         conditions.extend(_text_term(term) for term in q.split())
 
@@ -385,6 +392,7 @@ def list_items(
     subjects = _diff_subjects(session, [issue.id for _, issue, *_ in rows])
     projects = _target_projects(session, [issue.id for _, issue, *_ in rows])
     stale_reasons = stale_items(session, workspace_id, tree, [item.id for item, *_ in rows])
+    dependencies = unresolved_dependencies(session, workspace_id, [item.id for item, *_ in rows])
     items = [
         ItemOut(
             id=item.id,
@@ -405,6 +413,7 @@ def list_items(
             triage_label=item.triage_label,
             triage_reason=item.triage_reason,
             stale=stale_reasons.get(item.id, []),
+            dependencies=dependencies.get(item.id, []),
             build_status=item.build_status,
             build_reason=item.build_reason,
         )

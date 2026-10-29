@@ -9,7 +9,17 @@ from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.db.models import Attachment, DiffDependency, DiffScan, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace
-from aosp_migrator.prescan.runner import JobConflictError, PrescanError, PrescanRunner, current_diffs, current_patch, diff_scan, stale_items, target_projects
+from aosp_migrator.prescan.runner import (
+    JobConflictError,
+    PrescanError,
+    PrescanRunner,
+    current_diffs,
+    current_patch,
+    diff_scan,
+    stale_items,
+    target_projects,
+    unresolved_dependencies,
+)
 from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter()
@@ -136,6 +146,8 @@ class PrescanSummaryOut(BaseModel):
     # Items without a label: not scanned yet, or without diffs.
     unlabeled: int
     stale: int
+    # Items whose diffs still need another item's diff, or a base no diff makes.
+    dependencies: int
 
 
 def _workspace(session: Session, workspace_id: int) -> Workspace:
@@ -219,6 +231,7 @@ def get_prescan_summary(workspace_id: int, session: SessionDep) -> PrescanSummar
         labels={label: counts.get(label, 0) for label in ORDER},
         unlabeled=counts.get(None, 0),
         stale=len(kept & stale.keys()),
+        dependencies=len(kept & unresolved_dependencies(session, workspace_id).keys()),
     )
 
 

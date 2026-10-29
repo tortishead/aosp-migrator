@@ -50,6 +50,7 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     triage_label: null,
     triage_reason: null,
     stale: [],
+    dependencies: [],
     build_status: null,
     build_reason: null,
     ...overrides,
@@ -124,9 +125,9 @@ function buildSummary(statuses: Partial<BuildSummary["statuses"]> = {}, unbuilt 
   return { statuses: { apply_failed: 0, build_failed: 0, build_successful: 0, ...statuses }, unbuilt };
 }
 
-function summary(labels: Partial<Record<TriageLabel, number>> = {}, unlabeled = 0, stale = 0): PrescanSummary {
+function summary(labels: Partial<Record<TriageLabel, number>> = {}, unlabeled = 0, stale = 0, dependencies = 0): PrescanSummary {
   const zeros = { error: 0, unmapped: 0, unknown: 0, conflicts: 0, partial: 0, "3way": 0, applies: 0, likely_present: 0, present: 0 };
-  return { labels: { ...zeros, ...labels }, unlabeled, stale };
+  return { labels: { ...zeros, ...labels }, unlabeled, stale, dependencies };
 }
 
 function itemQueries(calls: ApiCall[]): URLSearchParams[] {
@@ -719,7 +720,12 @@ describe("Backlog pre-scan overview", () => {
       "GET /workspaces/1/items": () =>
         page([
           item("PROJ-101", { triage_label: "present", triage_reason: "Change-Id I1234 in abc1234" }),
-          item("PROJ-102", { triage_label: "conflicts", triage_reason: "0001.patch: Foo.java", stale: ["frameworks/base HEAD moved"] }),
+          item("PROJ-102", {
+            triage_label: "conflicts",
+            triage_reason: "0001.patch: Foo.java",
+            stale: ["frameworks/base HEAD moved"],
+            dependencies: ["PROJ-101 (Foo.java)", "icon.png: base in no diff"],
+          }),
           item("PROJ-103", { diff_count: 0 }),
         ]),
     });
@@ -727,15 +733,17 @@ describe("Backlog pre-scan overview", () => {
     const first = (await screen.findByRole("link", { name: "PROJ-101" })).closest("tr")!;
     expect(within(first).getByText("Present")).toHaveAttribute("title", "Change-Id I1234 in abc1234");
     expect(within(first).queryByText("stale")).not.toBeInTheDocument();
+    expect(within(first).queryByText("dependency")).not.toBeInTheDocument();
     const second = screen.getByRole("link", { name: "PROJ-102" }).closest("tr")!;
     expect(within(second).getByText("Conflicts")).toHaveClass("tag-error");
     expect(within(second).getByText("stale")).toHaveAttribute("title", "Out of date: frameworks/base HEAD moved");
+    expect(within(second).getByText("dependency")).toHaveAttribute("title", "Needs: PROJ-101 (Foo.java); icon.png: base in no diff");
     const third = screen.getByRole("link", { name: "PROJ-103" }).closest("tr")!;
     expect(third.querySelectorAll(".tag")).toHaveLength(0);
   });
 
   it("counts items per label and filters by a click", async () => {
-    const calls = backlogApi({ "GET /workspaces/1/prescan-summary": () => summary({ present: 12, partial: 3, applies: 30 }, 4, 2) });
+    const calls = backlogApi({ "GET /workspaces/1/prescan-summary": () => summary({ present: 12, partial: 3, applies: 30 }, 4, 2, 5) });
     const { router } = renderRoute("/workspaces/1");
     const bar = await screen.findByRole("group", { name: "Pre-scan counts" });
     expect(within(bar).getAllByRole("button").map((b) => b.textContent)).toEqual([
@@ -744,6 +752,7 @@ describe("Backlog pre-scan overview", () => {
       "12 present",
       "4 not scanned",
       "2 stale",
+      "5 dependencies",
     ]);
 
     await userEvent.click(within(bar).getByRole("button", { name: "12 present" }));
@@ -761,6 +770,11 @@ describe("Backlog pre-scan overview", () => {
     await waitFor(() => expect(lastItemQuery(calls).get("stale")).toBe("true"));
     await userEvent.click(within(bar).getByRole("button", { name: "2 stale" }));
     await waitFor(() => expect(lastItemQuery(calls).has("stale")).toBe(false));
+
+    await userEvent.click(within(bar).getByRole("button", { name: "5 dependencies" }));
+    await waitFor(() => expect(lastItemQuery(calls).get("depends")).toBe("true"));
+    await userEvent.click(within(bar).getByRole("button", { name: "5 dependencies" }));
+    await waitFor(() => expect(lastItemQuery(calls).has("depends")).toBe(false));
   });
 
   it("hides the count bar until something is scanned", async () => {

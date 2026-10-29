@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from aosp_migrator.db.models import Attachment, DiffDependency, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
@@ -374,6 +374,34 @@ def rebuild_dependencies(session: Session, workspace_id: int, tree: Path) -> Non
         DiffDependency(workspace_id=workspace_id, attachment_id=d.attachment_id, path=d.path, blob=d.blob, depends_on_id=d.depends_on_id, state=d.state)
         for d in find(tree, diffs)
     )
+
+
+def unresolved_dependencies(session: Session, workspace_id: int, item_ids: list[int] | None = None) -> dict[int, list[str]]:
+    """What each item's current diffs still need (all items, or `item_ids`): another item's diff not in the target yet, or a base no diff makes.
+
+    Items without such a dependency are left out.
+    """
+    mine, theirs = aliased(Attachment), aliased(Attachment)
+    query = (
+        select(Item.id, DiffDependency, JiraIssue.key)
+        .join(mine, mine.id == DiffDependency.attachment_id)
+        .join(Item, Item.issue_id == mine.issue_id)
+        .outerjoin(theirs, theirs.id == DiffDependency.depends_on_id)
+        .outerjoin(JiraIssue, JiraIssue.id == theirs.issue_id)
+        .where(
+            DiffDependency.workspace_id == workspace_id,
+            DiffDependency.state.in_(("pending", "missing")),
+            mine.is_current.is_(True),
+            theirs.id.is_(None) | theirs.is_current.is_(True),
+        )
+        .order_by(Item.id, JiraIssue.key, DiffDependency.path)
+    )
+    if item_ids is not None:
+        query = query.where(Item.id.in_(item_ids))
+    found: dict[int, list[str]] = {}
+    for item_id, dep, key in session.execute(query):
+        found.setdefault(item_id, []).append(f"{key} ({dep.path})" if key else f"{dep.path}: base in no diff")
+    return {item_id: list(dict.fromkeys(reasons)) for item_id, reasons in found.items()}
 
 
 def scan_item(session: Session, item: Item, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:
