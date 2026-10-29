@@ -99,6 +99,9 @@ export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; 
               ))}
             </tbody>
           </table>
+          {prescan.depends_on.length === 0 && prescan.needed_by.length === 0 && (
+            <p className="hint">No dependencies found: no file of these diffs builds on another item&apos;s diff, or the other way round.</p>
+          )}
           <Dependencies workspaceId={workspaceId} title="Depends on" deps={prescan.depends_on} />
           <Dependencies workspaceId={workspaceId} title="Needed by" deps={prescan.needed_by} />
         </>

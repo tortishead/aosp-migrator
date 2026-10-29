@@ -425,6 +425,14 @@ describe("ItemPage pre-scan", () => {
     expect(neededBy).toHaveTextContent("PROJ-107");
     expect(neededBy).toHaveTextContent("Dropped");
     expect(neededBy).toHaveTextContent("Already in target");
+    expect(screen.queryByText(/No dependencies found/)).not.toBeInTheDocument();
+  });
+
+  it("says when no dependencies were found", async () => {
+    itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem() });
+    renderRoute(URL);
+    expect(await screen.findByText(/No dependencies found/)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Depends on" })).not.toBeInTheDocument();
   });
 
   it("picks a project for an unmapped diff and shows the new results", async () => {
