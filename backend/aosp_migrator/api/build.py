@@ -27,6 +27,8 @@ class BuildRequest(BaseModel):
     # One of them: these items, one unit each; or the cluster's members as one unit.
     keys: list[str] | None = None
     cluster_id: int | None = None
+    # With `keys`: build them as one unit, their patches stacked in the given order.
+    stacked: bool = False
 
 
 class BuildJobOut(BaseModel):
@@ -116,7 +118,10 @@ def _job_out(session: Session, job: BuildJob) -> BuildJobOut:
 
 @router.post("/workspaces/{workspace_id}/build", status_code=202)
 def start_build(workspace_id: int, body: BuildRequest, request: Request, session: SessionDep) -> BuildJobOut:
-    """Build the eligible items among `keys` (one unit each), or a cluster (one unit); the others are listed as skipped."""
+    """Build the eligible items among `keys` (one unit each), or a cluster (one unit); the others are listed as skipped.
+
+    `stacked`: every one of `keys` in one unit, each item's diffs stacked on the ones before it.
+    """
     _workspace(session, workspace_id)
     if (body.keys is None) == (body.cluster_id is None):
         raise HTTPException(status_code=422, detail="Give either keys or cluster_id")
@@ -125,13 +130,15 @@ def start_build(workspace_id: int, body: BuildRequest, request: Request, session
         keys = list(dict.fromkeys(key.strip() for key in body.keys if key.strip()))
         if not keys:
             raise HTTPException(status_code=422, detail="No ticket keys given")
+    if body.stacked and (keys is None or len(keys) < 2):
+        raise HTTPException(status_code=422, detail="A stacked build needs at least two tickets")
     if body.cluster_id is not None:
         cluster = session.get(Cluster, body.cluster_id)
         if cluster is None or cluster.workspace_id != workspace_id:
             raise HTTPException(status_code=404, detail="Cluster not found")
     runner: BuildRunner = request.app.state.build_runner
     try:
-        job = runner.start(workspace_id, keys=keys, cluster_id=body.cluster_id)
+        job = runner.start(workspace_id, keys=keys, cluster_id=body.cluster_id, stacked=body.stacked)
     except BuildJobConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BuildError as exc:

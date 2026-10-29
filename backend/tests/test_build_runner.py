@@ -188,6 +188,36 @@ def test_cluster_is_one_unit_in_order(app: FastAPI, client: TestClient, config: 
     assert item(app, "PROJ-106").build_status == "build_successful"
 
 
+def test_stacked_build_is_one_unit_and_leaves_out_what_does_not_stack(app: FastAPI, config: Config, workspace: int, target: Path) -> None:
+    before = snapshot(target)
+    order = ["PROJ-108", "PROJ-110", "PROJ-101", "PROJ-105"]
+    job = job_of(app, runner(app, config).start(workspace, keys=order, stacked=True).id)
+    assert snapshot(target) == before
+    # Every key goes in, whatever its label: PROJ-101 conflicts on its own once PROJ-108 is in, but stacks on it.
+    assert (job.status, job.scope, job.issue_keys, job.total, job.done, job.errors) == ("done", "stacked", order, 1, 1, [])
+    assert job.skipped == [{"key": "PROJ-110", "reason": item(app, "PROJ-110").build_reason}]
+    assert (item(app, "PROJ-110").build_reason or "").startswith("left out of the stack: 0001-Build-with-OEM-flag.patch: ")
+    assert item(app, "PROJ-110").build_status == "apply_failed"
+
+    (run,) = runs(app, job.id)
+    assert (run.status, run.modules, run.patch_ids, run.inflight) == ("build_successful", ["system/core"], [], None)
+    assert run.item_ids == [item(app, key).id for key in ("PROJ-108", "PROJ-101", "PROJ-105")]
+    assert all(item(app, key).build_status == "build_successful" for key in ("PROJ-108", "PROJ-101", "PROJ-105"))
+    log = log_of(run)
+    assert "Stacked PROJ-101: " in log and "Left out PROJ-110: " in log
+    assert events(app, "PROJ-110")[-1] == ("build_finished", {"run_id": run.id, "status": "apply_failed", "summary": item(app, "PROJ-110").build_reason})
+
+
+def test_stacked_build_with_nothing_stacked(app: FastAPI, config: Config, workspace: int, target: Path) -> None:
+    before = snapshot(target)
+    job = job_of(app, runner(app, config).start(workspace, keys=["PROJ-110", "PROJ-111"], stacked=True).id)
+    assert snapshot(target) == before
+    (run,) = runs(app, job.id)
+    assert (run.status, run.summary, run.item_ids) == ("apply_failed", "no item stacked", [])
+    assert [s["key"] for s in job.skipped] == ["PROJ-110", "PROJ-111"]
+    assert item(app, "PROJ-111").build_reason == "left out of the stack: no diffs"
+
+
 def test_timeout_kills_the_build(app: FastAPI, config: Config, workspace: int, target: Path) -> None:
     (target / "SLOW_BUILD").write_text("SLOW_BUILD\n")
     with session(app) as s:

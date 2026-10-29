@@ -414,12 +414,12 @@ export type BuildStatus = (typeof BUILD_STATUSES)[number];
 export interface BuildJob {
   id: number;
   workspace_id: number;
-  /** `keys`: one unit per item; `cluster`: the cluster's members as one unit. */
-  scope: "keys" | "cluster";
+  /** `keys`: one unit per item; `cluster`: the cluster's members as one unit; `stacked`: the items stacked in order as one unit. */
+  scope: "keys" | "cluster" | "stacked";
   /** Eligible items, in build order. */
   issue_keys: string[];
   cluster_id: number | null;
-  /** Selected items not built, and why. */
+  /** Selected items not built, and why (stacked: also those left out of the stack). */
   skipped: { key: string; reason: string }[];
   status: JobStatus;
   /** Units. */
@@ -437,12 +437,16 @@ export interface BuildJob {
   log_tail: string | null;
 }
 
+/** What to build: items one unit each, items stacked in order as one unit, or a cluster. */
+export type BuildWhat = { keys: string[]; stacked?: boolean } | { cluster_id: number };
+
 export interface BuildRun {
   id: number;
   job_id: number;
-  /** Every item of the unit, in build order. */
+  /** Every item of the unit, in build order (stacked: the items that stacked). */
   keys: string[];
   cluster_id: number | null;
+  /** Empty for a stacked build: its patches are made on the stack. */
   patch_ids: number[];
   tool: "m" | "mmm" | null;
   /** Module names (`m`) or directories relative to the build root (`mmm`). */
@@ -558,7 +562,7 @@ export const api = {
   itemPatches: (workspaceId: number, key: string) =>
     apiFetch<ItemPatch[]>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/patches`),
   patch: (workspaceId: number, patchId: number) => apiFetch<DiffWithHunks>(`/workspaces/${workspaceId}/patches/${patchId}`),
-  startBuild: (workspaceId: number, what: { keys: string[] } | { cluster_id: number }) =>
+  startBuild: (workspaceId: number, what: BuildWhat) =>
     apiFetch<BuildJob>(`/workspaces/${workspaceId}/build`, { method: "POST", body: JSON.stringify(what) }),
   buildJobs: (workspaceId: number, limit: number) => apiFetch<BuildJob[]>(`/workspaces/${workspaceId}/build-jobs?limit=${limit}`),
   cancelBuild: (jobId: number) => apiFetch<BuildJob>(`/build-jobs/${jobId}/cancel`, { method: "POST" }),

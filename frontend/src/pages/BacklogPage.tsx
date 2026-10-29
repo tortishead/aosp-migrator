@@ -13,7 +13,7 @@ import { useStartBuild } from "../build/BuildPanel";
 import { BuildTag } from "../build/BuildTag";
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
 import { PrescanButton, useStartPrescan } from "../prescan/PrescanPanel";
-import { StackedPrescanDialog } from "../prescan/StackedPrescanDialog";
+import { StackedDialog, type StackKind } from "../prescan/StackedDialog";
 import { TRIAGE_TEXT } from "../prescan/triage";
 import { TriageBar } from "../prescan/TriageBar";
 import { TriageTags } from "../prescan/TriageTags";
@@ -356,7 +356,7 @@ interface BulkProps {
 
 function BulkActions({ workspaceId, keys, items, clusters, onStateChanged, onClustered }: BulkProps) {
   const [state, setState] = useState<LocalState | "">("");
-  const [stacking, setStacking] = useState(false);
+  const [stacking, setStacking] = useState<StackKind | null>(null);
   const changeState = useMutation({
     mutationFn: (to: LocalState) => api.changeState(workspaceId, keys, to),
     onSuccess: () => {
@@ -405,16 +405,23 @@ function BulkActions({ workspaceId, keys, items, clusters, onStateChanged, onClu
         Pre-scan selected
       </button>
       <button
-        onClick={() => setStacking(true)}
+        onClick={() => setStacking("prescan")}
         disabled={keys.length < 2}
         title={keys.length < 2 ? "A stacked pre-scan needs at least two items" : "Apply the selected items' diffs on top of each other, in an order you choose"}
       >
         Stacked pre-scan…
       </button>
-      {stacking && <StackedPrescanDialog workspaceId={workspaceId} items={items} onClose={() => setStacking(false)} />}
       <button onClick={() => build.mutate({ keys })} disabled={build.isPending} title="Items the pre-scan found applying, as is or 3-way">
         Build selected
       </button>
+      <button
+        onClick={() => setStacking("build")}
+        disabled={keys.length < 2 || build.isPending}
+        title={keys.length < 2 ? "A stacked build needs at least two items" : "Build the selected items as one unit, their diffs stacked in an order you choose"}
+      >
+        Stacked build…
+      </button>
+      {stacking && <StackedDialog workspaceId={workspaceId} kind={stacking} items={items} onClose={() => setStacking(null)} />}
       <button
         onClick={() => cluster.mutate(null)}
         disabled={keys.length < 2 || cluster.isPending}

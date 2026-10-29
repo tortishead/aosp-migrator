@@ -283,7 +283,7 @@ class _Job:
                 }
                 try:
                     diffs = current_diffs(self.session, issue.id)
-                    stacked = stack.add([self._stack_diff(attachment, issue, tree, projects) for attachment in diffs])
+                    stacked = stack.add([stack_diff(self.session, attachment, issue, tree, projects, self.upstream_domains) for attachment in diffs])
                 except Exception as exc:
                     log.exception("Stacked pre-scan of %s failed", issue.key)
                     self.session.rollback()
@@ -313,23 +313,6 @@ class _Job:
                 self.job.done += 1
                 self.session.commit()
 
-    def _stack_diff(self, attachment: Attachment, issue: JiraIssue, tree: Path, projects: list[str]) -> StackDiff:
-        """The diff's project as last scanned (else mapped now) and its files already in that project."""
-        text = read_diff_text(attachment)
-        if text is None:
-            raise PrescanError(f"{attachment.filename}: downloaded file is missing; reimport the ticket")
-        scan = diff_scan(self.session, attachment.id)
-        project = scan.project if scan is not None else None
-        if project is None:
-            description = f"{issue.summary}\n{issue.description_raw}"
-            hints, repository = path_hints(description, projects), repository_hints(description, projects)
-            project = map_diff(tree, projects, parse_diff(text).files, hints, repository).project
-        if project is None:
-            return StackDiff(attachment.filename, None, text)
-        presence = check_presence(tree / project, text, self.upstream_domains)
-        present = [s.path for s in Patch.parse(text).files] if presence.status == "present" else presence.files("present")
-        return StackDiff(attachment.filename, project, text, present)
-
     def _check_cancel(self) -> None:
         self.session.refresh(self.job, ["cancel_requested"])
         if self.job.cancel_requested:
@@ -344,6 +327,24 @@ def read_diff_text(attachment: Attachment) -> str | None:
             return f.read().decode("utf-8", errors="replace")
     except OSError:
         return None
+
+
+def stack_diff(session: Session, attachment: Attachment, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> StackDiff:
+    """The diff's project as last scanned (else mapped now) and its files already in that project."""
+    text = read_diff_text(attachment)
+    if text is None:
+        raise PrescanError(f"{attachment.filename}: downloaded file is missing; reimport the ticket")
+    scan = diff_scan(session, attachment.id)
+    project = scan.project if scan is not None else None
+    if project is None:
+        description = f"{issue.summary}\n{issue.description_raw}"
+        hints, repository = path_hints(description, projects), repository_hints(description, projects)
+        project = map_diff(tree, projects, parse_diff(text).files, hints, repository).project
+    if project is None:
+        return StackDiff(attachment.filename, None, text)
+    presence = check_presence(tree / project, text, upstream_domains)
+    present = [s.path for s in Patch.parse(text).files] if presence.status == "present" else presence.files("present")
+    return StackDiff(attachment.filename, project, text, present)
 
 
 def scan_item(session: Session, item: Item, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:

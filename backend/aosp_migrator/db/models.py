@@ -304,11 +304,11 @@ class BuildJob(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
-    scope: Mapped[str] = mapped_column(String)  # keys / cluster
-    # Eligible items to build, in build order: one unit each (`keys`), or the cluster's members as one unit.
+    scope: Mapped[str] = mapped_column(String)  # keys / cluster / stacked
+    # Eligible items to build, in build order: one unit each (`keys`), or the cluster's members / the stack as one unit.
     issue_keys: Mapped[list[Any]]
     cluster_id: Mapped[int | None] = mapped_column(ForeignKey("cluster.id", ondelete="SET NULL"))
-    # [{key, reason}] per selected item that is not built (triage label not `applies` / `3way`).
+    # [{key, reason}] per selected item that is not built (triage label not `applies` / `3way`; stacked: left out of the stack).
     skipped: Mapped[list[Any]]
     status: Mapped[str] = mapped_column(String, default="running")
     done: Mapped[int] = mapped_column(default=0)
@@ -330,9 +330,10 @@ class BuildRun(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("build_job.id", ondelete="CASCADE"), index=True)
-    # Several for a cluster, in cluster order.
+    # Several for a cluster, in cluster order; for a stacked build the items that stacked, in stack order.
     item_ids: Mapped[list[Any]]
     cluster_id: Mapped[int | None] = mapped_column(ForeignKey("cluster.id", ondelete="SET NULL"))
+    # Migration patches applied; empty for a stacked build (its patches are made on the stack).
     patch_ids: Mapped[list[Any]]
     tool: Mapped[str | None] = mapped_column(String)  # m / mmm; None when nothing was built
     # Module names (`m`) or directories relative to the build root (`mmm`).

@@ -805,6 +805,38 @@ describe("Backlog pre-scan overview", () => {
 });
 
 describe("Backlog build", () => {
+  it("builds the selected items stacked, in the order dragged into", async () => {
+    let jobs: BuildJob[] = [];
+    const calls = backlogApi({
+      "POST /workspaces/1/build": () => {
+        jobs = [buildJob({ scope: "stacked", issue_keys: ["PROJ-102", "PROJ-101"], total: 1, unit_keys: ["PROJ-102", "PROJ-101"] })];
+        return { status: 202, body: jobs[0] };
+      },
+      "GET /workspaces/1/build-jobs": () => jobs,
+    });
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select PROJ-101" }));
+    expect(screen.getByRole("button", { name: "Stacked build…" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select PROJ-102" }));
+    await userEvent.click(screen.getByRole("button", { name: "Stacked build…" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Stacked build" });
+    const rows = () => within(dialog).getAllByRole("listitem");
+    expect(rows().map((r) => r.querySelector("strong")?.textContent)).toEqual(["PROJ-101", "PROJ-102"]);
+    fireEvent.dragStart(rows()[1], { dataTransfer: { effectAllowed: "", setData: vi.fn() } });
+    fireEvent.dragEnter(rows()[0]);
+    fireEvent.dragEnd(rows()[0]);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start stacked build" }));
+    expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/build")?.body).toEqual({
+      keys: ["PROJ-102", "PROJ-101"],
+      stacked: true,
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Stacked build" })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Job status/ })).toHaveAttribute("title", "Building stack PROJ-102, PROJ-101 (0 / 1)"),
+    );
+  });
+
   it("builds the selected items and lists the skipped ones", async () => {
     let jobs: BuildJob[] = [];
     const calls = backlogApi({

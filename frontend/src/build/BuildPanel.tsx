@@ -2,15 +2,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { Link } from "react-router";
 
-import { api, type BuildJob } from "../api";
+import { api, type BuildJob, type BuildWhat } from "../api";
 import { itemsKey, POLL_MS } from "../backlog/ImportPanel";
 import { buildJobsKey, itemBuildsKey } from "./build";
 
-/** Start a build (items, or a cluster); whoever shows the latest job picks it up and polls it. */
+/** Start a build (items, stacked items, or a cluster); whoever shows the latest job picks it up and polls it. */
 export function useStartBuild(workspaceId: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (what: { keys: string[] } | { cluster_id: number }) => api.startBuild(workspaceId, what),
+    mutationFn: (what: BuildWhat) => api.startBuild(workspaceId, what),
     onSuccess: (job) => queryClient.setQueryData(buildJobsKey(workspaceId), [job]),
   });
 }
@@ -98,15 +98,19 @@ export function BuildPanel({ workspaceId }: { workspaceId: number }) {
 
 export function buildStatusText(job: BuildJob): string {
   const units = (n: number) => `${n} ${n === 1 ? "unit" : "units"}`;
+  const name = job.scope === "stacked" ? "Stacked build" : "Build";
   switch (job.status) {
     case "running":
-      return `Building ${job.unit_keys?.join(", ") ?? "…"} (${job.done} / ${job.total})` + (job.cancel_requested ? " (canceling)" : "");
+      return (
+        `${job.scope === "stacked" ? "Building stack" : "Building"} ${job.unit_keys?.join(", ") ?? "…"} (${job.done} / ${job.total})` +
+        (job.cancel_requested ? " (canceling)" : "")
+      );
     case "done":
-      return job.total === 0 ? "Build: nothing eligible" : `Build done: ${units(job.done)}`;
+      return job.total === 0 ? `${name}: nothing eligible` : `${name} done: ${units(job.done)}`;
     case "canceled":
-      return `Build canceled after ${job.done} of ${units(job.total)}`;
+      return `${name} canceled after ${job.done} of ${units(job.total)}`;
     case "failed":
-      return `Build failed: ${job.error}`;
+      return `${name} failed: ${job.error}`;
   }
 }
 

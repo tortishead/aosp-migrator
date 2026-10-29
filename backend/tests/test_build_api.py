@@ -79,12 +79,21 @@ def test_build_a_cluster(client: TestClient, workspace: int) -> None:
     assert (run["keys"], run["cluster_id"]) == (["PROJ-105", "PROJ-102"], cluster["id"])
 
 
+def test_stacked_build(client: TestClient, workspace: int) -> None:
+    job = wait(client, start(client, workspace, keys=["PROJ-105", "PROJ-106"], stacked=True)["id"])
+    assert (job["scope"], job["issue_keys"], job["total"], job["unit_keys"], job["skipped"]) == ("stacked", ["PROJ-105", "PROJ-106"], 1, ["PROJ-105", "PROJ-106"], [])
+    (run,) = client.get(f"/api/workspaces/{workspace}/items/PROJ-106/builds").json()
+    assert (run["keys"], run["status"], run["patch_ids"]) == (["PROJ-105", "PROJ-106"], "build_successful", [])
+
+
 def test_start_errors(app: FastAPI, client: TestClient, workspace: int) -> None:
     url = f"/api/workspaces/{workspace}/build"
     assert client.post(url, json={}).status_code == 422
     assert client.post(url, json={"keys": ["PROJ-105"], "cluster_id": 1}).status_code == 422
     assert client.post(url, json={"keys": [" "]}).status_code == 422
     assert client.post(url, json={"cluster_id": 999}).status_code == 404
+    assert client.post(url, json={"keys": ["PROJ-105"], "stacked": True}).status_code == 422
+    assert client.post(url, json={"cluster_id": 1, "stacked": True}).status_code == 422
     assert client.post("/api/workspaces/999/build", json={"keys": ["PROJ-105"]}).status_code == 404
     unknown = client.post(url, json={"keys": ["PROJ-999"]})
     assert (unknown.status_code, unknown.json()["detail"]) == (422, "Not in the backlog: PROJ-999")
