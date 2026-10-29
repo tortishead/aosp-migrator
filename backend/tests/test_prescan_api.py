@@ -190,6 +190,33 @@ def test_stale_filter_and_count(client: TestClient, workspace_id: int, target: P
     assert keys(client, workspace_id, stale=True, triage="present") == []
 
 
+def test_dependencies_between_items(client: TestClient, workspace_id: int) -> None:
+    run_prescan(client, workspace_id)
+
+    def deps(key: str) -> dict[str, list[tuple[str, str, str | None]]]:
+        found = prescan(client, workspace_id, key)
+        return {side: [(d["path"], d["state"], d["other"] and d["other"]["key"]) for d in found[side]] for side in ("depends_on", "needed_by")}
+
+    # 106 applies as text, but is written on top of 105.
+    assert deps("PROJ-106") == {"depends_on": [("init/init.cpp", "pending", "PROJ-105")], "needed_by": []}
+    assert deps("PROJ-105") == {"depends_on": [], "needed_by": [("init/init.cpp", "pending", "PROJ-106")]}
+    # The conflicting icon's base is in no diff and not in the target; files that apply are not told.
+    assert deps("PROJ-104") == {"depends_on": [("packages/SystemUI/res/drawable-xxhdpi/oem_battery.png", "missing", None)], "needed_by": []}
+    assert deps("PROJ-101") == {"depends_on": [], "needed_by": []}
+    other = prescan(client, workspace_id, "PROJ-106")["depends_on"][0]["other"]
+    assert other == {
+        "key": "PROJ-105",
+        "summary": "OEM boot props loader (1/2)",
+        "filename": "0001-init-add-OEM-boot-props-loader.patch",
+        "triage_label": "applies",
+        "dropped": False,
+    }
+
+    # A single-item re-run finds them again for the whole workspace.
+    run_prescan(client, workspace_id, ["PROJ-103"])
+    assert deps("PROJ-106")["depends_on"] == [("init/init.cpp", "pending", "PROJ-105")]
+
+
 def test_single_item_and_validation(client: TestClient, workspace_id: int) -> None:
     job = run_prescan(client, workspace_id, ["PROJ-103"])
     assert (job["status"], job["scope"], job["issue_keys"], job["done"], job["total"]) == ("done", "keys", ["PROJ-103"], 1, 1)

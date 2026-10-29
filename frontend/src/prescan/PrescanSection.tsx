@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router";
 
-import { api, type ApplyResult, type DiffScan, type Presence } from "../api";
+import { api, type ApplyResult, type Dependency, type DependencyState, type DiffScan, type Presence } from "../api";
 import { itemsKey } from "../backlog/ImportPanel";
 import { itemKey } from "../pages/ItemPage";
 import { itemPrescanKey, PrescanStatus, useLatestPrescan, useStartPrescan } from "./PrescanPanel";
@@ -27,6 +28,14 @@ const MAPPING_LABELS: Record<NonNullable<DiffScan["mapping_source"]>, string> = 
   copilot: "Copilot",
   manual: "picked by hand",
 };
+
+const DEPENDENCY_LABELS: Record<DependencyState, string> = {
+  pending: "Not in target",
+  in_target: "Already in target",
+  missing: "Base in no diff",
+};
+
+const DEPENDENCY_CLASSES: Record<DependencyState, string> = { pending: "tag tag-warn", in_target: "tag", missing: "tag tag-error" };
 
 function presenceClass(presence: Presence | null): string {
   if (presence === "present") return "tag";
@@ -90,9 +99,39 @@ export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; 
               ))}
             </tbody>
           </table>
+          <Dependencies workspaceId={workspaceId} title="Depends on" deps={prescan.depends_on} />
+          <Dependencies workspaceId={workspaceId} title="Needed by" deps={prescan.needed_by} />
         </>
       )}
     </section>
+  );
+}
+
+/** Files written on top of another item's diff (or on a base no diff has), found by blob ids. */
+function Dependencies({ workspaceId, title, deps }: { workspaceId: number; title: string; deps: Dependency[] }) {
+  if (deps.length === 0) return null;
+  return (
+    <>
+      <h3>{title}</h3>
+      <ul className="prescan-files" aria-label={title}>
+        {deps.map((d) => (
+          <li key={`${d.filename}:${d.path}:${d.other?.filename ?? ""}`}>
+            {d.other ? (
+              <>
+                <Link to={`/workspaces/${workspaceId}/items/${d.other.key}`}>{d.other.key}</Link> {d.other.summary}{" "}
+                {d.other.triage_label && <span className={triageClass(d.other.triage_label)}>{TRIAGE_TEXT[d.other.triage_label]}</span>}
+                {d.other.dropped && <span className="tag tag-error">Dropped</span>}
+                {": "}
+              </>
+            ) : null}
+            <span className="mono">{d.path}</span> <span className={DEPENDENCY_CLASSES[d.state]}>{DEPENDENCY_LABELS[d.state]}</span>{" "}
+            <span className="hint">
+              ({d.other ? `${d.filename} ← ${d.other.filename}` : d.filename}, base <span className="mono">{d.blob.slice(0, 12)}</span>)
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

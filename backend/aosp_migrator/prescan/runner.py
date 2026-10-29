@@ -5,7 +5,8 @@ stacks a list of them in the given order (`stacked`, see `_Job.stack`).
 Stage `scan` maps each current diff to a target project, checks whether it is
 already present and, when not, whether it applies, keeps the migration patch the
 apply check made, then sets the item's triage label. Each item is written in its own transaction; an item that fails records an
-error (and the label `error`) while the job goes on. Only errors that would hit
+error (and the label `error`) while the job goes on. Stage `dependencies` then finds
+again which diffs of the workspace build on which (`prescan.deps`). Only errors that would hit
 every item (no project list, missing tree) fail the whole job. The local state is
 never touched.
 
@@ -21,13 +22,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace, utcnow
+from aosp_migrator.db.models import Attachment, DiffDependency, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import ApplyCheck, check_apply
+from aosp_migrator.prescan.deps import DiffFiles, file_blobs, find
 from aosp_migrator.prescan.mapping import PROJECT_LIST, ProjectListMissing, discover_projects, map_diff, path_hints, projects_under, read_project_list, repository_hints
 from aosp_migrator.prescan.patch import Patch
 from aosp_migrator.prescan.presence import check_presence
@@ -178,6 +180,8 @@ class PrescanRunner:
                 log.exception("Pre-scan of %s failed", issue.key)
                 _label_error(item, exc)
             session.commit()
+            rebuild_dependencies(session, workspace_id, tree)
+            session.commit()
 
     @staticmethod
     def _check_free(session: Session, workspace_id: int) -> None:
@@ -256,6 +260,10 @@ class _Job:
                 _label_error(item, exc)
             self.job.done += 1
             self.session.commit()
+        self.job.stage = "dependencies"
+        self.session.commit()
+        rebuild_dependencies(self.session, workspace.id, tree)
+        self.session.commit()
 
     def stack(self, tree: Path, projects: list[str], items: list[tuple[Item, JiraIssue]]) -> None:
         """Stack each item's diffs on the items before it that applied; record the outcome in its history.
@@ -345,6 +353,27 @@ def stack_diff(session: Session, attachment: Attachment, issue: JiraIssue, tree:
     presence = check_presence(tree / project, text, upstream_domains)
     present = [s.path for s in Patch.parse(text).files] if presence.status == "present" else presence.files("present")
     return StackDiff(attachment.filename, project, text, present)
+
+
+def rebuild_dependencies(session: Session, workspace_id: int, tree: Path) -> None:
+    """Find the dependencies between the current diffs of every item again; they replace the earlier ones."""
+    rows = session.execute(
+        select(Attachment, Item.id, DiffScan.project, DiffScan.apply_detail)
+        .join(Item, Item.issue_id == Attachment.issue_id)
+        .outerjoin(DiffScan, DiffScan.attachment_id == Attachment.id)
+        .where(Item.workspace_id == workspace_id, Attachment.kind == "diff", Attachment.is_current.is_(True), Attachment.local_path.is_not(None))
+        .order_by(Attachment.created, Attachment.id)
+    )
+    diffs = [
+        DiffFiles(a.id, item_id, project, file_blobs(text), frozenset(p for p, s in (detail or {}).get("files", {}).items() if s == "conflicts"))
+        for a, item_id, project, detail in rows
+        if (text := read_diff_text(a)) is not None
+    ]
+    session.execute(delete(DiffDependency).where(DiffDependency.workspace_id == workspace_id))
+    session.add_all(
+        DiffDependency(workspace_id=workspace_id, attachment_id=d.attachment_id, path=d.path, blob=d.blob, depends_on_id=d.depends_on_id, state=d.state)
+        for d in find(tree, diffs)
+    )
 
 
 def scan_item(session: Session, item: Item, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:
