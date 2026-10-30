@@ -1,0 +1,1 @@
+{"reply": "Tried to write elsewhere.", "edits": [{"path": "../target/t.c", "old": "secret", "new": "changed"}], "creates": [{"path": ".git/hooks/post-checkout", "text": "#!/bin/sh\n"}]}

@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Fake `copilot` CLI for tests: canned answers and file edits, picked by a marker in the prompt.
+
+The prompt comes on stdin, as `CopilotClient` sends it. `@@fake:<name>@@` in it picks
+`<scenarios dir>/<name>.json` (dir: `FAKE_COPILOT_SCENARIOS`, else `scenarios/` next to
+this file); without a marker the answer is "OK". Scenario keys, all optional:
+
+- `reply`: the answer printed on stdout (search/replace blocks for the fallback)
+- `edits`: [{path, old, new}], `creates`: [{path, text}]; paths relative to the cwd or
+  absolute. A write outside the cwd or matching a `--deny-tool write(<dir>/**)` is refused
+  and listed in the answer, as the real CLI would refuse it.
+- `sleep`: seconds to wait first (timeout and cancel tests)
+- `exit`, `stderr`: exit code and error output
+- `usage`: false to write no usage file
+
+`FAKE_COPILOT_LOG`: a file every call appends {argv, cwd, prompt} to, as a JSON line.
+"""
+
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+VERSION = "1.0.105-fake"
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if "--version" in argv:
+        print(VERSION)
+        return 0
+    prompt = sys.stdin.read()
+    if log := os.environ.get("FAKE_COPILOT_LOG"):
+        with open(log, "a") as f:
+            f.write(json.dumps({"argv": argv, "cwd": os.getcwd(), "prompt": prompt}) + "\n")
+    marker = re.search(r"@@fake:([\w-]+)@@", prompt)
+    scenario: dict = {"reply": "OK"}
+    if marker:
+        directory = Path(os.environ.get("FAKE_COPILOT_SCENARIOS") or Path(__file__).parent / "scenarios")
+        scenario = json.loads((directory / f"{marker.group(1)}.json").read_text())
+    time.sleep(scenario.get("sleep", 0))
+
+    cwd = Path.cwd().resolve()
+    denied = [Path(m.group(1)).resolve() for m in (re.fullmatch(r"write\((.*)/\*\*\)", a) for a in argv) if m]
+    refused: list[str] = []
+
+    def writable(path: str) -> Path | None:
+        target = (cwd / path).resolve()
+        if not target.is_relative_to(cwd) or any(target.is_relative_to(d) for d in denied):
+            refused.append(path)
+            return None
+        return target
+
+    for edit in scenario.get("edits", []):
+        if (target := writable(edit["path"])) is not None:
+            text = target.read_text()
+            if edit["old"] not in text:
+                refused.append(f"{edit['path']}: no match")
+                continue
+            target.write_text(text.replace(edit["old"], edit["new"], 1))
+    for create in scenario.get("creates", []):
+        if (target := writable(create["path"])) is not None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(create["text"])
+
+    if scenario.get("usage", True) and "--usage-output-file" in argv:
+        model = argv[argv.index("--model") + 1] if "--model" in argv else "auto"
+        usage = {
+            "totalPremiumRequestCost": 1,
+            "totalUserRequests": 1,
+            "modelMetrics": {model: {"requests": {"count": 1, "cost": 1}, "usage": {"inputTokens": len(prompt) // 4, "outputTokens": 10}}},
+        }
+        Path(argv[argv.index("--usage-output-file") + 1]).write_text(json.dumps(usage))
+    print(scenario.get("reply", "done"))
+    for path in refused:
+        print(f"refused: {path}")
+    sys.stderr.write(scenario.get("stderr", ""))
+    return scenario.get("exit", 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

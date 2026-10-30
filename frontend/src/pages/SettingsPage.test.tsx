@@ -13,6 +13,18 @@ function settings(overrides: Partial<Settings["jira"]> = {}, domains: { source: 
       ...overrides,
     },
     prescan: { upstream_domains: domains },
+    copilot: {
+      binary: { source: "unset", value: "copilot" },
+      model_resolve: { source: "file", value: "gpt-5-mini" },
+      model_port: { source: "unset", value: null },
+      model_reimpl: { source: "unset", value: null },
+      timeout: { source: "unset", value: 900 },
+    },
+    rework: {
+      item_cap: { source: "file", value: 3 },
+      job_cap: { source: "env", value: 50 },
+      build_rounds: { source: "unset", value: 2 },
+    },
   };
 }
 
@@ -123,12 +135,63 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Set by AOSP_MIGRATOR_UPSTREAM_DOMAINS.")).toBeInTheDocument();
   });
 
+  it("shows Copilot defaults as placeholders and sends only what changed", async () => {
+    const calls = mockApi({ "GET /settings": () => settings(), "PUT /settings": () => settings() });
+    renderRoute("/settings");
+    const form = within(await screen.findByRole("form", { name: "Copilot" }));
+    expect(form.getByLabelText("Copilot CLI")).toHaveValue("");
+    expect(form.getByLabelText("Copilot CLI")).toHaveAttribute("placeholder", "copilot");
+    expect(form.getByLabelText("Model for resolving conflicts")).toHaveValue("gpt-5-mini");
+    expect(form.getByLabelText("Model for porting rejected hunks")).toHaveAttribute("placeholder", "CLI default");
+    expect(form.getByLabelText("Timeout per call (s)")).toHaveAttribute("placeholder", "900");
+    expect(form.getByLabelText("Copilot calls per item")).toHaveValue(3);
+    expect(form.getByLabelText("Copilot calls per rework job")).toBeDisabled();
+
+    await userEvent.type(form.getByLabelText("Model for porting rejected hunks"), "gpt-5");
+    await userEvent.type(form.getByLabelText("Build-fix rounds"), "0");
+    await userEvent.clear(form.getByLabelText("Copilot calls per item"));
+    await userEvent.click(form.getByRole("button", { name: "Save" }));
+    expect(await form.findByText("Saved.")).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({
+      copilot: { model_port: "gpt-5" },
+      rework: { item_cap: 0, build_rounds: 0 },
+    });
+  });
+
+  it("tests Copilot with the unsaved binary and model", async () => {
+    const calls = mockApi({
+      "GET /settings": () => settings(),
+      "POST /settings/copilot/test": () => ({ ok: true, version: "1.0.105", model: "gpt-5-mini", reply: "OK", usage: {} }),
+    });
+    renderRoute("/settings");
+    const form = within(await screen.findByRole("form", { name: "Copilot" }));
+    await userEvent.type(form.getByLabelText("Copilot CLI"), "/opt/copilot");
+    await userEvent.click(form.getByRole("button", { name: "Test Copilot" }));
+    const result = within(await form.findByRole("status", { name: "Copilot works" }));
+    expect(result.getByText("1.0.105")).toBeInTheDocument();
+    expect(result.getByText("gpt-5-mini")).toBeInTheDocument();
+    expect(result.getByText("OK")).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "POST")?.body).toEqual({ binary: "/opt/copilot", model: "gpt-5-mini" });
+  });
+
+  it("shows why the Copilot test failed", async () => {
+    mockApi({
+      "GET /settings": () => settings(),
+      "POST /settings/copilot/test": () => ({ ok: false, error: "Copilot CLI does not run: not found" }),
+    });
+    renderRoute("/settings");
+    const form = within(await screen.findByRole("form", { name: "Copilot" }));
+    await userEvent.click(form.getByRole("button", { name: "Test Copilot" }));
+    const result = within(await form.findByRole("status", { name: "Copilot test failed" }));
+    expect(result.getByText("Copilot CLI does not run: not found")).toBeInTheDocument();
+  });
+
   it("filters settings by the search box and hides sections without a match", async () => {
     mockApi({ "GET /settings": () => settings() });
     renderRoute("/settings");
     await screen.findByLabelText("Base URL");
-    await userEvent.type(screen.getByLabelText("Search settings"), "domains");
-    expect(screen.getByLabelText("Upstream author domains")).toBeVisible();
+    await userEvent.type(screen.getByLabelText("Search settings"), "timeout");
+    expect(screen.getByLabelText("Timeout per call (s)")).toBeVisible();
     expect(screen.queryByRole("form", { name: "Jira" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Jira/ })).toBeDisabled();
     await userEvent.clear(screen.getByLabelText("Search settings"));

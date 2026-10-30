@@ -11,15 +11,16 @@ import {
   type ReactNode,
 } from "react";
 
-import { api, type JiraTestResult, type Settings, type Source } from "../api";
+import { api, type CopilotSettingsUpdate, type CopilotTestResult, type JiraTestResult, type Settings, type Source } from "../api";
 
 const settingsKey = ["settings"];
 
-type SectionId = "jira" | "prescan";
+type SectionId = "jira" | "prescan" | "copilot";
 
 const SECTIONS: { id: SectionId; title: string; summary: string; icon: ReactNode }[] = [
   { id: "jira", title: "Jira", summary: "Server and token", icon: <IconTicket /> },
   { id: "prescan", title: "Pre-scan", summary: "Upstream detection", icon: <IconScan /> },
+  { id: "copilot", title: "Copilot", summary: "CLI, models and limits", icon: <IconSpark /> },
 ];
 
 /** The search box text, lower-cased; settings that do not match it hide. */
@@ -29,7 +30,7 @@ export function SettingsPage() {
   const settings = useQuery({ queryKey: settingsKey, queryFn: api.settings });
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<SectionId>("jira");
-  const [visible, setVisible] = useState<Record<SectionId, boolean>>({ jira: true, prescan: true });
+  const [visible, setVisible] = useState<Record<SectionId, boolean>>({ jira: true, prescan: true, copilot: true });
   const panel = useRef<HTMLDivElement>(null);
   const needle = query.trim().toLowerCase();
 
@@ -106,6 +107,7 @@ export function SettingsPage() {
             <SearchContext.Provider value={needle}>
               <JiraSettingsForm settings={settings.data} hidden={!visible.jira} />
               <PrescanSettingsForm settings={settings.data} hidden={!visible.prescan} />
+              <CopilotSettingsForm settings={settings.data} hidden={!visible.copilot} />
             </SearchContext.Provider>
             {nothingFound && <p className="settings-empty">No settings found for “{query.trim()}”.</p>}
           </div>
@@ -353,6 +355,168 @@ function PrescanSettingsForm({ settings, hidden }: { settings: Settings; hidden:
   );
 }
 
+type CopilotText = "binary" | "model_resolve" | "model_port" | "model_reimpl";
+type CopilotNumber = "timeout" | "item_cap" | "job_cap" | "build_rounds";
+
+const MODEL_LABELS: [CopilotText, string, string][] = [
+  ["model_resolve", "Model for resolving conflicts", "Used by rung 2 and by the test below."],
+  ["model_port", "Model for porting rejected hunks", "Used by rung 3b."],
+  ["model_reimpl", "Model for re-implementing", "Used by rung 3c, for moved, rewritten or gone files."],
+];
+
+const NUMBER_LABELS: [CopilotNumber, string, string][] = [
+  ["timeout", "Timeout per call (s)", "Seconds one Copilot call may take."],
+  ["item_cap", "Copilot calls per item", "Across rungs, build-fix rounds and retries."],
+  ["job_cap", "Copilot calls per rework job", "When reached, the remaining items get only the rungs without Copilot."],
+  ["build_rounds", "Build-fix rounds", "Build errors fed back to Copilot per attempt; 0 for none."],
+];
+
+/** Stored values only: while unset the default shows as the placeholder, so saving does not pin it. */
+function copilotForm(settings: Settings): Record<CopilotText | CopilotNumber, string> {
+  const entries = { ...settings.copilot, ...settings.rework };
+  return Object.fromEntries(
+    Object.entries(entries).map(([key, entry]) => [key, entry.source === "unset" || entry.value === null ? "" : String(entry.value)]),
+  ) as Record<CopilotText | CopilotNumber, string>;
+}
+
+function CopilotSettingsForm({ settings, hidden }: { settings: Settings; hidden: boolean }) {
+  const queryClient = useQueryClient();
+  const entries: Record<CopilotText | CopilotNumber, { source: Source; value: string | number | null }> = { ...settings.copilot, ...settings.rework };
+  const stored = copilotForm(settings);
+  const [values, setValues] = useState(stored);
+  const [testResult, setTestResult] = useState<CopilotTestResult | null>(null);
+  const [elapsed, setElapsed] = useState<number | null>(null);
+  const started = useRef(0);
+  const storedKey = JSON.stringify(stored);
+
+  useEffect(() => setValues(stored), [storedKey]);
+
+  const save = useMutation({
+    mutationFn: api.updateSettings,
+    onSuccess: (data) => queryClient.setQueryData(settingsKey, data),
+  });
+  const test = useMutation({
+    mutationFn: api.testCopilot,
+    onSuccess: setTestResult,
+    onSettled: () => setElapsed((performance.now() - started.current) / 1000),
+  });
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const copilot: NonNullable<CopilotSettingsUpdate["copilot"]> = {};
+    const rework: NonNullable<CopilotSettingsUpdate["rework"]> = {};
+    for (const key of ["binary", "model_resolve", "model_port", "model_reimpl"] as const) {
+      if (entries[key].source !== "env" && values[key] !== stored[key]) copilot[key] = values[key];
+    }
+    for (const [key] of NUMBER_LABELS) {
+      if (entries[key].source === "env" || values[key] === stored[key]) continue;
+      // Empty restores the default.
+      const value = values[key] === "" ? (key === "build_rounds" ? -1 : 0) : Number(values[key]);
+      if (key === "timeout") copilot.timeout = value;
+      else rework[key] = value;
+    }
+    save.mutate({ copilot, rework });
+  }
+
+  function runTest() {
+    setTestResult(null);
+    setElapsed(null);
+    started.current = performance.now();
+    test.mutate({ binary: values.binary || undefined, model: values.model_resolve || undefined });
+  }
+
+  function field(key: CopilotText | CopilotNumber, label: string, placeholder: string, hint?: string, number = false) {
+    const env = entries[key].source === "env";
+    return (
+      <Setting key={key} category="Copilot" label={label} source={entries[key].source} description={env ? "Set by the environment." : hint}>
+        {(id) => (
+          <input
+            id={id}
+            className={number ? "input-number" : undefined}
+            type={number ? "number" : "text"}
+            value={values[key]}
+            placeholder={placeholder}
+            disabled={env}
+            onChange={(e) => setValues({ ...values, [key]: e.target.value })}
+          />
+        )}
+      </Setting>
+    );
+  }
+
+  return (
+    <Section
+      id="copilot"
+      description="The Copilot CLI used by the rework rungs, and how much of it a job may use."
+      hidden={hidden}
+      onSubmit={submit}
+      footer={
+        <>
+          <div className="actions">
+            <button type="submit" disabled={save.isPending}>
+              Save
+            </button>
+            <button type="button" onClick={runTest} disabled={test.isPending}>
+              {test.isPending ? "Testing…" : "Test Copilot"}
+            </button>
+            <SaveStatus mutation={save} />
+          </div>
+          <p className="hint">The test sends one short prompt with the conflict-resolving model: it uses one Copilot request.</p>
+          {test.isPending && <ResultCard tone="pending" title="Sending a test prompt to Copilot…" />}
+          {test.isError && (
+            <ResultCard tone="error" title="Copilot test failed">
+              <p className="multiline">{test.error.message}</p>
+            </ResultCard>
+          )}
+          {testResult && <CopilotResult result={testResult} elapsed={elapsed} />}
+        </>
+      }
+    >
+      {field("binary", "Copilot CLI", settings.copilot.binary.source === "unset" ? settings.copilot.binary.value : "", "Path or command name of the standalone `copilot` CLI, logged in.")}
+      {MODEL_LABELS.map(([key, label, hint]) => field(key, label, "CLI default", hint))}
+      {NUMBER_LABELS.map(([key, label, hint]) => field(key, label, entries[key].source === "unset" ? String(entries[key].value) : "", hint, true))}
+    </Section>
+  );
+}
+
+function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed: number | null }) {
+  const usage = Object.entries(result.usage ?? {}).filter(([, v]) => typeof v === "number" || typeof v === "string");
+  const took = elapsed === null ? null : `${elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed)} s`;
+
+  if (!result.ok) {
+    return (
+      <ResultCard tone="error" title="Copilot test failed" meta={took}>
+        <p className="multiline">{result.error}</p>
+      </ResultCard>
+    );
+  }
+
+  return (
+    <ResultCard tone="success" title="Copilot works" meta={took}>
+      <dl className="result-facts">
+        <div>
+          <dt>CLI version</dt>
+          <dd className="mono">{result.version}</dd>
+        </div>
+        <div>
+          <dt>Model</dt>
+          <dd className={result.model ? "mono" : undefined}>{result.model ?? "CLI default"}</dd>
+        </div>
+        {usage.map(([key, value]) => (
+          <div key={key}>
+            <dt>{key.replace(/[_-]/g, " ")}</dt>
+            <dd className="mono">{String(value)}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="result-reply">
+        <span className="result-reply-label">Reply</span>
+        <blockquote>{result.reply}</blockquote>
+      </div>
+    </ResultCard>
+  );
+}
+
 type Tone = "success" | "warning" | "error" | "pending";
 
 function ResultCard({ tone, title, meta, children }: { tone: Tone; title: string; meta?: string | null; children?: ReactNode }) {
@@ -392,6 +556,14 @@ function IconScan() {
     <Svg>
       <circle cx="7" cy="7" r="4.25" />
       <path d="m10.25 10.25 3.5 3.5M5.25 7l1.25 1.25L9 5.75" />
+    </Svg>
+  );
+}
+
+function IconSpark() {
+  return (
+    <Svg>
+      <path d="M8 1.75 9.4 6.6l4.85 1.4L9.4 9.4 8 14.25 6.6 9.4 1.75 8 6.6 6.6Z" />
     </Svg>
   );
 }
