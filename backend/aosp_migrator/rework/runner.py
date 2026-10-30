@@ -60,11 +60,11 @@ from aosp_migrator.rework.scratch import Scratch, ScratchError, touched_files
 
 log = logging.getLogger(__name__)
 
-RUNGS = ("resolve", "port", "reimpl")
+RUNGS = ladder.COPILOT_RUNGS
 # Rungs preselected for a new rework; re-implement is opt-in.
-DEFAULT_RUNGS = ("resolve", "port")
+DEFAULT_RUNGS = ladder.DEFAULT_RUNGS
 LEFT_OUT_STATES = ("closed", "not_relevant")
-NEEDS_REIMPL = "(needs re-implement)"
+NEEDS_REIMPL = ladder.NEEDS_REIMPL
 _QUOTED = re.compile(r"[‘'`\"]([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?[’'\"]")
 _SYMBOL = re.compile(r"symbol:\s+(?:(?:class|method|variable|function)\s+)?([A-Za-z_][A-Za-z0-9_]*)")
 # Shortest symbol name looked for in other items' diffs.

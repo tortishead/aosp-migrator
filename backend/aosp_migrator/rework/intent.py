@@ -98,11 +98,20 @@ def _show(values: Sequence[str]) -> str:
     return shown + (f" and {len(values) - SHOWN} more" if len(values) > SHOWN else "")
 
 
-def check(originals: Sequence[str], patch: str | None, contents: Mapping[str, str | None], rung: str, paths: Sequence[str] | None = None) -> list[Finding]:
+def check(
+    originals: Sequence[str],
+    patch: str | None,
+    contents: Mapping[str, str | None],
+    rung: str,
+    paths: Sequence[str] | None = None,
+    moved: Mapping[str, str] | None = None,
+) -> list[Finding]:
     """Intent findings of `patch` against the `originals` (the item's diffs for the project).
 
     `contents`: each file's text after the patch (None: deleted or missing). `paths`
     limits the check to those files (the ones the rework changed); None checks them all.
+    `moved`: a file's path in the originals to where the target has it (re-implement);
+    its content and its part of the patch are looked up there.
     """
     limits = THRESHOLDS[rung]
     reworked = _changes(patch or "")
@@ -117,7 +126,8 @@ def check(originals: Sequence[str], patch: str | None, contents: Mapping[str, st
             if paths is not None and path not in paths:
                 continue
             hunks = _lines(section.changes)
-            content = contents.get(path)
+            where = (moved or {}).get(path, path)
+            content = contents.get(where)
             after = Counter(normalize(line) for line in (content or "").splitlines())
             # Added lines, counted against the file afterwards (each line once per occurrence).
             added = Counter(line for hunk in hunks for line in hunk.added)
@@ -135,7 +145,7 @@ def check(originals: Sequence[str], patch: str | None, contents: Mapping[str, st
             if new and lost:
                 finding(path, 1 - len(lost) / len(new) < limits.identifiers_kept, f"identifiers or strings the original adds missing: {_show(lost)}")
             # Hunks with no trace.
-            mine = _lines(reworked.get(path, []))
+            mine = _lines(reworked.get(where, []))
             mine_removed = Counter(line for hunk in mine for line in hunk.removed)
             dropped = [
                 n
