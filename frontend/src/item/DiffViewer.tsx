@@ -276,7 +276,7 @@ interface FileDiffProps {
   toggle: () => void;
 }
 
-function FileDiff({ id, file, viewType, collapsed, toggle }: FileDiffProps) {
+export function FileDiff({ id, file, viewType, collapsed, toggle }: FileDiffProps) {
   const hunks = useMemo(() => {
     if (file.hunks.length === 0) return [];
     // Hunk bodies only: paths and status come from the server's parser, which knows more formats.

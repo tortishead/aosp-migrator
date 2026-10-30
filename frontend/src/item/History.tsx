@@ -114,6 +114,13 @@ function describeStacked(event: HistoryEvent): Description {
   };
 }
 
+const REWORK_FINISHED: Record<string, string> = {
+  patched: "patch proposed",
+  failed: "failed",
+  canceled: "canceled",
+  error: "error",
+};
+
 function describe(event: HistoryEvent): Description {
   const p = event.payload;
   switch (event.type) {
@@ -144,6 +151,17 @@ function describe(event: HistoryEvent): Description {
       return { title: `Target tree restored after interrupted build run ${p.run_id}`, details: [] };
     case "stacked_prescan":
       return describeStacked(event);
+    case "rework_started":
+      return { title: `Rework started (attempt ${p.attempt_id})`, details: [] };
+    case "rework_finished":
+      return {
+        title: `Rework: ${REWORK_FINISHED[String(p.status)] ?? String(p.status)} (attempt ${p.attempt_id})`,
+        details: p.reason ? [String(p.reason)] : [],
+      };
+    case "patch_accepted":
+      return { title: `Patch accepted (${p.project})`, details: [] };
+    case "patch_rejected":
+      return { title: `Patch rejected (${p.project})`, details: p.note ? [String(p.note)] : [] };
     case "cluster_joined":
       return { title: `Added to cluster ${p.name}`, details: [] };
     case "cluster_left":

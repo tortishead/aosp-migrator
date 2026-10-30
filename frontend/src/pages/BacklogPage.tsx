@@ -13,6 +13,10 @@ import { useStartBuild } from "../build/BuildPanel";
 import { BuildTag } from "../build/BuildTag";
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
 import { PrescanButton, useStartPrescan } from "../prescan/PrescanPanel";
+import { REWORK_TEXT } from "../rework/rework";
+import { ReworkBar } from "../rework/ReworkBar";
+import { ReworkDialog } from "../rework/ReworkDialog";
+import { ReworkTag } from "../rework/ReworkTag";
 import { StackedDialog, type StackKind } from "../prescan/StackedDialog";
 import { TRIAGE_TEXT } from "../prescan/triage";
 import { TriageBar } from "../prescan/TriageBar";
@@ -28,15 +32,16 @@ const SORTS: [string, string][] = [
   ["state", "State"],
 ];
 
-const COLUMNS = 12;
+const COLUMNS = 13;
 
-type Group = "project" | "cluster" | "triage" | "build" | "status" | "state";
+type Group = "project" | "cluster" | "triage" | "build" | "rework" | "status" | "state";
 
 const GROUPS: [Group, string][] = [
   ["project", "Target project"],
   ["cluster", "Cluster"],
   ["triage", "Pre-scan"],
   ["build", "Build"],
+  ["rework", "Rework"],
   ["status", "Jira status"],
   ["state", "State"],
 ];
@@ -52,6 +57,8 @@ function groupOf(item: Item, group: Group): string {
       return item.triage_label ? TRIAGE_TEXT[item.triage_label] : "Not scanned";
     case "build":
       return item.build_status ? BUILD_TEXT[item.build_status] : "Not built";
+    case "rework":
+      return item.rework_status ? REWORK_TEXT[item.rework_status] : "Not reworked";
     case "status":
       return item.status;
     case "state":
@@ -152,6 +159,7 @@ export function BacklogPage() {
       <div className="count-bars">
         <TriageBar workspaceId={workspaceId} search={search} update={update} />
         <BuildBar workspaceId={workspaceId} search={search} update={update} />
+        <ReworkBar workspaceId={workspaceId} search={search} update={update} />
       </div>
       <div className="filter-row">
         <Filters search={search} facets={facets.data} clusters={clusters.data} update={update} />
@@ -233,6 +241,7 @@ export function BacklogPage() {
               <th>Target project</th>
               <th>Pre-scan</th>
               <th>Build</th>
+              <th>Rework</th>
               <th>Cluster</th>
               <th>Updated</th>
             </tr>
@@ -338,6 +347,9 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
       <td className="nowrap">
         <BuildTag status={item.build_status} reason={item.build_reason} />
       </td>
+      <td className="nowrap">
+        <ReworkTag status={item.rework_status} reason={item.rework_reason} />
+      </td>
       <td>{item.cluster && <Link to={`/workspaces/${workspaceId}/clusters/${item.cluster.id}`}>{item.cluster.name}</Link>}</td>
       <td className="nowrap">{new Date(item.jira_updated).toLocaleDateString()}</td>
     </tr>
@@ -357,6 +369,7 @@ interface BulkProps {
 function BulkActions({ workspaceId, keys, items, clusters, onStateChanged, onClustered }: BulkProps) {
   const [state, setState] = useState<LocalState | "">("");
   const [stacking, setStacking] = useState<StackKind | null>(null);
+  const [reworking, setReworking] = useState(false);
   const changeState = useMutation({
     mutationFn: (to: LocalState) => api.changeState(workspaceId, keys, to),
     onSuccess: () => {
@@ -421,6 +434,10 @@ function BulkActions({ workspaceId, keys, items, clusters, onStateChanged, onClu
       >
         Stacked build…
       </button>
+      <button onClick={() => setReworking(true)} title="Make patches that apply for conflicting items: stacked on prerequisites, then with Copilot">
+        Rework…
+      </button>
+      {reworking && <ReworkDialog workspaceId={workspaceId} keys={keys} onClose={() => setReworking(false)} />}
       {stacking && <StackedDialog workspaceId={workspaceId} kind={stacking} items={items} onClose={() => setStacking(null)} />}
       <button
         onClick={() => cluster.mutate(null)}

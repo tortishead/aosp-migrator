@@ -159,6 +159,9 @@ export interface Item {
   /** Result of the last finished build and why; null until built. */
   build_status: BuildStatus | null;
   build_reason: string | null;
+  /** Outcome of the last finished rework or review and why; null until reworked. */
+  rework_status: ReworkStatus | null;
+  rework_reason: string | null;
 }
 
 export interface ItemPage {
@@ -356,6 +359,8 @@ export interface PrescanJob {
   cancel_requested: boolean;
   started_at: string;
   finished_at: string | null;
+  /** Once finished: its items (all: the backlog's) whose diffs conflict, worth a rework. */
+  rework_candidates?: string[];
 }
 
 export type Presence = "present" | "likely_present" | "not_present" | "partial" | "unknown";
@@ -427,9 +432,9 @@ export interface MigrationPatch {
   base_head: string | null;
   /** Patches of other items it was made on top of, in apply order; empty: on HEAD alone. */
   base_patch_ids: number[];
-  review: "proposed" | "accepted" | "rejected";
+  review: Review;
   review_note: string | null;
-  findings: unknown[];
+  findings: Finding[];
   diff: string;
   author: string | null;
   message: string | null;
@@ -437,12 +442,28 @@ export interface MigrationPatch {
 }
 
 /** A migration patch in an item's list: no patch text, which comes parsed from `api.patch`. */
+export type Review = "proposed" | "accepted" | "rejected";
+
+/** What the checks and the intent check found in a rework patch; `error` ones block it unless only intent is left. */
+export interface Finding {
+  kind: "check" | "intent";
+  severity: "error" | "warning";
+  path: string | null;
+  message: string;
+}
+
 export interface ItemPatch extends Omit<MigrationPatch, "diff"> {
   /** The Jira diff it was made from; null for `ai` patches. */
   jira_id: string | null;
   filename: string | null;
   /** What a build applies now: a rework patch of its project, else the current diff version's patch as last scanned. */
   current: boolean;
+  /** The rework attempt that made it; null for pre-scan patches. */
+  attempt_id: number | null;
+  /** Why a rework patch is out of date (HEAD moved, base changed, new diff version); empty when fresh. */
+  stale: string[];
+  /** The base patches with their item, in apply order. */
+  bases: { id: number; key: string; project: string; review: Review }[];
 }
 
 export interface ItemPrescan {
@@ -501,6 +522,8 @@ export interface BuildJob {
   unit_keys: string[] | null;
   /** Last lines of that unit's log. */
   log_tail: string | null;
+  /** Once finished: its items (built or skipped) worth a rework, conflicts or a failed `ai` patch. */
+  rework_candidates?: string[];
 }
 
 /** What to build: items one unit each, items stacked in order as one unit, or a cluster. */
@@ -508,7 +531,9 @@ export type BuildWhat = { keys: string[]; stacked?: boolean } | { cluster_id: nu
 
 export interface BuildRun {
   id: number;
-  job_id: number;
+  /** The build job, or null for a rework attempt's build. */
+  job_id: number | null;
+  attempt_id: number | null;
   /** Every item of the unit, in build order (stacked: the items that stacked). */
   keys: string[];
   cluster_id: number | null;
@@ -530,6 +555,139 @@ export interface BuildSummary {
   /** Items per build status, every status in order, zeros included. Dropped items are not counted. */
   statuses: Record<BuildStatus, number>;
   unbuilt: number;
+}
+
+/** Worst first. */
+export const REWORK_STATUSES = ["rework_failed", "proposed", "rejected", "accepted"] as const;
+export type ReworkStatus = (typeof REWORK_STATUSES)[number];
+
+export type Rung = "resolve" | "port" | "reimpl";
+export const RUNGS: Rung[] = ["resolve", "port", "reimpl"];
+
+export interface ReworkRequest {
+  keys: string[];
+  /** Copilot rungs allowed; omitted: the preselected ones. */
+  rungs?: Rung[];
+  include_dependents?: boolean;
+  /** Closed / not relevant prerequisites to add; other prerequisites to leave out. */
+  include?: string[];
+  exclude?: string[];
+  /** The selected items as one unit. */
+  together?: boolean;
+  /** Omitted: the settings. */
+  item_cap?: number;
+  job_cap?: number;
+  build_rounds?: number;
+}
+
+export interface PlanItem {
+  key: string;
+  summary: string;
+  local_state: LocalState;
+  triage_label: TriageLabel | null;
+  /** Selected, or a dependent of a selected item. */
+  selected: boolean;
+  dependent: boolean;
+  /** In the job: reworked, or used as base as it is. */
+  included: boolean;
+  rework: boolean;
+  base: boolean;
+  /** A current patch for every current diff; `accepted`: all of them accepted. */
+  has_patch: boolean;
+  accepted: boolean;
+  stale: string[];
+  /** Closed / not relevant. */
+  warning: string | null;
+  /** Why it is not reworked. */
+  reason: string | null;
+}
+
+export interface ReworkPlan {
+  /** Keys per unit to rework, in order. */
+  units: string[][];
+  /** Every item of the chain, in chain order. */
+  items: PlanItem[];
+  /** The chain's items outside the selection. */
+  prerequisites: PlanItem[];
+  /** Rungs to preselect. */
+  rungs: Rung[];
+  estimate: { units: number; items: number; likely_calls: number; max_calls: number };
+  caps: { item_cap: number; job_cap: number; build_rounds: number };
+}
+
+export interface ReworkJob {
+  id: number;
+  workspace_id: number;
+  issue_keys: string[];
+  options: Record<string, unknown>;
+  units: string[][];
+  /** Chain items not reworked, and why; `base`: used as base as they are. */
+  skipped: { key: string; reason: string | null; base: boolean }[];
+  status: JobStatus;
+  /** Units. */
+  done: number;
+  total: number;
+  /** Copilot calls so far. */
+  calls: number;
+  errors: { keys: string[]; message: string }[];
+  error: string | null;
+  cancel_requested: boolean;
+  started_at: string;
+  finished_at: string | null;
+  /** Keys of the unit being reworked now, or last reworked. */
+  unit_keys: string[] | null;
+}
+
+export interface ReworkCall {
+  project: string;
+  rung: string;
+  /** 0 for the rung's call, then fix rounds. */
+  round: number;
+  /** The build-fix round it belongs to; 0 before the first build. */
+  build_round: number;
+  model: string | null;
+  status: string;
+  prompt_path: string;
+  parts: Record<string, string>;
+  /** Copilot's answer, its explanation of what it changed. */
+  answer: string;
+  error: string;
+  usage: Record<string, unknown> | null;
+  /** Seconds. */
+  duration: number;
+}
+
+export interface ReworkAttempt {
+  id: number;
+  job_id: number | null;
+  /** The unit's items, in order. */
+  keys: string[];
+  heads: Record<string, string | null>;
+  base_patch_ids: number[];
+  rungs: string[];
+  /** Per file: project, path, status, rung, error, notes. */
+  files: { project: string; path: string; status: string; rung: string | null; error: string | null; notes: string[] }[];
+  calls: ReworkCall[];
+  build_runs: { id: number; status: BuildRun["status"]; summary: string | null; log_url: string | null }[];
+  notes: string[];
+  patch_ids: number[];
+  status: "running" | "patched" | "failed" | "canceled" | "error";
+  reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface ReviewResult {
+  id: number;
+  review: Review;
+  review_note: string | null;
+  rework_status: ReworkStatus | null;
+}
+
+export interface ReworkSummary {
+  /** Items per rework status, every status in order, zeros included. Dropped items are not counted. */
+  statuses: Record<ReworkStatus, number>;
+  unreworked: number;
 }
 
 export async function fetchText(url: string): Promise<string> {
@@ -638,6 +796,20 @@ export const api = {
   // Newest first.
   itemBuilds: (workspaceId: number, key: string) =>
     apiFetch<BuildRun[]>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/builds`),
+  reworkPlan: (workspaceId: number, request: ReworkRequest) =>
+    apiFetch<ReworkPlan>(`/workspaces/${workspaceId}/rework/plan`, { method: "POST", body: JSON.stringify(request) }),
+  startRework: (workspaceId: number, request: ReworkRequest) =>
+    apiFetch<ReworkJob>(`/workspaces/${workspaceId}/rework`, { method: "POST", body: JSON.stringify(request) }),
+  reworkJobs: (workspaceId: number, limit: number) => apiFetch<ReworkJob[]>(`/workspaces/${workspaceId}/rework-jobs?limit=${limit}`),
+  cancelRework: (jobId: number) => apiFetch<ReworkJob>(`/rework-jobs/${jobId}/cancel`, { method: "POST" }),
+  reworkSummary: (workspaceId: number) => apiFetch<ReworkSummary>(`/workspaces/${workspaceId}/rework-summary`),
+  // Newest first.
+  reworkAttempts: (workspaceId: number, key: string) =>
+    apiFetch<ReworkAttempt[]>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}/rework-attempts`),
+  acceptPatch: (workspaceId: number, patchId: number) =>
+    apiFetch<ReviewResult>(`/workspaces/${workspaceId}/patches/${patchId}/accept`, { method: "POST" }),
+  rejectPatch: (workspaceId: number, patchId: number, note: string) =>
+    apiFetch<ReviewResult>(`/workspaces/${workspaceId}/patches/${patchId}/reject`, { method: "POST", body: JSON.stringify({ note }) }),
   targetProjects: (workspaceId: number) => apiFetch<string[]>(`/workspaces/${workspaceId}/target-projects`),
   // Null project: back to the automatic mapping. The item is pre-scanned again before this returns.
   pickProject: (workspaceId: number, key: string, attachmentId: number, project: string | null) =>

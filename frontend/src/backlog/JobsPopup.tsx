@@ -3,19 +3,22 @@ import { createPortal } from "react-dom";
 
 import { BuildPanel, buildStatusText, useLatestBuild } from "../build/BuildPanel";
 import { PrescanPanel, prescanStatusText, useLatestPrescan } from "../prescan/PrescanPanel";
+import { ReworkPanel, reworkStatusText, useLatestRework } from "../rework/ReworkPanel";
 import { ImportPanel, importStatusText, useLatestImport } from "./ImportPanel";
 
-/** "Job status" button: the latest import, pre-scan and build in its tooltip, their full panels in a popup. */
+/** "Job status" button: the latest import, pre-scan, build and rework in its tooltip, their full panels in a popup. */
 export function JobsPopup({ workspaceId }: { workspaceId: number }) {
   const [open, setOpen] = useState(false);
   const importJob = useLatestImport(workspaceId);
   const prescanJob = useLatestPrescan(workspaceId);
   const buildJob = useLatestBuild(workspaceId);
-  const jobs = [importJob, prescanJob, buildJob];
+  const reworkJob = useLatestRework(workspaceId);
+  const jobs = [importJob, prescanJob, buildJob, reworkJob];
   const lines = [
     importJob && importStatusText(importJob),
     prescanJob && prescanStatusText(prescanJob),
     buildJob && buildStatusText(buildJob),
+    reworkJob && reworkStatusText(reworkJob),
   ].filter(Boolean);
   const running = jobs.some((job) => job?.status === "running");
   const failed = jobs.some((job) => job && (job.status === "failed" || job.errors.length > 0));
@@ -56,6 +59,8 @@ export function JobsPopup({ workspaceId }: { workspaceId: number }) {
               <PrescanPanel workspaceId={workspaceId} />
               <h3>Build</h3>
               {buildJob ? <BuildPanel workspaceId={workspaceId} /> : <p className="hint">No build yet.</p>}
+              <h3>Rework</h3>
+              <ReworkPanel workspaceId={workspaceId} />
             </div>
           </div>,
           document.body,
