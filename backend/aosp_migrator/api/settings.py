@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from aosp_migrator.config import (
+    BUILD_DEPENDENTS_CAP,
     COPILOT_BINARY,
     COPILOT_MODELS,
     COPILOT_TIMEOUT,
@@ -61,12 +62,18 @@ class ReworkSettingsUpdate(BaseModel):
     build_rounds: int | None = None
 
 
+class BuildSettingsUpdate(BaseModel):
+    # None leaves it unchanged, -1 restores the default.
+    dependents_cap: int | None = None
+
+
 class SettingsUpdate(BaseModel):
     jira: JiraSettingsUpdate | None = None
     github: GithubSettingsUpdate | None = None
     prescan: PrescanSettingsUpdate | None = None
     copilot: CopilotSettingsUpdate | None = None
     rework: ReworkSettingsUpdate | None = None
+    build: BuildSettingsUpdate | None = None
 
 
 class CopilotTestRequest(BaseModel):
@@ -159,6 +166,8 @@ def update_settings(update: SettingsUpdate, request: Request) -> dict:
         ):
             if value is not None:
                 values[field] = checked_int(field, value, reset)
+    if update.build and update.build.dependents_cap is not None:
+        values[BUILD_DEPENDENTS_CAP] = checked_int(BUILD_DEPENDENTS_CAP, update.build.dependents_cap, -1)
     if values:
         config.set(values)
     return config.public_view()

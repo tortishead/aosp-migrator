@@ -15,12 +15,13 @@ import { api, type CopilotSettingsUpdate, type CopilotTestResult, type JiraTestR
 
 const settingsKey = ["settings"];
 
-type SectionId = "jira" | "prescan" | "copilot";
+type SectionId = "jira" | "prescan" | "copilot" | "build";
 
 const SECTIONS: { id: SectionId; title: string; summary: string; icon: ReactNode }[] = [
   { id: "jira", title: "Jira", summary: "Server and token", icon: <IconTicket /> },
   { id: "prescan", title: "Pre-scan", summary: "Upstream detection", icon: <IconScan /> },
   { id: "copilot", title: "Copilot", summary: "CLI, models and limits", icon: <IconSpark /> },
+  { id: "build", title: "Build", summary: "Dependent modules", icon: <IconHammer /> },
 ];
 
 /** The search box text, lower-cased; settings that do not match it hide. */
@@ -30,7 +31,7 @@ export function SettingsPage() {
   const settings = useQuery({ queryKey: settingsKey, queryFn: api.settings });
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<SectionId>("jira");
-  const [visible, setVisible] = useState<Record<SectionId, boolean>>({ jira: true, prescan: true, copilot: true });
+  const [visible, setVisible] = useState<Record<SectionId, boolean>>({ jira: true, prescan: true, copilot: true, build: true });
   const panel = useRef<HTMLDivElement>(null);
   const needle = query.trim().toLowerCase();
 
@@ -108,6 +109,7 @@ export function SettingsPage() {
               <JiraSettingsForm settings={settings.data} hidden={!visible.jira} />
               <PrescanSettingsForm settings={settings.data} hidden={!visible.prescan} />
               <CopilotSettingsForm settings={settings.data} hidden={!visible.copilot} />
+              <BuildSettingsForm settings={settings.data} hidden={!visible.build} />
             </SearchContext.Provider>
             {nothingFound && <p className="settings-empty">No settings found for “{query.trim()}”.</p>}
           </div>
@@ -532,6 +534,68 @@ function ResultCard({ tone, title, meta, children }: { tone: Tone; title: string
   );
 }
 
+function BuildSettingsForm({ settings, hidden }: { settings: Settings; hidden: boolean }) {
+  const queryClient = useQueryClient();
+  const { dependents_cap } = settings.build;
+  // While unset the default shows as the placeholder, so saving does not pin it.
+  const stored = dependents_cap.source === "unset" ? "" : String(dependents_cap.value);
+  const [cap, setCap] = useState(stored);
+
+  useEffect(() => setCap(stored), [stored]);
+
+  const save = useMutation({
+    mutationFn: api.updateSettings,
+    onSuccess: (data) => queryClient.setQueryData(settingsKey, data),
+  });
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    // Empty restores the default.
+    save.mutate({ build: { dependents_cap: cap === "" ? -1 : Number(cap) } });
+  }
+
+  const env = dependents_cap.source === "env";
+  return (
+    <Section
+      id="build"
+      description="What a build of a reworked item covers."
+      hidden={hidden}
+      onSubmit={submit}
+      footer={
+        <div className="actions">
+          <button type="submit" disabled={save.isPending || env}>
+            Save
+          </button>
+          <SaveStatus mutation={save} />
+        </div>
+      }
+    >
+      <Setting
+        category="Build"
+        label="Dependent modules per build"
+        source={dependents_cap.source}
+        description={
+          env
+            ? "Set by AOSP_MIGRATOR_BUILD_DEPENDENTS_CAP."
+            : "A change to a header, an Android.bp / .mk, an AIDL file or a public Java API also builds the modules using the changed ones, at most this many; 0 for none. Needs module-info.json."
+        }
+      >
+        {(id) => (
+          <input
+            id={id}
+            className="input-number"
+            type="number"
+            value={cap}
+            placeholder={dependents_cap.source === "unset" ? String(dependents_cap.value) : ""}
+            disabled={env}
+            onChange={(e) => setCap(e.target.value)}
+          />
+        )}
+      </Setting>
+    </Section>
+  );
+}
+
 /* Icons: 16px strokes in currentColor. */
 
 function Svg({ children }: { children: ReactNode }) {
@@ -564,6 +628,15 @@ function IconSpark() {
   return (
     <Svg>
       <path d="M8 1.75 9.4 6.6l4.85 1.4L9.4 9.4 8 14.25 6.6 9.4 1.75 8 6.6 6.6Z" />
+    </Svg>
+  );
+}
+
+function IconHammer() {
+  return (
+    <Svg>
+      <path d="m8.5 5.5-6 6a1.4 1.4 0 0 0 2 2l6-6" />
+      <path d="m7 4 2.5-2.25 4.75 4.75L12 9Z" />
     </Svg>
   );
 }

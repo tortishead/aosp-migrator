@@ -3,7 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aosp_migrator.app import create_app
-from aosp_migrator.config import JIRA_BASE_URL, JIRA_PAT, Config
+from aosp_migrator.config import BUILD_DEPENDENTS_CAP, JIRA_BASE_URL, JIRA_PAT, Config
 
 SECRET = "pat-super-secret-value"
 
@@ -124,3 +124,12 @@ def test_upstream_domains(client: TestClient, config: Config) -> None:
     assert config.upstream_domains() == ["google.com", "partner.example.com"]
     client.put("/api/settings", json={"prescan": {"upstream_domains": ""}})
     assert client.get("/api/settings").json()["prescan"]["upstream_domains"] == {"source": "unset", "value": ["google.com", "android.com"]}
+
+
+def test_build_dependents_cap_setting(client: TestClient, config: Config) -> None:
+    assert client.get("/api/settings").json()["build"] == {"dependents_cap": {"source": "unset", "value": 20}}
+    assert client.put("/api/settings", json={"build": {"dependents_cap": 0}}).json()["build"]["dependents_cap"] == {"source": "file", "value": 0}
+    assert config.get_int(BUILD_DEPENDENTS_CAP) == 0
+    response = client.put("/api/settings", json={"build": {"dependents_cap": 1001}})
+    assert (response.status_code, response.json()["detail"]) == (422, "dependents_cap must be between 0 and 1000")
+    assert client.put("/api/settings", json={"build": {"dependents_cap": -1}}).json()["build"]["dependents_cap"] == {"source": "unset", "value": 20}

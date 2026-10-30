@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 from collections.abc import Callable
@@ -153,6 +154,28 @@ def test_dirty_project_is_refused_and_untouched(app: FastAPI, config: Config, wo
     assert "project dirty: system/core" in log_of(dirty)
     # The next unit still builds.
     assert (hal.status, hal.modules) == ("build_successful", ["hardware/interfaces"])
+
+
+def test_header_export_change_builds_the_dependents(app: FastAPI, config: Config, workspace: int, target: Path) -> None:
+    # PROJ-107 changes hardware/interfaces' Android.bp and adds an AIDL file; PROJ-105 only init.cpp.
+    users = {"dependencies": ["android.hardware"]}
+    modules = {
+        "android.hardware": {"module_name": "android.hardware", "path": ["hardware/interfaces"]},
+        "init": {"module_name": "init", "path": ["system/core"], **users},
+        "cameraserver": {"module_name": "cameraserver", "path": ["frameworks/av/camera"], **users},
+        "audioserver": {"module_name": "audioserver", "path": ["frameworks/av/media"], **users},
+    }
+    info = target / "out" / "target" / "product" / "generic" / "module-info.json"
+    info.parent.mkdir(parents=True)
+    info.write_text(json.dumps(modules))
+    build = BuildRunner(app.state.sessionmaker, config.builds_dir, lambda: [], executor=lambda run: run(), kill_grace=1, dependents_cap=lambda: 2)
+    job = job_of(app, build.start(workspace, keys=["PROJ-107", "PROJ-105"]).id)
+    hal, core = runs(app, job.id)
+    assert (hal.status, hal.tool, hal.modules) == ("build_successful", "m", ["android.hardware", "audioserver", "cameraserver"])
+    assert "Dependents built too: audioserver, cameraserver (1 more left out by the cap)\n" in log_of(hal)
+    assert "\nm android.hardware audioserver cameraserver\n" in log_of(hal)
+    assert (core.status, core.modules) == ("build_successful", ["init"])
+    assert "Dependents" not in log_of(core)
 
 
 def test_stale_item_is_rescanned_first(app: FastAPI, config: Config, workspace: int, target: Path) -> None:

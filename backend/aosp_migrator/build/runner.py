@@ -18,7 +18,9 @@ Per unit:
 2. `tree.prepare` (refuses a dirty project before anything is touched), the in-flight
    record goes into the run, then the patches are applied (`--3way` when a project gets
    more than one).
-3. Affected modules of the changed files; nothing to build counts as successful.
+3. Affected modules of the changed files, with the users of modules whose header, export or
+   API changed (capped) and the API check target (see `modules`); nothing to build counts
+   as successful.
 4. `bash -c 'source <envsetup> && lunch <target> && m|mmm <targets>'` in the build root,
    in its own process group, output into `<builds dir>/<run id>.log`. Cancel and
    timeout kill the whole group.
@@ -48,7 +50,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from aosp_migrator.build import tree as target
 from aosp_migrator.build.env import build_root, envsetup_path
-from aosp_migrator.build.modules import AffectedModules, affected_modules, changed_files
+from aosp_migrator.build.modules import DEFAULT_DEPENDENTS_CAP, AffectedModules, affected_modules, changed_files, widening_files
 from aosp_migrator.db.models import BuildJob, BuildRun, ClusterMember, HistoryEvent, Item, JiraIssue, MigrationPatch, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan.chain import base_patches, current_patches, is_rework, patch_plan, stale_items
@@ -166,10 +168,12 @@ class BuildRunner:
         upstream_domains: Callable[[], list[str]],
         executor: Callable[[Callable[[], None]], None] = _start_thread,
         kill_grace: float = 10.0,
+        dependents_cap: Callable[[], int] = lambda: DEFAULT_DEPENDENTS_CAP,
     ) -> None:
         self._sessions = sessions
         self._builds_dir = builds_dir
         self._upstream_domains = upstream_domains
+        self._dependents_cap = dependents_cap
         self._executor = executor
         # Seconds between SIGTERM and SIGKILL to the build's process group.
         self._kill_grace = kill_grace
@@ -209,7 +213,7 @@ class BuildRunner:
             job = session.get(BuildJob, job_id)
             assert job is not None
             try:
-                _Job(session, job, self._builds_dir(job.workspace_id), self._upstream_domains(), self._kill_grace).run()
+                _Job(session, job, self._builds_dir(job.workspace_id), self._upstream_domains(), self._kill_grace, self._dependents_cap()).run()
                 self._finish(session, job, "done")
             except _Canceled:
                 self._finish(session, job, "canceled")
@@ -282,6 +286,7 @@ class _Job:
     builds_dir: Path
     upstream_domains: list[str]
     kill_grace: float
+    dependents_cap: int = DEFAULT_DEPENDENTS_CAP
 
     def run(self) -> None:
         workspace = self.session.get(Workspace, self.job.workspace_id)
@@ -372,11 +377,26 @@ class _Job:
         except target.ApplyFailed as exc:
             raise _UnitFailed("apply_failed", str(exc)) from exc
 
-        changed = [path for p in unit_patches for path in changed_files(p.project, parse_diff(p.diff).files)]
+        changed: list[str] = []
+        reaching: list[str] = []
+        api: list[str] = []
+        for p in unit_patches:
+            files = parse_diff(p.diff).files
+            changed += changed_files(p.project, files)
+            more, api_files = widening_files(p.project, files)
+            reaching += more
+            api += api_files
         root = build_root(self.workspace)
-        modules = affected_modules(changed, self.tree, root)
+        modules = affected_modules(changed, self.tree, root, reaching, api, self.dependents_cap)
         if modules.unbuilt:
             log_file.write(f"Not built (no module): {', '.join(modules.unbuilt)}\n")
+        if modules.dependents or modules.dependents_left_out:
+            left_out = f" ({modules.dependents_left_out} more left out by the cap)" if modules.dependents_left_out else ""
+            log_file.write(f"Dependents built too: {', '.join(modules.dependents) or 'none'}{left_out}\n")
+        if modules.api_check:
+            log_file.write(f"API changed: {', '.join(api)}\n")
+        elif modules.tool == "mmm" and (reaching or api):
+            log_file.write("Dependents and API check not built: no single module-info.json\n")
         if modules.nothing_to_build:
             return "build_successful", "nothing to build"
         assert self.workspace.lunch_target is not None
