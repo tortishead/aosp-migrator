@@ -299,7 +299,9 @@ class PrescanJob(Base):
 
 
 class MigrationPatch(Base):
-    """The patch a build applies for one diff, as the pre-scan made it. Never changed once written."""
+    """The patch a build applies: for one diff, as the pre-scan made it (`original`), or for an item's
+    project, as a rework made it. Never changed once written, except its review.
+    """
 
     __tablename__ = "migration_patch"
 
@@ -310,9 +312,18 @@ class MigrationPatch(Base):
     # Project path in the target tree, relative to its root.
     project: Mapped[str] = mapped_column(String)
     source: Mapped[str] = mapped_column(String)  # original / ai
-    level: Mapped[str] = mapped_column(String)  # plain / 3way
+    # plain / 3way (`original`); stacked / source3way / resolve / port / reimpl (rework, see `prescan.chain`)
+    level: Mapped[str] = mapped_column(String)
     # Project HEAD it was made against; None in a plain tree.
     base_head: Mapped[str | None] = mapped_column(String)
+    # Patches of other items it was made on top of, in apply order; empty: on HEAD alone.
+    base_patch_ids: Mapped[list[Any]] = mapped_column(default=list, server_default=text("'[]'"))
+    # proposed / accepted / rejected; `original` patches are accepted.
+    review: Mapped[str] = mapped_column(String, default="accepted", server_default="accepted")
+    # Why the user rejected it, for the next rework.
+    review_note: Mapped[str | None] = mapped_column(Text)
+    # Check and intent findings of a rework, shown in review.
+    findings: Mapped[list[Any]] = mapped_column(default=list, server_default=text("'[]'"))
     diff: Mapped[str] = mapped_column(Text)
     # For the format-patch when pushing; None for a plain diff.
     author: Mapped[str | None] = mapped_column(String)

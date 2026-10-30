@@ -1,7 +1,7 @@
 """Applying a unit's patches to the user's target tree for a build, and taking them back out.
 
 The only writes to user trees. Per unit: `prepare` refuses a project with tracked
-changes, a HEAD other than the patch base, or an untracked file where a patch adds
+changes, a HEAD other than the patch base (when it names one), or an untracked file where a patch adds
 one, before anything is touched, and returns the in-flight record (HEADs, added files,
 created directories). The caller stores that record, then `apply_patches`, builds, and
 `restore`s: `git reset --hard <recorded HEAD>` in every project, then the added files
@@ -32,6 +32,7 @@ class ApplyFailed(Exception):
 class UnitPatch:
     project: str  # Relative to the target tree
     diff: str
+    # HEAD the project must be at; None: any (a stale patch on a base, applied 3-way).
     base_head: str | None
 
 
@@ -61,7 +62,7 @@ def prepare(tree: Path, patches: Sequence[UnitPatch]) -> InFlight:
             inflight.heads[patch.project] = _check_project(cwd, patch.project)
             inflight.added_files[patch.project] = []
             inflight.added_dirs[patch.project] = []
-        if patch.base_head != inflight.heads[patch.project]:
+        if patch.base_head is not None and patch.base_head != inflight.heads[patch.project]:
             raise TreeRefused(f"HEAD moved: {patch.project}")
         files, dirs = inflight.added_files[patch.project], inflight.added_dirs[patch.project]
         for path in _added(patch.diff):

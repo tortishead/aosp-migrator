@@ -6,7 +6,15 @@ import { DiffBody, useViewType, ViewToggle } from "./DiffViewer";
 
 export const itemPatchesKey = (workspaceId: number, key: string) => ["itemPatches", workspaceId, key];
 
-const LEVEL_TEXT: Record<ItemPatch["level"], string> = { plain: "Applies as is", "3way": "3-way merge" };
+const LEVEL_TEXT: Record<ItemPatch["level"], string> = {
+  plain: "Applies as is",
+  "3way": "3-way merge",
+  stacked: "Stacked on prerequisites",
+  source3way: "3-way on source base",
+  resolve: "Conflicts resolved",
+  port: "Rejected hunks ported",
+  reimpl: "Re-implemented",
+};
 const SOURCE_TEXT: Record<ItemPatch["source"], string> = { original: "Jira diff", ai: "AI" };
 
 /** The item's migration patches, newest first; the selected one opens in the diff viewer. */

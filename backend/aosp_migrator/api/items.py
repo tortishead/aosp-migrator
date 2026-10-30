@@ -25,7 +25,8 @@ from aosp_migrator.db.models import (
     Note,
     Workspace,
 )
-from aosp_migrator.prescan.runner import item_dependencies, stacked_stale, stale_items
+from aosp_migrator.prescan.chain import stale_items
+from aosp_migrator.prescan.runner import item_dependencies, stacked_stale
 from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/items")
