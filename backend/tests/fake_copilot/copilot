@@ -12,6 +12,9 @@ this file); without a marker the answer is "OK". Scenario keys, all optional:
 - `sleep`: seconds to wait first (timeout and cancel tests)
 - `exit`, `stderr`: exit code and error output
 - `usage`: false to write no usage file
+- `rounds`: a list of scenarios instead: the first for the first call with this marker,
+  the next for the next (the last for any call after it); needs `FAKE_COPILOT_LOG`, whose
+  calls with the marker are counted
 
 `FAKE_COPILOT_LOG`: a file every call appends {argv, cwd, prompt} to, as a JSON line.
 """
@@ -40,6 +43,9 @@ def main() -> int:
     if marker:
         directory = Path(os.environ.get("FAKE_COPILOT_SCENARIOS") or Path(__file__).parent / "scenarios")
         scenario = json.loads((directory / f"{marker.group(1)}.json").read_text())
+        if "rounds" in scenario:
+            earlier = sum(marker.group(0) in json.loads(line)["prompt"] for line in Path(log).read_text().splitlines()) - 1 if log else 0
+            scenario = scenario["rounds"][min(earlier, len(scenario["rounds"]) - 1)]
     time.sleep(scenario.get("sleep", 0))
 
     cwd = Path.cwd().resolve()
