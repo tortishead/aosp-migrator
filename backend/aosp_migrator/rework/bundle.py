@@ -1,7 +1,7 @@
 """The prompt of one Copilot call: what the rung asks for, then context in a fixed priority, cut at the cap.
 
 Priority (first kept first, the rest cut when the cap is reached):
-1. the findings of the round before (a fix round)
+1. the findings of the round before (a fix round), or the build errors (a build-fix round)
 2. ticket key, summary and description (trimmed)
 3. the user's reject note and the previous attempt's failure reason
 4. the failing files: conflict regions with `CONTEXT` lines around (resolve), or the
@@ -35,6 +35,8 @@ CONTEXT = 10
 CUT = "\n[... cut at the size limit ...]\n"
 
 Rung = Literal["resolve", "port"]
+# What a fix round's feedback is: check findings, or the build's error lines.
+Feedback = Literal["checks", "build"]
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@", re.MULTILINE)
 
 
@@ -76,7 +78,7 @@ class Bundle:
         return {part.name: part.kept for part in self.parts}
 
 
-def instructions(rung: Rung, paths: Sequence[str], target: Path | None, fix_round: bool) -> str:
+def instructions(rung: Rung, paths: Sequence[str], target: Path | None, fix_round: Feedback | None) -> str:
     files = "\n".join(f"- {p}" for p in paths)
     if rung == "resolve":
         task = (
@@ -92,8 +94,10 @@ def instructions(rung: Rung, paths: Sequence[str], target: Path | None, fix_roun
             "did not, as the code they change differs here. Edit the files below so that each hunk's change is made to the "
             "current code (where the code moved, where it is now)."
         )
-    if fix_round:
+    if fix_round == "checks":
         task += " Your previous edit did not pass the checks listed below: fix what they name."
+    elif fix_round == "build":
+        task += " The change as it is now does not build: fix the build errors listed below in these files."
     rules = (
         f"Files to edit:\n{files}\n\n"
         "Edit only these files, in this directory. Do not create other files, do not write `.orig` or `.rej` files, "
@@ -117,11 +121,14 @@ def build(
     feedback: Sequence[str] = (),
     change_so_far: str | None = None,
     cap: int = CAP,
+    feedback_kind: Feedback = "checks",
 ) -> Bundle:
     """The prompt for `files` (the failing ones, as rungs 1-2 or the previous round left them) in `checkout`."""
     paths = [f.path for f in files]
     parts: list[Part] = []
-    if feedback:
+    if feedback and feedback_kind == "build":
+        parts.append(Part("feedback", "## Build errors\n```\n" + "".join(f"{line}\n" for line in feedback) + "```\n"))
+    elif feedback:
         parts.append(Part("feedback", "## Checks your previous edit failed\n" + "".join(f"- {line}\n" for line in feedback)))
     description = context.description.strip()
     if len(description) > DESCRIPTION_CAP:
@@ -144,7 +151,7 @@ def build(
     prerequisites = "".join(_prerequisite_text(p, paths) for p in context.prerequisites)
     if prerequisites:
         parts.append(Part("prerequisites", "## Changes this one builds on (migrated before it)\n" + prerequisites))
-    return Bundle(instructions(rung, paths, target, bool(feedback)) + "\n" + _cut(parts, cap) + CLOSING, parts)
+    return Bundle(instructions(rung, paths, target, feedback_kind if feedback else None) + "\n" + _cut(parts, cap) + CLOSING, parts)
 
 
 def _cut(parts: list[Part], cap: int) -> str:

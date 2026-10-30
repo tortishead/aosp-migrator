@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.db.models import Attachment, Item, JiraIssue, MigrationPatch, Workspace
 from aosp_migrator.importer.diffparse import parse_diff
-from aosp_migrator.prescan.chain import current_patches
+from aosp_migrator.prescan.chain import current_patches, is_rework, patch_stale
 
 router = APIRouter(prefix="/workspaces/{workspace_id}")
 
@@ -31,6 +32,10 @@ class PatchOut(BaseModel):
     review: str  # proposed / accepted / rejected
     review_note: str | None
     findings: list[Any]
+    # The rework attempt that made it; None for pre-scan patches.
+    attempt_id: int | None
+    # Why a rework patch is out of date (HEAD moved, base changed, new diff version); empty when fresh.
+    stale: list[str]
     author: str | None
     message: str | None
     # What a build applies now: a rework patch of its project, else the current diff version's patch as last scanned.
@@ -54,13 +59,18 @@ def _item(session: Session, workspace_id: int, key: str) -> tuple[Item, JiraIssu
 def list_item_patches(workspace_id: int, key: str, session: SessionDep) -> list[PatchOut]:
     """Every migration patch of an item, newest first; without the patch text."""
     item, _ = _item(session, workspace_id, key)
+    workspace = session.get(Workspace, workspace_id)
+    assert workspace is not None
     current = {patch.id for patch in current_patches(session, item)}
+    heads: dict[str, str | None] = {}
     rows = session.execute(
         select(MigrationPatch, Attachment)
         .outerjoin(Attachment, MigrationPatch.attachment_id == Attachment.id)
         .where(MigrationPatch.item_id == item.id)
         .order_by(MigrationPatch.id.desc())
     )
+    rows = list(rows)
+    stale = {patch.id: patch_stale(session, Path(workspace.target_tree), patch, heads) for patch, _ in rows if is_rework(patch)}
     return [
         PatchOut(
             id=patch.id,
@@ -75,6 +85,8 @@ def list_item_patches(workspace_id: int, key: str, session: SessionDep) -> list[
             review=patch.review,
             review_note=patch.review_note,
             findings=patch.findings,
+            attempt_id=patch.attempt_id,
+            stale=stale.get(patch.id, []),
             author=patch.author,
             message=patch.message,
             current=patch.id in current,

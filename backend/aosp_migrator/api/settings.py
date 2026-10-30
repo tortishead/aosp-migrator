@@ -19,6 +19,7 @@ from aosp_migrator.config import (
     REWORK_BUILD_ROUNDS,
     REWORK_ITEM_CAP,
     REWORK_JOB_CAP,
+    REWORK_KEEP_SCRATCH,
     UPSTREAM_DOMAINS,
     Config,
     Field,
@@ -60,6 +61,7 @@ class ReworkSettingsUpdate(BaseModel):
     item_cap: int | None = None
     job_cap: int | None = None
     build_rounds: int | None = None
+    keep_scratch: bool | None = None
 
 
 class BuildSettingsUpdate(BaseModel):
@@ -166,6 +168,8 @@ def update_settings(update: SettingsUpdate, request: Request) -> dict:
         ):
             if value is not None:
                 values[field] = checked_int(field, value, reset)
+        if update.rework.keep_scratch is not None:
+            values[REWORK_KEEP_SCRATCH] = "true" if update.rework.keep_scratch else None
     if update.build and update.build.dependents_cap is not None:
         values[BUILD_DEPENDENTS_CAP] = checked_int(BUILD_DEPENDENTS_CAP, update.build.dependents_cap, -1)
     if values:

@@ -46,6 +46,8 @@ COPILOT_TIMEOUT = Field("copilot", "timeout", "AOSP_MIGRATOR_COPILOT_TIMEOUT", s
 REWORK_ITEM_CAP = Field("rework", "item_cap", "AOSP_MIGRATOR_REWORK_ITEM_CAP", secret=False)
 REWORK_JOB_CAP = Field("rework", "job_cap", "AOSP_MIGRATOR_REWORK_JOB_CAP", secret=False)
 REWORK_BUILD_ROUNDS = Field("rework", "build_rounds", "AOSP_MIGRATOR_REWORK_BUILD_ROUNDS", secret=False)
+# Keep the scratch checkouts of a failed attempt ("true"); deleted otherwise.
+REWORK_KEEP_SCRATCH = Field("rework", "keep_scratch", "AOSP_MIGRATOR_REWORK_KEEP_SCRATCH", secret=False)
 # Most modules using a changed header, export or API that a build adds; 0 for none.
 BUILD_DEPENDENTS_CAP = Field("build", "dependents_cap", "AOSP_MIGRATOR_BUILD_DEPENDENTS_CAP", secret=False)
 
@@ -63,6 +65,7 @@ FIELDS = (
     REWORK_ITEM_CAP,
     REWORK_JOB_CAP,
     REWORK_BUILD_ROUNDS,
+    REWORK_KEEP_SCRATCH,
     BUILD_DEPENDENTS_CAP,
 )
 DEFAULT_UPSTREAM_DOMAINS = ("google.com", "android.com")
@@ -88,6 +91,7 @@ class CopilotSettings:
     item_cap: int
     job_cap: int
     build_rounds: int
+    keep_scratch: bool = False
 
 
 def resolve_data_dir(cli_value: str | Path | None = None) -> Path:
@@ -172,6 +176,9 @@ class Config:
             return default
         return value if low <= value <= high else default
 
+    def get_bool(self, field: Field) -> bool:
+        return (self.get(field) or "").strip().lower() in ("1", "true", "yes", "on")
+
     def copilot(self) -> CopilotSettings:
         return CopilotSettings(
             binary=self.get(COPILOT_BINARY) or DEFAULT_COPILOT_BINARY,
@@ -180,6 +187,7 @@ class Config:
             item_cap=self.get_int(REWORK_ITEM_CAP),
             job_cap=self.get_int(REWORK_JOB_CAP),
             build_rounds=self.get_int(REWORK_BUILD_ROUNDS),
+            keep_scratch=self.get_bool(REWORK_KEEP_SCRATCH),
         )
 
     def ensure_lan_token(self) -> str:
@@ -210,7 +218,8 @@ class Config:
             "timeout": {"source": self.get_with_source(COPILOT_TIMEOUT)[1], "value": copilot.timeout},
         }
         view["rework"] = {
-            field.key: {"source": self.get_with_source(field)[1], "value": self.get_int(field)} for field in (REWORK_ITEM_CAP, REWORK_JOB_CAP, REWORK_BUILD_ROUNDS)
+            **{field.key: {"source": self.get_with_source(field)[1], "value": self.get_int(field)} for field in (REWORK_ITEM_CAP, REWORK_JOB_CAP, REWORK_BUILD_ROUNDS)},
+            "keep_scratch": {"source": self.get_with_source(REWORK_KEEP_SCRATCH)[1], "value": copilot.keep_scratch},
         }
         view["build"] = {"dependents_cap": {"source": self.get_with_source(BUILD_DEPENDENTS_CAP)[1], "value": self.get_int(BUILD_DEPENDENTS_CAP)}}
         return view

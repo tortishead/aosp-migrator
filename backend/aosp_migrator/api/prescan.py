@@ -21,6 +21,7 @@ from aosp_migrator.prescan.runner import (
     target_projects,
 )
 from aosp_migrator.prescan.triage import ORDER
+from aosp_migrator.rework.attempt import rework_candidates
 
 router = APIRouter()
 
@@ -50,6 +51,15 @@ class PrescanJobOut(BaseModel):
     cancel_requested: bool
     started_at: datetime
     finished_at: datetime | None
+    # Once finished: keys of its items (all: the backlog's) whose diffs conflict, worth a rework.
+    rework_candidates: list[str] = []
+
+
+def _job_out(session: Session, job: PrescanJob) -> PrescanJobOut:
+    out = PrescanJobOut.model_validate(job)
+    if job.status != "running":
+        out.rework_candidates = rework_candidates(session, job.workspace_id, None if job.scope == "all" else job.issue_keys)
+    return out
 
 
 class MigrationPatchOut(BaseModel):
@@ -191,19 +201,19 @@ def start_prescan(workspace_id: int, body: PrescanRequest, request: Request, ses
         job = runner.start(workspace_id, keys, stacked=body.stacked)
     except JobConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return PrescanJobOut.model_validate(job)
+    return _job_out(session, job)
 
 
 @router.get("/workspaces/{workspace_id}/prescan-jobs")
 def list_prescan_jobs(workspace_id: int, session: SessionDep, limit: int = 20) -> list[PrescanJobOut]:
     _workspace(session, workspace_id)
     jobs = session.scalars(select(PrescanJob).where(PrescanJob.workspace_id == workspace_id).order_by(PrescanJob.id.desc()).limit(limit))
-    return [PrescanJobOut.model_validate(job) for job in jobs]
+    return [_job_out(session, job) for job in jobs]
 
 
 @router.get("/prescan-jobs/{job_id}")
 def get_prescan_job(job_id: int, session: SessionDep) -> PrescanJobOut:
-    return PrescanJobOut.model_validate(_job(session, job_id))
+    return _job_out(session, _job(session, job_id))
 
 
 @router.post("/prescan-jobs/{job_id}/cancel", status_code=202)
@@ -214,7 +224,7 @@ def cancel_prescan_job(job_id: int, session: SessionDep) -> PrescanJobOut:
         raise HTTPException(status_code=409, detail=f"Pre-scan job is {job.status}")
     job.cancel_requested = True
     session.commit()
-    return PrescanJobOut.model_validate(job)
+    return _job_out(session, job)
 
 
 @router.get("/workspaces/{workspace_id}/prescan-summary")

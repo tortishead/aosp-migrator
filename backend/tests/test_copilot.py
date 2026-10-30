@@ -196,18 +196,22 @@ def test_copilot_settings_defaults_and_update(api: TestClient, config: Config) -
         "item_cap": {"source": "unset", "value": 5},
         "job_cap": {"source": "unset", "value": 100},
         "build_rounds": {"source": "unset", "value": 2},
+        "keep_scratch": {"source": "unset", "value": False},
     }
-    update = {"copilot": {"binary": " /opt/copilot ", "model_resolve": "gpt-5-mini", "model_port": " ", "timeout": 600}, "rework": {"item_cap": 3, "build_rounds": 0}}
+    update = {
+        "copilot": {"binary": " /opt/copilot ", "model_resolve": "gpt-5-mini", "model_port": " ", "timeout": 600},
+        "rework": {"item_cap": 3, "build_rounds": 0, "keep_scratch": True},
+    }
     body = api.put("/api/settings", json=update).json()
     assert body["copilot"]["binary"] == {"source": "file", "value": "/opt/copilot"}
     assert body["copilot"]["model_resolve"] == {"source": "file", "value": "gpt-5-mini"}
     assert body["copilot"]["model_port"] == {"source": "unset", "value": None}
     settings = config.copilot()
-    assert (settings.timeout, settings.item_cap, settings.job_cap, settings.build_rounds) == (600, 3, 100, 0)
+    assert (settings.timeout, settings.item_cap, settings.job_cap, settings.build_rounds, settings.keep_scratch) == (600, 3, 100, 0, True)
     # Back to the defaults.
-    api.put("/api/settings", json={"copilot": {"binary": "", "timeout": 0}, "rework": {"item_cap": 0, "build_rounds": -1}})
+    api.put("/api/settings", json={"copilot": {"binary": "", "timeout": 0}, "rework": {"item_cap": 0, "build_rounds": -1, "keep_scratch": False}})
     settings = config.copilot()
-    assert (settings.binary, settings.timeout, settings.item_cap, settings.build_rounds) == ("copilot", 900, 5, 2)
+    assert (settings.binary, settings.timeout, settings.item_cap, settings.build_rounds, settings.keep_scratch) == ("copilot", 900, 5, 2, False)
 
 
 @pytest.mark.parametrize(
