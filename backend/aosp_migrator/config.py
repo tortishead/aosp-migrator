@@ -109,6 +109,10 @@ class Config:
     def builds_dir(self, workspace_id: int) -> Path:
         return self.workspace_dir(workspace_id) / "builds"
 
+    def rework_dir(self, workspace_id: int, attempt_id: int) -> Path:
+        """Scratch checkouts of one rework attempt, one per project at its path below."""
+        return self.workspace_dir(workspace_id) / "rework" / str(attempt_id)
+
     def workspace_dir(self, workspace_id: int) -> Path:
         return self.data_dir / "workspaces" / str(workspace_id)
 
