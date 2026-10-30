@@ -4,6 +4,7 @@ import { Link } from "react-router";
 
 import { api, type BuildJob, type BuildWhat } from "../api";
 import { itemsKey, POLL_MS } from "../backlog/ImportPanel";
+import { ReworkOffer } from "../rework/ReworkOffer";
 import { buildJobsKey, itemBuildsKey } from "./build";
 
 /** Start a build (items, stacked items, or a cluster); whoever shows the latest job picks it up and polls it. */
@@ -78,6 +79,7 @@ export function BuildPanel({ workspaceId }: { workspaceId: number }) {
           </ul>
         </details>
       )}
+      {!running && <ReworkOffer workspaceId={workspaceId} keys={job.rework_candidates} />}
       {job.errors.length > 0 && (
         <details className="import-errors">
           <summary>

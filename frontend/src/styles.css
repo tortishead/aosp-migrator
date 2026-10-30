@@ -2013,3 +2013,34 @@ p.tag {
     animation-duration: 0s;
   }
 }
+
+/* Rework review: the Jira diff next to the proposed patch, per file */
+.patch-compare-head,
+.patch-compare-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.patch-compare-head h4 {
+  margin: 8px 0 4px;
+}
+
+.patch-compare-row {
+  margin-bottom: 12px;
+}
+
+.review-box {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.review-box textarea {
+  width: 100%;
+}
+
+.copilot-answer {
+  white-space: pre-wrap;
+}

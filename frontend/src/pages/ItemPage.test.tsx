@@ -585,6 +585,9 @@ function itemPatch(overrides: Partial<ItemPatch> = {}): ItemPatch {
     author: "Jane Doe <jane.doe@example.com>",
     message: "camera: fix null deref on resume\n\nBug: PROJ-101",
     current: true,
+    attempt_id: null,
+    stale: [],
+    bases: [],
     created_at: "2026-10-26T10:00:00Z",
     ...overrides,
   };
@@ -654,6 +657,7 @@ function buildRun(overrides: Partial<BuildRun> = {}): BuildRun {
   return {
     id: 12,
     job_id: 4,
+    attempt_id: null,
     keys: ["PROJ-101"],
     cluster_id: null,
     patch_ids: [7],

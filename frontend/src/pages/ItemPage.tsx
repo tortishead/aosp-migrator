@@ -13,6 +13,9 @@ import { HistoryTimeline } from "../item/History";
 import { JiraHtml } from "../item/JiraHtml";
 import { MigrationTab } from "../item/MigrationTab";
 import { PrescanSection } from "../prescan/PrescanSection";
+import { ReworkAttempts } from "../rework/ReworkAttempts";
+import { ReworkDialog } from "../rework/ReworkDialog";
+import { ReworkPanel, useLatestRework } from "../rework/ReworkPanel";
 
 type Tab = "overview" | "patches" | "migration";
 
@@ -130,7 +133,12 @@ export function ItemPage() {
             </section>
             <section aria-label="Migration patches">
               <h2>Migration patches</h2>
-              <MigrationTab workspaceId={workspaceId} itemKey={key} />
+              <ReworkActions workspaceId={workspaceId} itemKey={key} />
+              <MigrationTab workspaceId={workspaceId} itemKey={key} attachments={issue.attachments} />
+            </section>
+            <section aria-label="Rework">
+              <h2>Rework attempts</h2>
+              <ReworkAttempts workspaceId={workspaceId} itemKey={key} />
             </section>
           </>
         )}
@@ -148,6 +156,20 @@ function BuildActions({ workspaceId, itemKey }: { workspaceId: number; itemKey: 
       </button>
       <BuildPanel workspaceId={workspaceId} />
       {build.isError && <span className="error">{build.error.message}</span>}
+    </div>
+  );
+}
+
+function ReworkActions({ workspaceId, itemKey }: { workspaceId: number; itemKey: string }) {
+  const [open, setOpen] = useState(false);
+  const job = useLatestRework(workspaceId);
+  return (
+    <div className="actions">
+      <button onClick={() => setOpen(true)} disabled={job?.status === "running"}>
+        Rework…
+      </button>
+      {job && <ReworkPanel workspaceId={workspaceId} />}
+      {open && <ReworkDialog workspaceId={workspaceId} keys={[itemKey]} onClose={() => setOpen(false)} />}
     </div>
   );
 }

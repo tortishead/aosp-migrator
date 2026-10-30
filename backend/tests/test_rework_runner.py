@@ -147,6 +147,7 @@ def test_prerequisite_first_then_the_dependent_on_top(
     dependent = next(p for p in patches(client, workspace, "PROJ-112") if p["attempt_id"] == second["id"])
     # No Copilot: the dependent applies as is on the prerequisite's patch.
     assert (dependent["source"], dependent["level"], dependent["review"], dependent["base_patch_ids"]) == ("original", "stacked", "proposed", [base["id"]])
+    assert dependent["bases"] == [{"id": base["id"], "key": "PROJ-111", "project": CORE, "review": "proposed"}]
     with session(app) as s:
         (run,) = s.scalars(select(BuildRun).where(BuildRun.attempt_id == second["id"]))
         assert (run.job_id, run.status, run.modules) == (None, "build_successful", [CORE])

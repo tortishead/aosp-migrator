@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
-import { BUILD_STATUSES, TRIAGE_LABELS, type Cluster, type Facets } from "../api";
+import { BUILD_STATUSES, REWORK_STATUSES, TRIAGE_LABELS, type Cluster, type Facets } from "../api";
 import { BUILD_TEXT } from "../build/build";
 import { TRIAGE_TEXT } from "../prescan/triage";
+import { REWORK_TEXT } from "../rework/rework";
 import { hasFilters, type ListFilter, VIEW_PARAMS } from "./params";
 
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -19,6 +20,7 @@ interface Props {
 export function Filters({ search, facets, clusters, update }: Props) {
   const triage: [string, string][] = [...TRIAGE_LABELS.map((l): [string, string] => [l, TRIAGE_TEXT[l]]), ["none", "Not scanned"]];
   const build: [string, string][] = [...BUILD_STATUSES.map((s): [string, string] => [s, BUILD_TEXT[s]]), ["none", "Not built"]];
+  const rework: [string, string][] = [...REWORK_STATUSES.map((s): [string, string] => [s, REWORK_TEXT[s]]), ["none", "Not reworked"]];
   return (
     <div className="filters" role="search">
       <SearchBox value={search.get("q") ?? ""} update={update} />
@@ -26,6 +28,7 @@ export function Filters({ search, facets, clusters, update }: Props) {
       <MultiFilter label="Labels" param="label" options={pairs(facets?.labels)} search={search} update={update} />
       <MultiFilter label="Pre-scan" param="triage" options={triage} search={search} update={update} />
       <MultiFilter label="Build" param="build" options={build} search={search} update={update} />
+      <MultiFilter label="Rework" param="rework" options={rework} search={search} update={update} />
       <ClusterFilter clusters={clusters} search={search} update={update} />
       {hasFilters(search) && (
         <button

@@ -4,6 +4,7 @@ import { Link } from "react-router";
 
 import { api, type PrescanJob } from "../api";
 import { itemsKey, POLL_MS } from "../backlog/ImportPanel";
+import { ReworkOffer } from "../rework/ReworkOffer";
 
 export const prescanJobsKey = (workspaceId: number) => ["prescanJobs", workspaceId];
 export const itemPrescanKey = (workspaceId: number, key?: string) =>
@@ -82,6 +83,7 @@ export function PrescanPanel({ workspaceId }: { workspaceId: number }) {
         )}
       </div>
       {cancel.isError && <p className="error">{cancel.error.message}</p>}
+      {!running && <ReworkOffer workspaceId={workspaceId} keys={job.rework_candidates} />}
       {job.errors.length > 0 && (
         <details className="import-errors">
           <summary>

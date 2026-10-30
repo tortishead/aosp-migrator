@@ -53,6 +53,8 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     dependencies: [],
     build_status: null,
     build_reason: null,
+    rework_status: null,
+    rework_reason: null,
     ...overrides,
   };
 }

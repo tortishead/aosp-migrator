@@ -17,6 +17,13 @@ router = APIRouter(prefix="/workspaces/{workspace_id}")
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
+class BaseRef(BaseModel):
+    id: int
+    key: str
+    project: str
+    review: str
+
+
 class PatchOut(BaseModel):
     id: int
     attachment_id: int | None
@@ -29,6 +36,8 @@ class PatchOut(BaseModel):
     base_head: str | None
     # Patches of other items it was made on top of, in apply order.
     base_patch_ids: list[int]
+    # Those patches with their item, in the same order; a base patch since deleted is left out.
+    bases: list[BaseRef]
     review: str  # proposed / accepted / rejected
     review_note: str | None
     findings: list[Any]
@@ -71,6 +80,16 @@ def list_item_patches(workspace_id: int, key: str, session: SessionDep) -> list[
     )
     rows = list(rows)
     stale = {patch.id: patch_stale(session, Path(workspace.target_tree), patch, heads) for patch, _ in rows if is_rework(patch)}
+    base_ids = {i for patch, _ in rows for i in patch.base_patch_ids}
+    bases = {
+        base.id: BaseRef(id=base.id, key=key, project=base.project, review=base.review)
+        for base, key in session.execute(
+            select(MigrationPatch, JiraIssue.key)
+            .join(Item, MigrationPatch.item_id == Item.id)
+            .join(JiraIssue, Item.issue_id == JiraIssue.id)
+            .where(MigrationPatch.id.in_(base_ids))
+        )
+    }
     return [
         PatchOut(
             id=patch.id,
@@ -82,6 +101,7 @@ def list_item_patches(workspace_id: int, key: str, session: SessionDep) -> list[
             level=patch.level,
             base_head=patch.base_head,
             base_patch_ids=patch.base_patch_ids,
+            bases=[bases[i] for i in patch.base_patch_ids if i in bases],
             review=patch.review,
             review_note=patch.review_note,
             findings=patch.findings,
