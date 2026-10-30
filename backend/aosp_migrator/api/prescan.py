@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.db.models import Attachment, DiffDependency, DiffScan, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace
+from aosp_migrator.prescan.chain import stale_items
 from aosp_migrator.prescan.runner import (
     JobConflictError,
     PrescanError,
@@ -17,7 +18,6 @@ from aosp_migrator.prescan.runner import (
     current_patch,
     diff_scan,
     item_dependencies,
-    stale_items,
     target_projects,
 )
 from aosp_migrator.prescan.triage import ORDER

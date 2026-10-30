@@ -2,16 +2,19 @@
 
 A job builds units one after another: each selected item on its own (`keys`), or a
 cluster's members together in cluster order (`cluster`). Only items labeled `applies` or
-`3way` are built; the others are listed as skipped when the job starts. A stacked build
-(`stacked`) builds the selected items as one unit, in the order given, whatever their
-label: their patches are stacked as in a stacked pre-scan (see `_Job._stacked_patches`).
+`3way`, or with an accepted rework patch, are built; the others are listed as skipped
+when the job starts. A stacked build (`stacked`) builds the selected items as one unit,
+in the order given, whatever their label: their current patches (else their diffs) are
+stacked as in a stacked pre-scan (see `_Job._stacked_patches`).
 Per unit:
 
-1. Patches: the current migration patch of each current diff. A stale item (new diff
-   version, project HEAD moved) is pre-scanned again first; when it no longer applies
-   the unit is `apply_failed`. Stacked: each item's diffs on a scratch index on top of
-   the items before it (plain, else 3-way); an item that does not stack is left out of
-   the unit (`apply_failed`, listed as skipped) and the rest build without it.
+1. Patches: the item's current patches (`chain.current_patches`), each after its base
+   patches. A stale item (new diff version, project HEAD moved) without a rework patch is
+   pre-scanned again first; when it no longer applies the unit is `apply_failed`. A stale
+   rework patch is applied as it is, 3-way on whatever HEAD. Stacked: each item's patches
+   or diffs on a scratch index on top of the items before it (plain, else 3-way); an item
+   that does not stack is left out of the unit (`apply_failed`, listed as skipped) and the
+   rest build without it.
 2. `tree.prepare` (refuses a dirty project before anything is touched), the in-flight
    record goes into the run, then the patches are applied (`--3way` when a project gets
    more than one).
@@ -48,8 +51,9 @@ from aosp_migrator.build.env import build_root, envsetup_path
 from aosp_migrator.build.modules import AffectedModules, affected_modules, changed_files
 from aosp_migrator.db.models import BuildJob, BuildRun, ClusterMember, HistoryEvent, Item, JiraIssue, MigrationPatch, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
-from aosp_migrator.prescan.runner import current_diffs, current_patch, diff_scan, scan_item, stack_diff, stale_items, target_projects, triage_item
-from aosp_migrator.prescan.stack import Stack
+from aosp_migrator.prescan.chain import base_patches, current_patches, is_rework, patch_plan, stale_items
+from aosp_migrator.prescan.runner import scan_item, stack_diff, target_projects, triage_item
+from aosp_migrator.prescan.stack import Stack, StackDiff
 
 log = logging.getLogger(__name__)
 
@@ -183,12 +187,9 @@ class BuildRunner:
             _check_environment(workspace)
             selected = _cluster_items(session, cluster_id) if cluster_id is not None else _items(session, workspace_id, keys or [])
             # Stacked: the stack decides, as in a stacked pre-scan; an item may only apply on the ones before it.
-            eligible = [issue.key for item, issue in selected if stacked or item.triage_label in ELIGIBLE]
-            skipped = [
-                {"key": issue.key, "reason": f"pre-scan: {item.triage_label}" if item.triage_label else "not pre-scanned"}
-                for item, issue in selected
-                if issue.key not in eligible
-            ]
+            reasons = {issue.key: None if stacked else _not_buildable(session, item) for item, issue in selected}
+            eligible = [key for key, reason in reasons.items() if reason is None]
+            skipped = [{"key": key, "reason": reason} for key, reason in reasons.items() if reason is not None]
             job = BuildJob(
                 workspace_id=workspace_id,
                 scope="cluster" if cluster_id is not None else "stacked" if stacked else "keys",
@@ -233,6 +234,17 @@ def _check_environment(workspace: Workspace) -> None:
     envsetup = envsetup_path(workspace)
     if not envsetup.is_file():
         raise BuildError(f"envsetup.sh not found: {envsetup}")
+
+
+def _not_buildable(session: Session, item: Item) -> str | None:
+    """Why the item is not built on its own: its rework patch is not accepted, or its label is not `applies` / `3way`; None when it is."""
+    rework = [p for p in current_patches(session, item) if is_rework(p)]
+    if rework:
+        proposed = next((p for p in rework if p.review != "accepted"), None)
+        return f"patch {proposed.review}: {proposed.project}" if proposed else None
+    if item.triage_label in ELIGIBLE:
+        return None
+    return f"pre-scan: {item.triage_label}" if item.triage_label else "not pre-scanned"
 
 
 def _items(session: Session, workspace_id: int, keys: list[str]) -> list[tuple[Item, JiraIssue]]:
@@ -343,8 +355,8 @@ class _Job:
             unit_patches = self._stacked_patches(unit, run, log_file)
         else:
             patches = self._patches(unit)
-            run.patch_ids = [patch.id for patch in patches]
-            unit_patches = [target.UnitPatch(project=p.project, diff=p.diff, base_head=p.base_head) for p in patches]
+            run.patch_ids = [patch.id for patch, _ in patches]
+            unit_patches = [target.UnitPatch(project=p.project, diff=p.diff, base_head=None if any_head else p.base_head) for p, any_head in patches]
         try:
             inflight = target.prepare(self.tree, unit_patches)
         except target.TreeRefused as exc:
@@ -354,8 +366,9 @@ class _Job:
 
         # Stacked patches apply as is, in order: each was made on top of the ones before it.
         projects = [p.project for p in unit_patches]
+        three_way = not unit.stacked and (len(projects) != len(set(projects)) or any(p.base_head is None for p in unit_patches))
         try:
-            target.apply_patches(self.tree, unit_patches, three_way=not unit.stacked and len(projects) != len(set(projects)))
+            target.apply_patches(self.tree, unit_patches, three_way=three_way)
         except target.ApplyFailed as exc:
             raise _UnitFailed("apply_failed", str(exc)) from exc
 
@@ -372,11 +385,23 @@ class _Job:
         self.session.commit()
         return self._run_build(run.command, root, log_file)
 
-    def _patches(self, unit: _Unit) -> list[MigrationPatch]:
-        """The unit's current migration patches, item by item; stale items are pre-scanned again first."""
+    def _patches(self, unit: _Unit) -> list[tuple[MigrationPatch, bool]]:
+        """The unit's current migration patches, item by item, each after its base patches (once each), and whether
+        it may go on any HEAD: an item with a rework patch is applied as it is, stale or not, the others are
+        pre-scanned again first when stale.
+        """
         stale = stale_items(self.session, self.workspace.id, self.tree, [item.id for item, _ in unit.items])
-        patches: list[MigrationPatch] = []
+        patches: dict[int, tuple[MigrationPatch, bool]] = {}
         for item, issue in unit.items:
+            current = current_patches(self.session, item)
+            if any(is_rework(p) for p in current):
+                if reason := _not_buildable(self.session, item):
+                    raise _UnitFailed("apply_failed", f"{issue.key}: {reason}")
+                for patch in current:
+                    stale_patch = item.id in stale
+                    for base in [*base_patches(self.session, patch), patch]:
+                        patches.setdefault(base.id, (base, stale_patch))
+                continue
             if item.id in stale:
                 try:
                     tree, projects = target_projects(self.workspace)
@@ -387,14 +412,13 @@ class _Job:
                 self.session.commit()
             if item.triage_label not in ELIGIBLE:
                 raise _UnitFailed("apply_failed", f"{issue.key}: pre-scan: {item.triage_label}: {item.triage_reason}")
-            for attachment in current_diffs(self.session, issue.id):
-                patch = current_patch(self.session, diff_scan(self.session, attachment.id))
-                if patch is not None:
-                    patches.append(patch)
-        return patches
+            for patch in current_patches(self.session, item):
+                patches.setdefault(patch.id, (patch, False))
+        return list(patches.values())
 
     def _stacked_patches(self, unit: _Unit, run: BuildRun, log_file: TextIO) -> list[target.UnitPatch]:
-        """Each item's diffs stacked on the items before it that stacked, as in a stacked pre-scan; their stacked patches in order.
+        """Each item's current patches (a diff without one: the diff) stacked on the items before it that stacked, as in
+        a stacked pre-scan; their stacked patches in order. Base patches are not added: the items below are the base.
 
         An item that does not stack (a diff conflicts or is unmapped, no diffs, an error) is
         left out of the unit: `apply_failed` with the reason, listed as skipped, out of the
@@ -407,8 +431,15 @@ class _Job:
             stack = Stack(tree, Path(tmp))
             for item, issue in unit.items:
                 try:
-                    diffs = current_diffs(self.session, issue.id)
-                    stacked = stack.add([stack_diff(self.session, a, issue, tree, projects, self.upstream_domains) for a in diffs])
+                    diffs = patch_plan(self.session, item)
+                    stacked = stack.add(
+                        [
+                            StackDiff(f"patch {d.id} ({d.project})", d.project, d.diff)
+                            if isinstance(d, MigrationPatch)
+                            else stack_diff(self.session, d, issue, tree, projects, self.upstream_domains)
+                            for d in diffs
+                        ]
+                    )
                 except Exception as exc:
                     log.exception("Stacking %s failed", issue.key)
                     reason = str(exc)

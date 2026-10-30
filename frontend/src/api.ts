@@ -385,9 +385,15 @@ export interface MigrationPatch {
   attachment_id: number | null;
   project: string;
   source: "original" | "ai";
-  level: "plain" | "3way";
+  /** `plain` / `3way` for `original` patches; the others for rework patches. */
+  level: "plain" | "3way" | "stacked" | "source3way" | "resolve" | "port" | "reimpl";
   /** Project HEAD it was made against; null in a plain tree. */
   base_head: string | null;
+  /** Patches of other items it was made on top of, in apply order; empty: on HEAD alone. */
+  base_patch_ids: number[];
+  review: "proposed" | "accepted" | "rejected";
+  review_note: string | null;
+  findings: unknown[];
   diff: string;
   author: string | null;
   message: string | null;
@@ -399,7 +405,7 @@ export interface ItemPatch extends Omit<MigrationPatch, "diff"> {
   /** The Jira diff it was made from; null for `ai` patches. */
   jira_id: string | null;
   filename: string | null;
-  /** What a build applies now: the current diff version's patch as last scanned. */
+  /** What a build applies now: a rework patch of its project, else the current diff version's patch as last scanned. */
   current: boolean;
 }
 

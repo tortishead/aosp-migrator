@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.db.models import Attachment, Item, JiraIssue, MigrationPatch, Workspace
 from aosp_migrator.importer.diffparse import parse_diff
-from aosp_migrator.prescan.runner import current_diffs, current_patch, diff_scan
+from aosp_migrator.prescan.chain import current_patches
 
 router = APIRouter(prefix="/workspaces/{workspace_id}")
 
@@ -26,9 +26,14 @@ class PatchOut(BaseModel):
     source: str
     level: str
     base_head: str | None
+    # Patches of other items it was made on top of, in apply order.
+    base_patch_ids: list[int]
+    review: str  # proposed / accepted / rejected
+    review_note: str | None
+    findings: list[Any]
     author: str | None
     message: str | None
-    # What a build applies now for its diff: the current diff version's patch as last scanned.
+    # What a build applies now: a rework patch of its project, else the current diff version's patch as last scanned.
     current: bool
     created_at: datetime
 
@@ -48,8 +53,8 @@ def _item(session: Session, workspace_id: int, key: str) -> tuple[Item, JiraIssu
 @router.get("/items/{key}/patches")
 def list_item_patches(workspace_id: int, key: str, session: SessionDep) -> list[PatchOut]:
     """Every migration patch of an item, newest first; without the patch text."""
-    item, issue = _item(session, workspace_id, key)
-    current = {patch.id for a in current_diffs(session, issue.id) if (patch := current_patch(session, diff_scan(session, a.id)))}
+    item, _ = _item(session, workspace_id, key)
+    current = {patch.id for patch in current_patches(session, item)}
     rows = session.execute(
         select(MigrationPatch, Attachment)
         .outerjoin(Attachment, MigrationPatch.attachment_id == Attachment.id)
@@ -66,6 +71,10 @@ def list_item_patches(workspace_id: int, key: str, session: SessionDep) -> list[
             source=patch.source,
             level=patch.level,
             base_head=patch.base_head,
+            base_patch_ids=patch.base_patch_ids,
+            review=patch.review,
+            review_note=patch.review_note,
+            findings=patch.findings,
             author=patch.author,
             message=patch.message,
             current=patch.id in current,
