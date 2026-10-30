@@ -16,9 +16,9 @@ Source of requirements: [spec.md](spec.md).
 |----|---------------|--------|
 | MS1 | Import + web UI (workspaces, backlog, item detail, settings, manual clustering) | Planned (below) |
 | MS2-1 | Pre-scan without Copilot (repo mapping, already-present check, apply check, triage labels) | Planned (below) |
-| MS6 | Deterministic migration patch (levels 1 + 2) and build of affected modules | Planned ([PLAN-MS6.md](PLAN-MS6.md)), next |
-| MS2-2 | Copilot evaluation on demand, dependencies, cluster suggestions | Needs grilling, after MS6 |
-| MS5 | Migration level 3 (Copilot re-implementation), adds `ai` patches to the MS6 flow | Needs grilling |
+| MS6 | Deterministic migration patch (levels 1 + 2) and build of affected modules | Done except manual acceptance ([PLAN-MS6.md](PLAN-MS6.md)) |
+| MS5 | Rework of conflicting items: dependency-aware patches, then Copilot (migration level 3), adds `ai` patches to the MS6 flow | Planned ([PLAN-MS5.md](PLAN-MS5.md)), next |
+| MS2-2 | Copilot evaluation on demand, dependencies, cluster suggestions | Needs grilling, after MS5 |
 | MS6-2 | Optional tests (CTS / atest) after a successful build | Needs grilling |
 | MS7 | Human review | Needs grilling |
 | MS8 | Push (Jira comment, GitHub branch + PR) | Needs grilling |
@@ -27,8 +27,8 @@ MS3 (level 1) and MS4 (level 2) are merged into MS6: the pre-scan apply check al
 
 Parked questions (from the MS1 grilling), to settle when their milestone starts:
 
-- How Copilot is invoked (Copilot CLI behind an adapter recommended). MS2-2/MS5.
-- Token budget split: deterministic first, LLM only where needed. MS2-2/MS5.
+- How Copilot is invoked (Copilot CLI behind an adapter recommended). Settled for MS5 in [PLAN-MS5.md](PLAN-MS5.md).
+- Token budget split: deterministic first, LLM only where needed. Settled for MS5 (rework ladder).
 - Push target: GitHub per-repo branch + PR, remote mapping per repo, Gerrit out of scope. MS8.
 - Backlog "start migration level" action from spec Module 1: "Build selected" in MS6; level 3 in MS5.
 - From the MS2 grilling: `git` / `plain` target trees, cheap-model-first Copilot tier, auto pre-scan after import, fetch/mirror cache for history lookups.
@@ -266,6 +266,10 @@ History: 2.1–2.5 were first built on branch `ms2`. Branch `ms2-1` (from `main`
 
 Sub-plan: [PLAN-MS6.md](PLAN-MS6.md).
 
+## MS5 — Rework: dependency-aware patches, then Copilot
+
+Sub-plan: [PLAN-MS5.md](PLAN-MS5.md).
+
 ## Backlog: UI refinement (backlog page)
 
 Done. Playwright specs updated but not yet run after the change.
@@ -303,6 +307,6 @@ Needs grilling. Input from the first MS2 plan, to revisit:
 - **Trigger:** manual, per item or selection ("Ask Copilot"), not an automatic stage. Candidates: `unmapped`, `partial`, `likely_present`, `conflicts`, or any item the user wants checked.
 - **Adapter:** standalone `copilot` CLI behind an interface, built on `ms2` (commit `40cd8a2`): `copilot -p PROMPT -s --no-ask-user [--model=M]` with tools denied; read-only escalation as opt-in; settings for binary, model, token cap; "test Copilot" button. Live test still pending.
 - **Context bundle:** fixed priority under a token cap (ticket text, diffs, target code around hunks, MS2-1 findings, linked implementation tickets, source commit, PR discussion off by default). Stored with the verdict.
-- **Verdict:** strict JSON: `makes_sense`, `still_required`, `already_present` (`yes|no|unsure` + reason), `repo` when unmapped, `depends_on`, `confidence`, `summary` (reused by MS5). Advisory; user accepts or overrides.
+- **Verdict:** strict JSON: `makes_sense`, `still_required`, `already_present` (`yes|no|unsure` + reason), `repo` when unmapped, `depends_on`, `confidence`, `summary` (added to the MS5 context bundle once it exists). Advisory; user accepts or overrides.
 - **Dependencies:** candidate graph from 2.3 (files/hunks, Jira links, `[PATCH n/m]` series, symbols); which edges count without Copilot; dependency-ordered apply check on a temp index.
 - **Clusters:** suggestions from edges; accept creates/extends an MS1 cluster, dismiss remembered.
