@@ -297,9 +297,12 @@ class BlockingClient:
 def test_cancel_mid_job_and_one_job_per_workspace(jira_config: Config, client_factory: Callable[[], JiraClient], tmp_path: Path) -> None:
     blocking: list[BlockingClient] = []
     block_on = ["PROJ-105"]
+    # The job thread builds its client after the POST returns, so wait for it.
+    created = threading.Event()
 
     def factory() -> JiraClient:
         blocking.append(BlockingClient(client_factory(), block_on[0]))
+        created.set()
         return blocking[-1]  # type: ignore[return-value]
 
     app = create_app(jira_config, jira_client_factory=factory)
@@ -309,6 +312,7 @@ def test_cancel_mid_job_and_one_job_per_workspace(jira_config: Config, client_fa
     workspace_id = client.post("/api/workspaces", json={"name": "A15", "jql": "x", "target_tree": str(tree)}).json()["id"]
 
     job = client.post(f"/api/workspaces/{workspace_id}/import", json={}).json()
+    assert created.wait(10)
     assert blocking[0].reached.wait(10)
 
     second = client.post(f"/api/workspaces/{workspace_id}/import", json={})
