@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.api.build import BUILD_STATUSES
+from aosp_migrator.api.rework import REWORK_STATUSES
 from aosp_migrator.config import JIRA_BASE_URL, Config
 from aosp_migrator.db.models import (
     Attachment,
@@ -40,7 +41,7 @@ issue_fts = table("issue_fts", column("rowid"), column("key"), column("summary")
 TRIGRAM = 3
 
 Sort = Literal["key", "-key", "updated", "-updated", "status", "-status", "state", "-state"]
-Group = Literal["project", "cluster", "triage", "build", "status", "state"]
+Group = Literal["project", "cluster", "triage", "build", "rework", "status", "state"]
 
 
 def natural_key(key: str) -> tuple[str, int]:
@@ -84,6 +85,9 @@ class ItemOut(BaseModel):
     # Result of the last finished build and why; None until built.
     build_status: str | None
     build_reason: str | None
+    # Outcome of the last finished rework or review and why; None until reworked.
+    rework_status: str | None
+    rework_reason: str | None
 
 
 class ItemPage(BaseModel):
@@ -268,6 +272,14 @@ def _build(statuses: list[str]) -> ColumnElement[bool]:
     return or_(condition, Item.build_status.is_(None)) if "none" in statuses else condition
 
 
+def _rework(statuses: list[str]) -> ColumnElement[bool]:
+    """Any of the rework statuses; `none` matches items never reworked."""
+    if unknown := [s for s in statuses if s != "none" and s not in REWORK_STATUSES]:
+        raise HTTPException(status_code=422, detail=f"Unknown rework status: {', '.join(unknown)}")
+    condition = Item.rework_status.in_([s for s in statuses if s != "none"])
+    return or_(condition, Item.rework_status.is_(None)) if "none" in statuses else condition
+
+
 def _project_group() -> Any:
     """The item's target projects, sorted and joined with ", "; NULL while none is mapped."""
     projects = (
@@ -306,6 +318,8 @@ def _group_key(group: Group | None) -> list[Any]:
         column = case({label: i for i, label in enumerate(ORDER)}, value=Item.triage_label)
     elif group == "build":
         column = case({status: i for i, status in enumerate(BUILD_STATUSES)}, value=Item.build_status)
+    elif group == "rework":
+        column = case({status: i for i, status in enumerate(REWORK_STATUSES)}, value=Item.rework_status)
     else:
         column = {"cluster": Cluster.name, "status": JiraIssue.status, "state": Item.local_state}[group]
     return [column.is_(None), column]
@@ -329,6 +343,7 @@ def list_items(
     stale: bool | None = None,
     depends: bool | None = None,
     build: ListParam = None,
+    rework: ListParam = None,
     sort: Sort = "key",
     group: Group | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -336,7 +351,7 @@ def list_items(
 ) -> ItemPage:
     """Backlog items. Filters combine with AND; several values of one filter match any of them.
 
-    `group` orders by that value first (target projects, cluster, pre-scan label, build status, Jira status or state;
+    `group` orders by that value first (target projects, cluster, pre-scan label, build or rework status, Jira status or state;
     items without one last), then by `sort`.
     """
     workspace = _workspace(session, workspace_id)
@@ -364,6 +379,8 @@ def list_items(
         conditions.append(_triage(triage))
     if build:
         conditions.append(_build(build))
+    if rework:
+        conditions.append(_rework(rework))
     if stale is not None:
         # Needs every scanned item's HEADs, so only when asked for.
         stale_ids = list(stale_items(session, workspace_id, tree))
@@ -417,6 +434,8 @@ def list_items(
             dependencies=dependencies.get(item.id, []),
             build_status=item.build_status,
             build_reason=item.build_reason,
+            rework_status=item.rework_status,
+            rework_reason=item.rework_reason,
         )
         for item, issue, count, cluster_id, cluster_name in rows
     ]

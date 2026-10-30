@@ -29,6 +29,10 @@ Per unit:
 
 A failing unit does not stop the job. At startup, running jobs are marked failed and
 every unit still in flight is restored (`recover_inflight`).
+
+A rework attempt builds its patches the same way (`BuildRunner.build_patches`): one unit
+of given patches, a run with the attempt instead of a job; the items' build status is
+left alone. A build is refused while a rework job runs in the workspace.
 """
 
 import logging
@@ -51,7 +55,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from aosp_migrator.build import tree as target
 from aosp_migrator.build.env import build_root, envsetup_path
 from aosp_migrator.build.modules import DEFAULT_DEPENDENTS_CAP, AffectedModules, affected_modules, changed_files, widening_files
-from aosp_migrator.db.models import BuildJob, BuildRun, ClusterMember, HistoryEvent, Item, JiraIssue, MigrationPatch, Workspace, utcnow
+from aosp_migrator.db.models import (
+    BuildJob,
+    BuildRun,
+    ClusterMember,
+    HistoryEvent,
+    Item,
+    JiraIssue,
+    MigrationPatch,
+    ReworkAttempt,
+    ReworkJob,
+    Workspace,
+    utcnow,
+)
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan.chain import base_patches, current_patches, is_rework, patch_plan, stale_items
 from aosp_migrator.prescan.runner import scan_item, stack_diff, target_projects, triage_item
@@ -67,7 +83,7 @@ SUMMARY_LINES = 20
 
 
 class BuildJobConflict(Exception):
-    """A build is already running for the workspace."""
+    """A build or a rework is already running for the workspace."""
 
 
 class BuildError(Exception):
@@ -114,9 +130,13 @@ def recover_inflight(session: Session) -> None:
         run.summary = "Interrupted by a server restart"
         run.finished_at = utcnow()
     session.commit()
-    for run, workspace in session.execute(
-        select(BuildRun, Workspace).join(BuildJob, BuildRun.job_id == BuildJob.id).join(Workspace).where(BuildRun.inflight.is_not(None))
-    ):
+    rows = [
+        *session.execute(select(BuildRun, Workspace).join(BuildJob, BuildRun.job_id == BuildJob.id).join(Workspace).where(BuildRun.inflight.is_not(None))),
+        *session.execute(
+            select(BuildRun, Workspace).join(ReworkAttempt, BuildRun.attempt_id == ReworkAttempt.id).join(Workspace).where(BuildRun.inflight.is_not(None))
+        ),
+    ]
+    for run, workspace in rows:
         assert run.inflight is not None
         try:
             target.restore(Path(workspace.target_tree), target.InFlight.from_json(run.inflight))
@@ -154,6 +174,8 @@ class _Unit:
     cluster_id: int | None = None
     stacked: bool = False
     patches: list[MigrationPatch] = field(default_factory=list)
+    # Patches to apply as they are, in order (a rework attempt's); None: the items' own.
+    given: list[target.UnitPatch] | None = None
 
     @property
     def keys(self) -> list[str]:
@@ -186,9 +208,11 @@ class BuildRunner:
         with self._lock, self._sessions() as session:
             if running_job(session, workspace_id) is not None:
                 raise BuildJobConflict("A build is already running for this workspace")
+            if session.scalar(select(ReworkJob.id).where(ReworkJob.workspace_id == workspace_id, ReworkJob.status == "running")):
+                raise BuildJobConflict("A rework is running for this workspace; build when it is done")
             workspace = session.get(Workspace, workspace_id)
             assert workspace is not None
-            _check_environment(workspace)
+            check_environment(workspace)
             selected = _cluster_items(session, cluster_id) if cluster_id is not None else _items(session, workspace_id, keys or [])
             # Stacked: the stack decides, as in a stacked pre-scan; an item may only apply on the ones before it.
             reasons = {issue.key: None if stacked else _not_buildable(session, item) for item, issue in selected}
@@ -223,6 +247,24 @@ class BuildRunner:
                 log.exception("Build job %s failed", job_id)
                 self._finish(session, job, "failed", f"Unexpected error: {exc}")
 
+    def build_patches(
+        self, session: Session, workspace: Workspace, attempt: ReworkAttempt, item_ids: list[int], patches: list[target.UnitPatch], cancel: Callable[[], bool]
+    ) -> BuildRun:
+        """Build `patches` (applied as they are, in order) as one unit for a rework attempt, in the calling thread.
+
+        The run's status is `canceled` when `cancel` stopped it; the items' build status is not changed.
+        """
+        check_environment(workspace)
+        job = _Job(session, None, self._builds_dir(workspace.id), self._upstream_domains(), self._kill_grace, self._dependents_cap(), cancel, attempt.id)
+        job.workspace, job.tree = workspace, Path(workspace.target_tree)
+        job.builds_dir.mkdir(parents=True, exist_ok=True)
+        rows = {item.id: (item, issue) for item, issue in session.execute(select(Item, JiraIssue).join(JiraIssue, Item.issue_id == JiraIssue.id).where(Item.id.in_(item_ids)))}
+        try:
+            return job._build(_Unit([rows[i] for i in item_ids], given=patches))
+        except _Canceled:
+            assert job.last_run is not None
+            return job.last_run
+
     @staticmethod
     def _finish(session: Session, job: BuildJob, status: str, error: str | None = None) -> None:
         session.rollback()
@@ -232,7 +274,8 @@ class BuildRunner:
         session.commit()
 
 
-def _check_environment(workspace: Workspace) -> None:
+def check_environment(workspace: Workspace) -> None:
+    """Raises `BuildError` when the workspace cannot build (no lunch target, no envsetup.sh)."""
     if not workspace.lunch_target:
         raise BuildError("Set a lunch target in the workspace settings to build")
     envsetup = envsetup_path(workspace)
@@ -282,16 +325,22 @@ def _cluster_items(session: Session, cluster_id: int) -> list[tuple[Item, JiraIs
 @dataclass
 class _Job:
     session: Session
-    job: BuildJob
+    job: BuildJob | None  # None for a rework attempt's build
     builds_dir: Path
     upstream_domains: list[str]
     kill_grace: float
     dependents_cap: int = DEFAULT_DEPENDENTS_CAP
+    # A rework attempt's build: its cancel check and id, instead of the job's.
+    cancel: Callable[[], bool] | None = None
+    attempt_id: int | None = None
+    # The run `_build` made last.
+    last_run: BuildRun | None = None
 
     def run(self) -> None:
+        assert self.job is not None
         workspace = self.session.get(Workspace, self.job.workspace_id)
         assert workspace is not None
-        _check_environment(workspace)
+        check_environment(workspace)
         self.workspace = workspace
         self.tree = Path(workspace.target_tree)
         self.builds_dir.mkdir(parents=True, exist_ok=True)
@@ -312,18 +361,24 @@ class _Job:
             except Exception as exc:
                 log.exception("Build of %s failed", ", ".join(unit.keys))
                 self.session.rollback()
+                assert self.job is not None
                 # Reassign: in-place changes to a JSON column are not tracked.
                 self.job.errors = [*self.job.errors, {"keys": unit.keys, "message": str(exc)}]
             self.job.done += 1
             self.session.commit()
 
-    def _build(self, unit: _Unit) -> None:
-        run = BuildRun(job_id=self.job.id, item_ids=[item.id for item, _ in unit.items], cluster_id=unit.cluster_id, patch_ids=[], modules=[])
+    def _build(self, unit: _Unit) -> BuildRun:
+        job_id = self.job.id if self.job is not None else None
+        run = BuildRun(
+            job_id=job_id, attempt_id=self.attempt_id, item_ids=[item.id for item, _ in unit.items], cluster_id=unit.cluster_id, patch_ids=[], modules=[]
+        )
         self.session.add(run)
         self.session.flush()
+        self.last_run = run
         run.log_path = str(self.builds_dir / f"{run.id}.log")
+        origin = {"job_id": job_id} if self.job is not None else {"attempt_id": self.attempt_id}
         for item, _ in unit.items:
-            self.session.add(HistoryEvent(item_id=item.id, type="build_started", payload={"run_id": run.id, "job_id": self.job.id}))
+            self.session.add(HistoryEvent(item_id=item.id, type="build_started", payload={"run_id": run.id, **origin}))
         self.session.commit()
 
         try:
@@ -335,12 +390,13 @@ class _Job:
             raise
         run.status, run.summary, run.finished_at = status, summary, utcnow()
         for item, _ in unit.items:
-            if status != "canceled":
+            if status != "canceled" and self.job is not None:
                 item.build_status, item.build_reason, item.built_at = status, summary, run.finished_at
             self.session.add(HistoryEvent(item_id=item.id, type="build_finished", payload={"run_id": run.id, "status": status, "summary": summary}))
         self.session.commit()
         if status == "canceled":
             raise _Canceled
+        return run
 
     def _apply_build_restore(self, unit: _Unit, run: BuildRun) -> tuple[str, str]:
         """Status and summary of the unit; the tree is restored whatever happens, unless restoring fails."""
@@ -356,7 +412,9 @@ class _Job:
                 return failed.status, failed.summary
 
     def _apply_and_build(self, unit: _Unit, run: BuildRun, log_file: TextIO) -> tuple[str, str]:
-        if unit.stacked:
+        if unit.given is not None:
+            unit_patches = unit.given
+        elif unit.stacked:
             unit_patches = self._stacked_patches(unit, run, log_file)
         else:
             patches = self._patches(unit)
@@ -476,6 +534,7 @@ class _Job:
                 item.build_status, item.build_reason, item.built_at = "apply_failed", summary, utcnow()
                 self.session.add(HistoryEvent(item_id=item.id, type="build_finished", payload={"run_id": run.id, "status": "apply_failed", "summary": summary}))
                 # Reassign: in-place changes to a JSON column are not tracked.
+                assert self.job is not None
                 self.job.skipped = [*self.job.skipped, {"key": issue.key, "reason": summary}]
         unit.items = built
         run.item_ids = [item.id for item, _ in built]
@@ -535,6 +594,9 @@ class _Job:
         self.session.commit()
 
     def _cancel_requested(self) -> bool:
+        if self.cancel is not None:
+            return self.cancel()
+        assert self.job is not None
         self.session.refresh(self.job, ["cancel_requested"])
         return self.job.cancel_requested
 

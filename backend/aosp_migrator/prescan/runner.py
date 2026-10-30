@@ -25,7 +25,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
-from aosp_migrator.db.models import Attachment, DiffDependency, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace, utcnow
+from aosp_migrator.db.models import Attachment, DiffDependency, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, MigrationPatch, PrescanJob, ReworkJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import ApplyCheck, check_apply
@@ -43,7 +43,7 @@ KEPT_SOURCES = ("copilot", "manual")
 
 
 class JobConflictError(Exception):
-    """A pre-scan or an import is already running for the workspace."""
+    """A pre-scan, an import or a rework is already running for the workspace."""
 
 
 class PrescanError(Exception):
@@ -189,6 +189,8 @@ class PrescanRunner:
             raise JobConflictError("A pre-scan is already running for this workspace")
         if session.scalar(select(ImportJob.id).where(ImportJob.workspace_id == workspace_id, ImportJob.status == "running")):
             raise JobConflictError("An import is running for this workspace; pre-scan when it is done")
+        if session.scalar(select(ReworkJob.id).where(ReworkJob.workspace_id == workspace_id, ReworkJob.status == "running")):
+            raise JobConflictError("A rework is running for this workspace; pre-scan when it is done")
 
     def run(self, job_id: int) -> None:
         with self._sessions() as session:

@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.build.runner import BuildError, BuildJobConflict, BuildRunner
-from aosp_migrator.db.models import BuildJob, BuildRun, Cluster, Item, JiraIssue, Workspace
+from aosp_migrator.db.models import BuildJob, BuildRun, Cluster, Item, JiraIssue, ReworkAttempt, Workspace
+from aosp_migrator.rework.attempt import rework_candidates
 
 router = APIRouter()
 
@@ -52,11 +53,15 @@ class BuildJobOut(BaseModel):
     unit_keys: list[str] | None = None
     # Last lines of that unit's log.
     log_tail: str | None = None
+    # Once finished: keys of its items (built or skipped) worth a rework, conflicts or a failed `ai` patch.
+    rework_candidates: list[str] = []
 
 
 class BuildRunOut(BaseModel):
     id: int
-    job_id: int
+    # The build job, or the rework attempt whose patch it built.
+    job_id: int | None
+    attempt_id: int | None
     # Every item of the unit, in build order (several for a cluster).
     keys: list[str]
     cluster_id: int | None
@@ -113,6 +118,8 @@ def _job_out(session: Session, job: BuildJob) -> BuildJobOut:
         out.unit_keys = [keys[i] for i in run.item_ids if i in keys]
         if run.log_path and Path(run.log_path).is_file():
             out.log_tail = log_tail(Path(run.log_path))
+    if job.status != "running":
+        out.rework_candidates = rework_candidates(session, job.workspace_id, [*job.issue_keys, *(s["key"] for s in job.skipped)])
     return out
 
 
@@ -195,6 +202,7 @@ def list_item_builds(workspace_id: int, key: str, session: SessionDep) -> list[B
         BuildRunOut(
             id=run.id,
             job_id=run.job_id,
+            attempt_id=run.attempt_id,
             keys=[keys[i] for i in run.item_ids if i in keys],
             cluster_id=run.cluster_id,
             patch_ids=run.patch_ids,
@@ -216,6 +224,8 @@ def get_build_log(workspace_id: int, run_id: int, session: SessionDep) -> PlainT
     """The full log of a build run, as plain text."""
     run = session.scalar(
         select(BuildRun).join(BuildJob, BuildRun.job_id == BuildJob.id).where(BuildRun.id == run_id, BuildJob.workspace_id == workspace_id)
+    ) or session.scalar(
+        select(BuildRun).join(ReworkAttempt, BuildRun.attempt_id == ReworkAttempt.id).where(BuildRun.id == run_id, ReworkAttempt.workspace_id == workspace_id)
     )
     if run is None or not run.log_path or not Path(run.log_path).is_file():
         raise HTTPException(status_code=404, detail="Build log not found")

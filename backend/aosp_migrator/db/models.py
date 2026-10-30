@@ -102,7 +102,7 @@ class Item(Base):
     build_reason: Mapped[str | None] = mapped_column(Text)
     built_at: Mapped[datetime | None]
     # Outcome of the item's last finished rework attempt (see rework/attempt.py); None until reworked.
-    rework_status: Mapped[str | None] = mapped_column(String, index=True)  # proposed / accepted / rework_failed
+    rework_status: Mapped[str | None] = mapped_column(String, index=True)  # proposed / accepted / rejected / rework_failed
     rework_reason: Mapped[str | None] = mapped_column(Text)
     reworked_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -362,12 +362,15 @@ class BuildJob(Base):
 
 
 class BuildRun(Base):
-    """One unit of a build job: its patches applied, its modules built, the tree restored. Kept for every attempt."""
+    """One unit of a build job, or one build of a rework attempt: its patches applied, its modules built, the tree restored.
+    Kept for every attempt."""
 
     __tablename__ = "build_run"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    job_id: Mapped[int] = mapped_column(ForeignKey("build_job.id", ondelete="CASCADE"), index=True)
+    # One of them: the build job, or the rework attempt whose patch it builds (build-fix loop).
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("build_job.id", ondelete="CASCADE"), index=True)
+    attempt_id: Mapped[int | None] = mapped_column(ForeignKey("rework_attempt.id", ondelete="CASCADE"), index=True)
     # Several for a cluster, in cluster order; for a stacked build the items that stacked, in stack order.
     item_ids: Mapped[list[Any]]
     cluster_id: Mapped[int | None] = mapped_column(ForeignKey("cluster.id", ondelete="SET NULL"))
@@ -388,6 +391,35 @@ class BuildRun(Base):
     finished_at: Mapped[datetime | None]
 
 
+class ReworkJob(Base):
+    """Rework of a selection: its units one after another, prerequisites first (see rework/runner.py)."""
+
+    __tablename__ = "rework_job"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    # The selected items, as given.
+    issue_keys: Mapped[list[Any]]
+    # {rungs, include_dependents, include, exclude, together, item_cap, job_cap, build_rounds}
+    options: Mapped[dict[str, Any]]
+    # Keys per unit to rework, in order.
+    units: Mapped[list[Any]]
+    # [{key, reason}] per item of the chain that is not reworked (left out, used as base as it is).
+    skipped: Mapped[list[Any]]
+    status: Mapped[str] = mapped_column(String, default="running")
+    done: Mapped[int] = mapped_column(default=0)
+    # Units.
+    total: Mapped[int]
+    # Copilot calls made so far.
+    calls: Mapped[int] = mapped_column(default=0)
+    # [{keys, message}] per unit that failed unexpectedly; the job itself carries on.
+    errors: Mapped[list[Any]]
+    error: Mapped[str | None] = mapped_column(Text)
+    cancel_requested: Mapped[bool] = mapped_column(default=False)
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None]
+
+
 class ReworkAttempt(Base):
     """One rework of an item, or of items reworked together (a unit), over its projects: rungs, Copilot calls, outcome."""
 
@@ -395,8 +427,8 @@ class ReworkAttempt(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
-    # The rework job that ran it (MS5 5.6); None when run on its own.
-    job_id: Mapped[int | None]
+    # The rework job that ran it; None when run on its own.
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("rework_job.id", ondelete="SET NULL"), index=True)
     # Several for a unit, in chain order.
     item_ids: Mapped[list[Any]]
     # Project path to its HEAD when the attempt started.
@@ -407,10 +439,12 @@ class ReworkAttempt(Base):
     rungs: Mapped[list[Any]] = mapped_column(default=list)
     # [{project, path, status, rung, error, notes}]: per file the rung that fixed it, or why it failed.
     files: Mapped[list[Any]] = mapped_column(default=list)
-    # [{project, rung, round, model, status, prompt_path, answer, error, usage, duration}] per Copilot call.
+    # [{project, rung, round, build_round, model, status, prompt_path, parts, answer, error, usage, duration}] per Copilot call.
     calls: Mapped[list[Any]] = mapped_column(default=list)
-    # Build runs of the build-fix loop (5.6).
+    # Build runs of the build-fix loop, in order.
     build_run_ids: Mapped[list[Any]] = mapped_column(default=list)
+    # What the attempt left out or could not do, e.g. a prerequisite reworked without.
+    notes: Mapped[list[Any]] = mapped_column(default=list, server_default=text("'[]'"))
     status: Mapped[str] = mapped_column(String, default="running")  # running / patched / failed / canceled / error
     reason: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(default=utcnow)

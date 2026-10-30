@@ -189,6 +189,12 @@ class Scratch:
         git.git(self.path, "add", "-A", "--sparse")
         return git.git(self.path, *_DIFF, "--cached", self.base).stdout or None
 
+    def commit(self, message: str) -> None:
+        """Commit the change so far: it becomes part of the base (the next item of a unit goes on top of it)."""
+        if self.patch() is not None:
+            git.git(self.path, "commit", "-q", "--no-verify", "-m", message)
+            self.base = git.git(self.path, "rev-parse", "HEAD").stdout.strip()
+
     def remove(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
 
