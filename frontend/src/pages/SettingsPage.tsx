@@ -18,6 +18,7 @@ export function SettingsPage() {
           <JiraSettingsForm settings={settings.data} />
           <PrescanSettingsForm settings={settings.data} />
           <CopilotSettingsForm settings={settings.data} />
+          <BuildSettingsForm settings={settings.data} />
         </>
       )}
     </>
@@ -261,6 +262,56 @@ function CopilotSettingsForm({ settings }: { settings: Settings }) {
         </p>
       )}
       {testResult && !testResult.ok && <p className="error">{testResult.error}</p>}
+    </form>
+  );
+}
+
+function BuildSettingsForm({ settings }: { settings: Settings }) {
+  const queryClient = useQueryClient();
+  const { dependents_cap } = settings.build;
+  // While unset the default shows as the placeholder, so saving does not pin it.
+  const stored = dependents_cap.source === "unset" ? "" : String(dependents_cap.value);
+  const [cap, setCap] = useState(stored);
+
+  useEffect(() => setCap(stored), [stored]);
+
+  const save = useMutation({
+    mutationFn: api.updateSettings,
+    onSuccess: (data) => queryClient.setQueryData(settingsKey, data),
+  });
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    // Empty restores the default.
+    save.mutate({ build: { dependents_cap: cap === "" ? -1 : Number(cap) } });
+  }
+
+  const env = dependents_cap.source === "env";
+  return (
+    <form onSubmit={submit} className="form" aria-label="Build">
+      <h2>Build</h2>
+      <label>
+        Dependent modules per build
+        <input
+          type="number"
+          value={cap}
+          placeholder={dependents_cap.source === "unset" ? String(dependents_cap.value) : ""}
+          disabled={env}
+          onChange={(e) => setCap(e.target.value)}
+        />
+      </label>
+      <p className="hint">
+        {env
+          ? "Set by AOSP_MIGRATOR_BUILD_DEPENDENTS_CAP."
+          : "A change to a header, an Android.bp / .mk, an AIDL file or a public Java API also builds the modules using the changed ones, at most this many; 0 for none. Needs module-info.json."}
+      </p>
+      <div className="actions">
+        <button type="submit" disabled={save.isPending || env}>
+          Save
+        </button>
+      </div>
+      {save.isError && <p className="error">{save.error.message}</p>}
+      {save.isSuccess && <p className="success">Saved.</p>}
     </form>
   );
 }

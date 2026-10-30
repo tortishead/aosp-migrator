@@ -25,6 +25,7 @@ function settings(overrides: Partial<Settings["jira"]> = {}, domains: { source: 
       job_cap: { source: "env", value: 50 },
       build_rounds: { source: "unset", value: 2 },
     },
+    build: { dependents_cap: { source: "unset", value: 20 } },
   };
 }
 
@@ -158,7 +159,22 @@ describe("SettingsPage", () => {
     });
   });
 
-  it("tests Copilot with the unsaved binary and model", async () => {
+  it("saves the dependents cap, empty restoring the default", async () => {
+    const calls = mockApi({ "GET /settings": () => settings(), "PUT /settings": () => settings() });
+    renderRoute("/settings");
+    const form = within(await screen.findByRole("form", { name: "Build" }));
+    const cap = form.getByLabelText("Dependent modules per build");
+    expect(cap).toHaveValue(null);
+    expect(cap).toHaveAttribute("placeholder", "20");
+    await userEvent.type(cap, "5");
+    await userEvent.click(form.getByRole("button", { name: "Save" }));
+    expect(await form.findByText("Saved.")).toBeInTheDocument();
+    await userEvent.clear(cap);
+    await userEvent.click(form.getByRole("button", { name: "Save" }));
+    expect(calls.filter((c) => c.method === "PUT").map((c) => c.body)).toEqual([{ build: { dependents_cap: 5 } }, { build: { dependents_cap: -1 } }]);
+  });
+
+    it("tests Copilot with the unsaved binary and model", async () => {
     const calls = mockApi({
       "GET /settings": () => settings(),
       "POST /settings/copilot/test": () => ({ ok: true, version: "1.0.105", model: "gpt-5-mini", reply: "OK", usage: {} }),

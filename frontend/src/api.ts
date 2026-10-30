@@ -53,12 +53,18 @@ export interface Settings {
     job_cap: { source: Source; value: number };
     build_rounds: { source: Source; value: number };
   };
+  build: {
+    /** Most modules using a changed header, export or API that a build adds; 0 for none. */
+    dependents_cap: { source: Source; value: number };
+  };
 }
 
 /** Each field: omitted leaves it unchanged; "" (models, binary), 0 (numbers) or -1 (build rounds) restores the default. */
 export interface CopilotSettingsUpdate {
   copilot?: { binary?: string; model_resolve?: string; model_port?: string; model_reimpl?: string; timeout?: number };
   rework?: { item_cap?: number; job_cap?: number; build_rounds?: number };
+  /** -1 restores the default. */
+  build?: { dependents_cap?: number };
 }
 
 export interface CopilotTestResult {

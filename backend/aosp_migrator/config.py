@@ -46,6 +46,8 @@ COPILOT_TIMEOUT = Field("copilot", "timeout", "AOSP_MIGRATOR_COPILOT_TIMEOUT", s
 REWORK_ITEM_CAP = Field("rework", "item_cap", "AOSP_MIGRATOR_REWORK_ITEM_CAP", secret=False)
 REWORK_JOB_CAP = Field("rework", "job_cap", "AOSP_MIGRATOR_REWORK_JOB_CAP", secret=False)
 REWORK_BUILD_ROUNDS = Field("rework", "build_rounds", "AOSP_MIGRATOR_REWORK_BUILD_ROUNDS", secret=False)
+# Most modules using a changed header, export or API that a build adds; 0 for none.
+BUILD_DEPENDENTS_CAP = Field("build", "dependents_cap", "AOSP_MIGRATOR_BUILD_DEPENDENTS_CAP", secret=False)
 
 FIELDS = (
     JIRA_BASE_URL,
@@ -61,6 +63,7 @@ FIELDS = (
     REWORK_ITEM_CAP,
     REWORK_JOB_CAP,
     REWORK_BUILD_ROUNDS,
+    BUILD_DEPENDENTS_CAP,
 )
 DEFAULT_UPSTREAM_DOMAINS = ("google.com", "android.com")
 DEFAULT_COPILOT_BINARY = "copilot"
@@ -70,6 +73,7 @@ INT_SETTINGS: dict[Field, tuple[int, int, int]] = {
     REWORK_ITEM_CAP: (5, 1, 50),
     REWORK_JOB_CAP: (100, 1, 10000),
     REWORK_BUILD_ROUNDS: (2, 0, 10),
+    BUILD_DEPENDENTS_CAP: (20, 0, 1000),
 }
 # Rework rung to its model field.
 COPILOT_MODELS = {"resolve": COPILOT_MODEL_RESOLVE, "port": COPILOT_MODEL_PORT, "reimpl": COPILOT_MODEL_REIMPL}
@@ -204,4 +208,5 @@ class Config:
         view["rework"] = {
             field.key: {"source": self.get_with_source(field)[1], "value": self.get_int(field)} for field in (REWORK_ITEM_CAP, REWORK_JOB_CAP, REWORK_BUILD_ROUNDS)
         }
+        view["build"] = {"dependents_cap": {"source": self.get_with_source(BUILD_DEPENDENTS_CAP)[1], "value": self.get_int(BUILD_DEPENDENTS_CAP)}}
         return view

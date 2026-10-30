@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from aosp_migrator import db
 from aosp_migrator.api import auth, build, clusters, health, imports, items, migration, prescan, settings, workspaces
 from aosp_migrator.build import runner as build_runner
-from aosp_migrator.config import Config, resolve_data_dir
+from aosp_migrator.config import BUILD_DEPENDENTS_CAP, Config, resolve_data_dir
 from aosp_migrator.importer.runner import ImportRunner, fail_interrupted_jobs
 from aosp_migrator.jira import JiraClient, client_from_config
 from aosp_migrator.prescan import runner as prescan_runner
@@ -48,7 +48,9 @@ def create_app(
         jira_client_factory or (lambda: client_from_config(config, http_transport)),
     )
     app.state.prescan_runner = prescan_runner.PrescanRunner(app.state.sessionmaker, config.upstream_domains)
-    app.state.build_runner = build_runner.BuildRunner(app.state.sessionmaker, config.builds_dir, config.upstream_domains)
+    app.state.build_runner = build_runner.BuildRunner(
+        app.state.sessionmaker, config.builds_dir, config.upstream_domains, dependents_cap=lambda: config.get_int(BUILD_DEPENDENTS_CAP)
+    )
 
     app.middleware("http")(auth.require_token)
     app.include_router(health.router, prefix="/api")
