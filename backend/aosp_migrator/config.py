@@ -36,8 +36,54 @@ LAN_TOKEN = Field("server", "lan_token", "AOSP_MIGRATOR_LAN_TOKEN", secret=True)
 # Comma-separated author email domains whose patches are looked up in target history.
 UPSTREAM_DOMAINS = Field("prescan", "upstream_domains", "AOSP_MIGRATOR_UPSTREAM_DOMAINS", secret=False)
 
-FIELDS = (JIRA_BASE_URL, JIRA_PAT, GITHUB_PAT, LAN_TOKEN, UPSTREAM_DOMAINS)
+# Copilot CLI for rework (MS5): binary, model per rung (unset: the CLI's default), seconds per call.
+COPILOT_BINARY = Field("copilot", "binary", "AOSP_MIGRATOR_COPILOT_BINARY", secret=False)
+COPILOT_MODEL_RESOLVE = Field("copilot", "model_resolve", "AOSP_MIGRATOR_COPILOT_MODEL_RESOLVE", secret=False)
+COPILOT_MODEL_PORT = Field("copilot", "model_port", "AOSP_MIGRATOR_COPILOT_MODEL_PORT", secret=False)
+COPILOT_MODEL_REIMPL = Field("copilot", "model_reimpl", "AOSP_MIGRATOR_COPILOT_MODEL_REIMPL", secret=False)
+COPILOT_TIMEOUT = Field("copilot", "timeout", "AOSP_MIGRATOR_COPILOT_TIMEOUT", secret=False)
+# Rework caps: Copilot calls per item and per job, build-fix rounds per attempt.
+REWORK_ITEM_CAP = Field("rework", "item_cap", "AOSP_MIGRATOR_REWORK_ITEM_CAP", secret=False)
+REWORK_JOB_CAP = Field("rework", "job_cap", "AOSP_MIGRATOR_REWORK_JOB_CAP", secret=False)
+REWORK_BUILD_ROUNDS = Field("rework", "build_rounds", "AOSP_MIGRATOR_REWORK_BUILD_ROUNDS", secret=False)
+
+FIELDS = (
+    JIRA_BASE_URL,
+    JIRA_PAT,
+    GITHUB_PAT,
+    LAN_TOKEN,
+    UPSTREAM_DOMAINS,
+    COPILOT_BINARY,
+    COPILOT_MODEL_RESOLVE,
+    COPILOT_MODEL_PORT,
+    COPILOT_MODEL_REIMPL,
+    COPILOT_TIMEOUT,
+    REWORK_ITEM_CAP,
+    REWORK_JOB_CAP,
+    REWORK_BUILD_ROUNDS,
+)
 DEFAULT_UPSTREAM_DOMAINS = ("google.com", "android.com")
+DEFAULT_COPILOT_BINARY = "copilot"
+# Field to (default, lowest, highest).
+INT_SETTINGS: dict[Field, tuple[int, int, int]] = {
+    COPILOT_TIMEOUT: (900, 30, 7200),
+    REWORK_ITEM_CAP: (5, 1, 50),
+    REWORK_JOB_CAP: (100, 1, 10000),
+    REWORK_BUILD_ROUNDS: (2, 0, 10),
+}
+# Rework rung to its model field.
+COPILOT_MODELS = {"resolve": COPILOT_MODEL_RESOLVE, "port": COPILOT_MODEL_PORT, "reimpl": COPILOT_MODEL_REIMPL}
+
+
+@dataclass(frozen=True)
+class CopilotSettings:
+    binary: str
+    # Rung to model; None: the CLI's default.
+    models: dict[str, str | None]
+    timeout: int
+    item_cap: int
+    job_cap: int
+    build_rounds: int
 
 
 def resolve_data_dir(cli_value: str | Path | None = None) -> Path:
@@ -109,6 +155,25 @@ class Config:
             return list(DEFAULT_UPSTREAM_DOMAINS)
         return [d.strip().lower() for d in value.split(",") if d.strip()]
 
+    def get_int(self, field: Field) -> int:
+        """An `INT_SETTINGS` value; its default when unset or out of range."""
+        default, low, high = INT_SETTINGS[field]
+        try:
+            value = int(self.get(field) or default)
+        except ValueError:
+            return default
+        return value if low <= value <= high else default
+
+    def copilot(self) -> CopilotSettings:
+        return CopilotSettings(
+            binary=self.get(COPILOT_BINARY) or DEFAULT_COPILOT_BINARY,
+            models={rung: self.get(field) for rung, field in COPILOT_MODELS.items()},
+            timeout=self.get_int(COPILOT_TIMEOUT),
+            item_cap=self.get_int(REWORK_ITEM_CAP),
+            job_cap=self.get_int(REWORK_JOB_CAP),
+            build_rounds=self.get_int(REWORK_BUILD_ROUNDS),
+        )
+
     def ensure_lan_token(self) -> str:
         token = self.get(LAN_TOKEN)
         if token is None:
@@ -129,4 +194,14 @@ class Config:
             view.setdefault(field.section, {})[field.key] = entry
         # The domains in effect: the defaults while unset.
         view["prescan"] = {"upstream_domains": {"source": self.get_with_source(UPSTREAM_DOMAINS)[1], "value": self.upstream_domains()}}
+        # Values in effect: defaults while unset; a model None is the CLI's default.
+        copilot = self.copilot()
+        view["copilot"] = {
+            "binary": {"source": self.get_with_source(COPILOT_BINARY)[1], "value": copilot.binary},
+            **{f"model_{rung}": {"source": self.get_with_source(field)[1], "value": copilot.models[rung]} for rung, field in COPILOT_MODELS.items()},
+            "timeout": {"source": self.get_with_source(COPILOT_TIMEOUT)[1], "value": copilot.timeout},
+        }
+        view["rework"] = {
+            field.key: {"source": self.get_with_source(field)[1], "value": self.get_int(field)} for field in (REWORK_ITEM_CAP, REWORK_JOB_CAP, REWORK_BUILD_ROUNDS)
+        }
         return view

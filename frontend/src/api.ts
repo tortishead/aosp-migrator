@@ -38,6 +38,36 @@ export interface Settings {
     /** The domains in effect: the defaults while unset. */
     upstream_domains: { source: Source; value: string[] };
   };
+  /** Values in effect: defaults while unset; a model null is the CLI's default. */
+  copilot: {
+    binary: { source: Source; value: string };
+    model_resolve: { source: Source; value: string | null };
+    model_port: { source: Source; value: string | null };
+    model_reimpl: { source: Source; value: string | null };
+    /** Seconds per Copilot call. */
+    timeout: { source: Source; value: number };
+  };
+  rework: {
+    /** Copilot calls per item and per job. */
+    item_cap: { source: Source; value: number };
+    job_cap: { source: Source; value: number };
+    build_rounds: { source: Source; value: number };
+  };
+}
+
+/** Each field: omitted leaves it unchanged; "" (models, binary), 0 (numbers) or -1 (build rounds) restores the default. */
+export interface CopilotSettingsUpdate {
+  copilot?: { binary?: string; model_resolve?: string; model_port?: string; model_reimpl?: string; timeout?: number };
+  rework?: { item_cap?: number; job_cap?: number; build_rounds?: number };
+}
+
+export interface CopilotTestResult {
+  ok: boolean;
+  version?: string;
+  model?: string | null;
+  reply?: string;
+  usage?: Record<string, unknown> | null;
+  error?: string;
 }
 
 export interface JiraTestResult {
@@ -508,10 +538,12 @@ export const api = {
     apiFetch<{ authenticated: boolean }>("/auth/login", { method: "POST", body: JSON.stringify({ token }) }),
   logout: () => apiFetch<{ authenticated: boolean }>("/auth/logout", { method: "POST" }),
   settings: () => apiFetch<Settings>("/settings"),
-  updateSettings: (update: { jira?: { base_url?: string; pat?: string }; prescan?: { upstream_domains: string } }) =>
+  updateSettings: (update: { jira?: { base_url?: string; pat?: string }; prescan?: { upstream_domains: string } } & CopilotSettingsUpdate) =>
     apiFetch<Settings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
   testJira: (values: { base_url?: string; pat?: string }) =>
     apiFetch<JiraTestResult>("/settings/jira/test", { method: "POST", body: JSON.stringify(values) }),
+  testCopilot: (values: { binary?: string; model?: string }) =>
+    apiFetch<CopilotTestResult>("/settings/copilot/test", { method: "POST", body: JSON.stringify(values) }),
   workspaces: () => apiFetch<Workspace[]>("/workspaces"),
   workspace: (id: number) => apiFetch<Workspace>(`/workspaces/${id}`),
   createWorkspace: (input: WorkspaceInput) =>
