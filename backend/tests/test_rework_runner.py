@@ -9,7 +9,7 @@ import pytest
 from fake_copilot import FAKE_COPILOT
 from fake_jira import FakeJiraServer, FakeJiraStore
 from fake_jira.build import write_envsetup
-from fake_jira.rework import CORE, PROPS, REGION, RESOLVED, rework_store
+from fake_jira.rework import BOOT, BOOT_MOVED, CORE, PROPS, REGION, RESOLVED, rework_store
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -387,7 +387,7 @@ def test_include_dependents_and_job_results_offer_rework(app: FastAPI, client: T
     build = build_runner(app, config).start(workspace, keys=["PROJ-111", "PROJ-101"])
     assert client.get(f"/api/build-jobs/{build.id}").json()["rework_candidates"] == ["PROJ-111"]
     prescan = client.get(f"/api/workspaces/{workspace}/prescan-jobs").json()[0]
-    assert prescan["rework_candidates"] == ["PROJ-104", "PROJ-111", "PROJ-112"]
+    assert prescan["rework_candidates"] == ["PROJ-104", "PROJ-111", "PROJ-112", "PROJ-113"]
     with session(app) as s:
         events = [e.type for e in s.scalars(select(HistoryEvent).where(HistoryEvent.item_id == item(app, "PROJ-111").id))]
         assert "rework_started" not in events
@@ -408,3 +408,28 @@ def test_item_already_in_the_target(app: FastAPI, client: TestClient, rework: Re
     start(client, workspace, ["PROJ-103"])
     (attempt,) = attempts(client, workspace, "PROJ-103")
     assert (attempt["status"], attempt["reason"], attempt["patch_ids"]) == ("failed", "nothing to change: already in the target", [])
+
+
+def test_reimplement_after_a_needs_reimplement_failure(app: FastAPI, client: TestClient, rework: ReworkRunner, workspace: int, target: Path, scenarios: Path, log: Path) -> None:
+    scenario(scenarios, "PROJ-113", {"reply": f"{BOOT_MOVED}: delay 3", "edits": [{"path": BOOT_MOVED, "old": "boot_delay = 0", "new": "boot_delay = 3"}]})
+    plan = client.post(f"/api/workspaces/{workspace}/rework/plan", json={"keys": ["PROJ-113"]}).json()
+    assert plan["rungs"] == ["resolve", "port"]
+    start(client, workspace, ["PROJ-113"])
+    (failed,) = attempts(client, workspace, "PROJ-113")
+    assert (failed["status"], failed["calls"]) == ("failed", []) and failed["reason"].endswith("(needs re-implement)")
+    # The next rework preselects re-implement.
+    plan = client.post(f"/api/workspaces/{workspace}/rework/plan", json={"keys": ["PROJ-113"]}).json()
+    assert plan["rungs"] == ["resolve", "port", "reimpl"]
+    before = snapshot(target)
+    job = start(client, workspace, ["PROJ-113"], rungs=plan["rungs"])
+    assert (job["status"], job["errors"], job["calls"]) == ("done", [], 1)
+    attempt = attempts(client, workspace, "PROJ-113")[0]
+    assert (attempt["status"], attempt["rungs"]) == ("patched", ["stack", "reimpl"])
+    (file,) = attempt["files"]
+    assert (file["path"], file["status"], file["rung"]) == (BOOT, "reimplemented", "reimpl") and file["notes"][0].startswith(f"moved to {BOOT_MOVED} (found by content")
+    (patch,) = [p for p in patches(client, workspace, "PROJ-113") if p["attempt_id"] == attempt["id"]]
+    assert (patch["source"], patch["level"], patch["review"]) == ("ai", "reimpl", "proposed")
+    assert any(f["severity"] == "warning" and f["message"].startswith("re-implemented from intent") for f in patch["findings"])
+    assert f"+++ b/{BOOT_MOVED}" in patch_text(app, patch["id"]) and "+int boot_delay = 3;" in patch_text(app, patch["id"])
+    assert "Re-implement what the change does" in calls(log)[0]["prompt"]
+    assert snapshot(target) == before

@@ -5,10 +5,12 @@ Priority (first kept first, the rest cut when the cap is reached):
 2. ticket key, summary and description (trimmed)
 3. the user's reject note and the previous attempt's failure reason
 4. the failing files: conflict regions with `CONTEXT` lines around (resolve), or the
-   `.rej` hunks plus the current code where they would go (port); in a fix round the
-   change so far for those files
+   `.rej` hunks plus the current code where they would go (port), or why the file did
+   not apply and where the target has it now (re-implement; Copilot reads it there); in
+   a fix round the change so far for those files
 5. the original diff's sections for those files
-6. per prerequisite touching those files: its summary and, for those files, its
+6. re-implement: the source tree's file before and after the change
+7. per prerequisite touching those files: its summary and, for those files, its
    original diff next to its migrated patch (renames and API changes the dependent
    needs too); "migrated unchanged" when they make the same changes
 The instructions (what to edit, what not to touch) open the prompt and the request for a
@@ -18,12 +20,13 @@ part, for the attempt.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 from aosp_migrator.prescan.patch import Patch
+from aosp_migrator.rework.locate import Location
 from aosp_migrator.rework.scratch import FileResult
 
 # Characters of context per call, instructions aside.
@@ -34,7 +37,7 @@ DESCRIPTION_CAP = 4_000
 CONTEXT = 10
 CUT = "\n[... cut at the size limit ...]\n"
 
-Rung = Literal["resolve", "port"]
+Rung = Literal["resolve", "port", "reimpl"]
 # What a fix round's feedback is: check findings, or the build's error lines.
 Feedback = Literal["checks", "build"]
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@", re.MULTILINE)
@@ -88,11 +91,18 @@ def instructions(rung: Rung, paths: Sequence[str], target: Path | None, fix_roun
             "Resolve every conflict region in place: keep this tree's code and apply what the change does to it. "
             "Remove every conflict marker."
         )
-    else:
+    elif rung == "port":
         task = (
             "A change from another Android tree is being ported into this checkout. The rest of it applied; the hunks below "
             "did not, as the code they change differs here. Edit the files below so that each hunk's change is made to the "
             "current code (where the code moved, where it is now)."
+        )
+    else:
+        task = (
+            "A change from another Android tree is being ported into this checkout. For the files below it could not be "
+            "applied at all: the file moved, was rewritten or is gone here. Re-implement what the change does, from its "
+            "intent (ticket, original change, the source file before and after it), in the files below as they are in this "
+            "tree. Where a file is gone, make the change where its code lives now; create the file only if it belongs here."
         )
     if fix_round == "checks":
         task += " Your previous edit did not pass the checks listed below: fix what they name."
@@ -122,9 +132,15 @@ def build(
     change_so_far: str | None = None,
     cap: int = CAP,
     feedback_kind: Feedback = "checks",
+    locations: Mapping[str, Location] | None = None,
 ) -> Bundle:
-    """The prompt for `files` (the failing ones, as rungs 1-2 or the previous round left them) in `checkout`."""
+    """The prompt for `files` (the failing ones, as rungs 1-2 or the previous round left them) in `checkout`.
+
+    `locations`: for re-implement, per file of the diff where the target has it; the files to edit are those.
+    """
+    locations = locations or {}
     paths = [f.path for f in files]
+    edit_paths = list(dict.fromkeys(locations[p].edit_path if p in locations else p for p in paths))
     parts: list[Part] = []
     if feedback and feedback_kind == "build":
         parts.append(Part("feedback", "## Build errors\n```\n" + "".join(f"{line}\n" for line in feedback) + "```\n"))
@@ -144,14 +160,17 @@ def build(
     if change_so_far:
         parts.append(Part("files", f"## Your change so far (against the base)\n```diff\n{change_so_far}```\n"))
     else:
-        parts.append(Part("files", "".join(_file_text(checkout, f) for f in files)))
+        parts.append(Part("files", "".join(_location_text(f, locations[f.path]) if f.path in locations else _file_text(checkout, f) for f in files)))
     sections = original_sections(originals, paths)
     if sections:
         parts.append(Part("original", f"## The original change for these files\n```diff\n{sections}```\n"))
+    source = "".join(_source_text(locations[p]) for p in paths if p in locations)
+    if source:
+        parts.append(Part("source", "## In the source tree, before and after the change\n" + source))
     prerequisites = "".join(_prerequisite_text(p, paths) for p in context.prerequisites)
     if prerequisites:
         parts.append(Part("prerequisites", "## Changes this one builds on (migrated before it)\n" + prerequisites))
-    return Bundle(instructions(rung, paths, target, feedback_kind if feedback else None) + "\n" + _cut(parts, cap) + CLOSING, parts)
+    return Bundle(instructions(rung, edit_paths, target, feedback_kind if feedback else None) + "\n" + _cut(parts, cap) + CLOSING, parts)
 
 
 def _cut(parts: list[Part], cap: int) -> str:
@@ -192,6 +211,27 @@ def _file_text(checkout: Path, result: FileResult) -> str:
         if match := _HUNK.match(hunk):
             start, length = int(match.group(1)), int(match.group(2) or 1)
             text += f"The file now around line {start}:\n```\n{_numbered(lines, start - CONTEXT, start + length + CONTEXT)}```\n"
+    return text
+
+
+def _location_text(result: FileResult, location: Location) -> str:
+    text = f"## {result.path}\nDid not apply: {result.error or result.status}.\n"
+    if location.how == "path":
+        return text + "The file is still here, changed too much for the change to apply: read it and edit it in place.\n"
+    if location.found is not None:
+        return text + f"In this tree it {location.describe()}: read it and edit it there.\n"
+    return text + (
+        "No file like it in this tree: it is gone. If the change still belongs here, create the file at its path with what "
+        "the change needs; if not, leave it and say why.\n"
+    )
+
+
+def _source_text(location: Location) -> str:
+    if location.before is None and location.after is None:
+        return ""
+    text = f"### {location.path}\n"
+    text += f"Before:\n```\n{location.before}```\n" if location.before is not None else "Before: (a new file)\n"
+    text += f"After:\n```\n{location.after}```\n" if location.after is not None else "After: (deleted)\n"
     return text
 
 

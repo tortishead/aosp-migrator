@@ -15,11 +15,12 @@ from aosp_migrator.config import Config, CopilotSettings
 from aosp_migrator.copilot.client import CopilotClient
 from aosp_migrator.db.models import Item, MigrationPatch, ReworkAttempt
 from aosp_migrator.prescan.chain import current_patches, patch_plan
-from aosp_migrator.rework import attempt, bundle, checks, intent, ladder
+from aosp_migrator.prescan.patch import Patch
+from aosp_migrator.rework import attempt, bundle, checks, intent, ladder, locate
 from aosp_migrator.rework.bundle import Context, Prerequisite
 from aosp_migrator.rework.checks import Finding
 from aosp_migrator.rework.ladder import BUDGET_REACHED, Budget, Copilot
-from aosp_migrator.rework.scratch import FileResult, Region
+from aosp_migrator.rework.scratch import FileResult, Region, Scratch, touched_files
 
 # The conflict `series` leaves in C without its first patch, diff3 style.
 REGION = "<<<<<<< ours\n||||||| base\nint b = 2;\n=======\nint b = 3;\n>>>>>>> theirs\n"
@@ -307,3 +308,78 @@ def test_attempt_record_patch_and_next_context(app: FastAPI, workspace: int, con
         assert row.rework_status == "proposed"
         assert s.query(MigrationPatch).filter(MigrationPatch.attempt_id == second.id).count() == 2
 
+
+
+# A file long enough to be found by content: lines of at least `locate.PROBE_MIN` characters.
+BODY = "".join(f"static int value_{n} = compute_value({n});\n" for n in range(8))
+MOVED = "init/moved/init_main.cpp"
+
+
+def reimpl_setup(tmp_path: Path, target_files: dict[str, str]) -> tuple[RepoTree, RepoTree, str]:
+    src = RepoTree(tmp_path / "src")
+    src.add_project(CORE, {C: BODY + "int b = 2;\n", "README": "core\n"})
+    diff = change(src, CORE, {C: BODY + "int b = 3;\n"}, "change b")
+    target = RepoTree(tmp_path / "aosp")
+    target.add_project(CORE, {"README": "core\n", **target_files})
+    return src, target, diff
+
+
+def test_reimplement_a_moved_file(tmp_path: Path, copilot: Copilot, scenarios: Path, log: Path) -> None:
+    # Moved and changed a little: found by content, not by name.
+    src, target, diff = reimpl_setup(tmp_path, {MOVED: "// moved here\n" + BODY.replace("value_7", "value_seven") + "int b = 2;\n"})
+    before = snapshot(target.root)
+    edit = {"reply": f"{MOVED}: b is three", "edits": [{"path": MOVED, "old": "int b = 2;", "new": "int b = 3;"}]}
+    context = scenario(scenarios, "moved", edit)
+    s = Scratch.create(tmp_path / "rework" / "1" / CORE, target.root / CORE, touched_files([diff]))
+    # Without re-implement selected: no call.
+    result = ladder.run(s, [diff], context, copilot, Budget(5), src.root / CORE)
+    assert (result.status, result.calls) == ("failed", []) and result.reason == f"{C}: {C}: No such file or directory {ladder.NEEDS_REIMPL}"
+
+    result = ladder.run(s, [diff], context, copilot, Budget(5), src.root / CORE, rungs=ladder.COPILOT_RUNGS)
+    assert (result.status, result.level, result.rungs, result.moved) == ("patched", "reimpl", ["stack", "reimpl"], {C: MOVED})
+    (file,) = result.files
+    assert (file["status"], file["rung"], file["notes"]) == ("reimplemented", "reimpl", [f"moved to {MOVED} (found by content: 7 of 8 lines)"])
+    assert result.patch is not None and f"+++ b/{MOVED}" in result.patch and "-int b = 2;\n+int b = 3;" in result.patch
+    # Flagged for review; the moved file is not "another file".
+    assert result.findings == [Finding("intent", "warning", C, f"re-implemented from intent, moved to {MOVED} (found by content: 7 of 8 lines): review closely")]
+    (prompt,) = prompts(log)
+    assert f"Files to edit:\n- {MOVED}\n\n" in prompt and f"In this tree it moved to {MOVED}" in prompt
+    # The source tree's before and after, from the source project's objects.
+    assert f"## In the source tree, before and after the change\n### {C}\nBefore:\n```\n{BODY}int b = 2;\n```\nAfter:\n```\n{BODY}int b = 3;\n```" in prompt
+    assert result.calls[0].model is None and snapshot(target.root) == before
+
+
+def test_reimplement_a_file_gone(tmp_path: Path, copilot: Copilot, scenarios: Path, log: Path) -> None:
+    src, target, diff = reimpl_setup(tmp_path, {"init/other.cpp": "int unrelated_value_here = 0;\n"})
+    context = scenario(scenarios, "gone", {"reply": f"{C}: recreated", "creates": [{"path": C, "text": "int b = 3;\n"}]})
+    s = Scratch.create(tmp_path / "rework" / "1" / CORE, target.root / CORE, touched_files([diff]))
+    result = ladder.run(s, [diff], context, copilot, Budget(5), None, rungs=ladder.COPILOT_RUNGS)
+    assert (result.status, result.level, result.moved) == ("patched", "reimpl", {})
+    assert result.files[0]["notes"] == ["not in the target: gone"]
+    assert Finding("intent", "warning", C, "re-implemented from intent, not in the target: gone: review closely") in result.findings
+    # Intent findings are warnings only.
+    assert all(f.severity == "warning" for f in result.findings)
+    (prompt,) = prompts(log)
+    assert "it is gone" in prompt and f"Files to edit:\n- {C}\n" in prompt
+    # No source tree: before/after unknown.
+    assert "## In the source tree" not in prompt
+
+
+def test_locate_by_name_and_at_its_path(tmp_path: Path) -> None:
+    _, target, diff = reimpl_setup(tmp_path, {"other/dir/init.cpp": "int nothing_alike = 0;\n", "init/old/init.cpp": "int also_unlike = 1;\n"})
+    s = Scratch.create(tmp_path / "rework" / "1" / CORE, target.root / CORE, touched_files([diff]))
+    (section,) = Patch.parse(diff).files
+    where = locate.locate(s, section)
+    # Same name, more trailing directories in common; no source tree for the blobs.
+    assert (where.found, where.how, where.before, where.after) == ("init/old/init.cpp", "name", None, None)
+    assert (s.path / "init/old/init.cpp").read_text() == "int also_unlike = 1;\n" and s.patch() is None
+    target.commit(CORE, {C: "rewritten\n"}, "rewrite")
+    s = Scratch.create(tmp_path / "rework" / "2" / CORE, target.root / CORE, touched_files([diff]))
+    assert (locate.locate(s, section).found, locate.locate(s, section).how) == (C, "path")
+
+
+def test_binary_without_data_is_not_reimplemented(tree: RepoTree, tmp_path: Path, copilot: Copilot) -> None:
+    binary = "diff --git a/res/icon.png b/res/icon.png\nindex 1111111..2222222 100644\nBinary files a/res/icon.png and b/res/icon.png differ\n"
+    s = scratch(tree, tmp_path, [binary])
+    result = ladder.run(s, [binary], Context("K", "s", ""), copilot, Budget(5), rungs=ladder.COPILOT_RUNGS)
+    assert (result.status, result.calls) == ("failed", []) and ladder.NEEDS_REIMPL not in (result.reason or "")

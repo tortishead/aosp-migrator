@@ -165,7 +165,7 @@ class Scratch:
                     missing.append(path)
         for path in missing:
             patch = "".join(s.patch for s in sections[path])
-            reason = self._add_source(source_project)
+            reason = self.add_source(source_project)
             if reason is None:
                 merged = self._merge(path, patch, "source")
                 if merged.status != "failed":
@@ -216,7 +216,7 @@ class Scratch:
             return FileResult(result.path, "rejected", error=result.error, notes=result.notes, hunks=hunks)
         return FileResult(result.path, "failed", error=_first_error(applied.stderr) or result.error, notes=result.notes)
 
-    def _add_source(self, project: Path | None) -> str | None:
+    def add_source(self, project: Path | None) -> str | None:
         """Add `project`'s objects as an alternate (once); None when added, else why the rung is skipped."""
         if project is None:
             return "no source tree"

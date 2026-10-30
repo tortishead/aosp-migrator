@@ -2,38 +2,48 @@
 
 Rungs 1-2 (`Scratch.rungs`) need no Copilot. What they leave failing goes to Copilot:
 3a resolve for the files left with conflict markers, then 3b port for the files with
-`.rej` hunks (the `.rej` files are read and removed first). A file with neither (binary,
-gone) needs re-implement (5.8): the attempt fails before any call.
+`.rej` hunks (the `.rej` files are read and removed first), then 3c re-implement, only
+when selected, for the files with neither (moved, rewritten, gone): `locate` finds where
+the target has each now, and Copilot gets the intent, the original and the source
+tree's before/after. Without 3c such a file fails the attempt before any call ("needs
+re-implement"); a binary section without data always does.
 
-After the calls, the checks (`checks.mechanical`, `intent.check` at the highest rung
-used) run on the patch from git. Their errors go back to Copilot as a fix round, at that
-rung, with the change so far, until they pass, a round changes nothing, or the budget is
-spent. Check errors that remain fail the attempt; intent errors that remain are left on
-the patch as findings, for review. Every call counts against the `Budget` (per item, its
-projects share it; and the job's); a call it does not allow fails the attempt with
-"Copilot budget reached".
+After the calls, the checks (`checks.mechanical`, `intent.check` at each file's rung,
+for a moved file where it is now) run on the patch from git. A re-implemented file in
+another place is not flagged as outside the item's files; every re-implemented file
+gets a warning saying where it went, for review. Their errors go back to Copilot as a
+fix round, at the highest rung used, with the change so far, until they pass, a round
+changes nothing, or the budget is spent. Check errors that remain fail the attempt;
+intent errors that remain are left on the patch as findings, for review. Every call
+counts against the `Budget` (per item, its projects share it; and the job's); a call it
+does not allow fails the attempt with "Copilot budget reached".
 
 After a build of the patch failed, `fix_build` gives Copilot the build's errors for the
 patch's files, then runs the same checks and rounds.
 """
 
 import copy
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 from aosp_migrator.config import CopilotSettings
 from aosp_migrator.copilot.client import CopilotClient
+from aosp_migrator.prescan.apply import BINARY
+from aosp_migrator.prescan.patch import Patch
 from aosp_migrator.rework import bundle, checks, intent
 from aosp_migrator.rework.bundle import Context
 from aosp_migrator.rework.checks import Finding
+from aosp_migrator.rework.locate import Location, locate
 from aosp_migrator.rework.scratch import FileResult, Scratch, touched_files
 
 Status = Literal["patched", "failed", "canceled"]
 BUDGET_REACHED = "Copilot budget reached"
-# Copilot rungs the ladder runs when allowed (re-implement comes with 5.8).
-COPILOT_RUNGS = ("resolve", "port")
+# Copilot rungs, cheapest first; re-implement runs only when asked for.
+COPILOT_RUNGS: tuple[bundle.Rung, ...] = ("resolve", "port", "reimpl")
+DEFAULT_RUNGS: tuple[bundle.Rung, ...] = ("resolve", "port")
+NEEDS_REIMPL = "(needs re-implement)"
 # Characters of Copilot's answer kept with a call.
 ANSWER_CAP = 20_000
 
@@ -85,6 +95,10 @@ class LadderResult:
     calls: list[Call] = field(default_factory=list)
     # Copilot's answers (one line per file it changed), one after another.
     explanation: str | None = None
+    # Re-implement: a file's path in the diffs to where the target has it, when elsewhere;
+    # and per re-implemented file where it went (`Location.describe`).
+    moved: dict[str, str] = field(default_factory=dict)
+    reimplemented: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -112,7 +126,7 @@ def run(
     present: Sequence[str] = (),
     target: Path | None = None,
     cancel: Callable[[], bool] = lambda: False,
-    rungs: Collection[str] = COPILOT_RUNGS,
+    rungs: Collection[str] = DEFAULT_RUNGS,
 ) -> LadderResult:
     """The ladder for `diffs` (the item's diffs for this project) in `scratch`. `copilot` None: rungs 1-2 only;
     `rungs`: the Copilot rungs allowed.
@@ -129,10 +143,14 @@ def run(
         return out
     conflicts = [f for f in first.files if f.status == "conflict"]
     rejected = [f for f in first.files if f.status == "rejected"]
-    if failed := [f for f in first.files if f.status == "failed"]:
-        out.reason = "; ".join(f"{f.path}: {f.error}" for f in failed) + " (needs re-implement)"
+    failed = [f for f in first.files if f.status == "failed"]
+    if binary := [f for f in failed if f.error == BINARY]:
+        out.reason = "; ".join(f"{f.path}: {f.error}" for f in binary)
         return out
-    steps: list[tuple[bundle.Rung, list[FileResult]]] = [("resolve", conflicts), ("port", rejected)]
+    if failed and (copilot is None or "reimpl" not in rungs):
+        out.reason = "; ".join(f"{f.path}: {f.error}" for f in failed) + f" {NEEDS_REIMPL}"
+        return out
+    steps: list[tuple[bundle.Rung, list[FileResult]]] = [("resolve", conflicts), ("port", rejected), ("reimpl", failed)]
     unselected = [step for step, files in steps if files and step not in rungs]
     if copilot is None or unselected:
         out.reason = "; ".join(f"{f.path}: {f.error or f.status}" for f in [*conflicts, *rejected])
@@ -141,22 +159,30 @@ def run(
         return out
     for path in {f.path for f in rejected}:
         (scratch.path / f"{path}.rej").unlink(missing_ok=True)
+    sections = {section.path: section for text in diffs for section in Patch.parse(text).files}
+    locations = {f.path: locate(scratch, sections[f.path], source_project) for f in failed}
+    out.moved = {path: where.found for path, where in locations.items() if where.found is not None and where.found != path}
+    out.reimplemented = {path: where.describe() for path, where in locations.items()}
 
-    call = _Caller(out, scratch, diffs, context, copilot, budget, target, cancel)
-    rung: bundle.Rung = "port" if rejected else "resolve"
+    call = _Caller(out, scratch, diffs, context, copilot, budget, target, cancel, locations=locations)
+    rung: bundle.Rung = "resolve"
     for step, files in steps:
         if files:
             out.rungs.append(step)
+            rung = step
             if stop := call(step, files, 0):
                 out.reason = stop
                 return out
-    edited = [*conflicts, *rejected]
-    if not _check_rounds(out, call, scratch, diffs, rung, edited):
+    groups = [(step, files) for step, files in steps if files]
+    if not _check_rounds(out, call, scratch, diffs, rung, groups):
         return out
-    fixed = {f.path: ("resolved", "resolve") if f.status == "conflict" else ("ported", "port") for f in edited}
+    done = {"resolve": "resolved", "port": "ported", "reimpl": "reimplemented"}
+    fixed = {f.path: (done[step], step) for step, files in groups for f in files}
     for file in out.files:
         if file["path"] in fixed:
             file["status"], file["rung"] = fixed[file["path"]]
+        if file["path"] in out.reimplemented:
+            file["notes"] = [*file["notes"], out.reimplemented[file["path"]]]
     return out
 
 
@@ -182,16 +208,20 @@ def fix_build(
     rung = build_rung(previous)
     out = LadderResult("failed", level=previous.level, files=copy.deepcopy(previous.files), rungs=list(dict.fromkeys([*previous.rungs, rung])))
     out.calls, out.explanation, out.findings = list(previous.calls), previous.explanation, list(previous.findings)
+    out.moved, out.reimplemented = dict(previous.moved), dict(previous.reimplemented)
     paths = checks.patch_paths(previous.patch)
-    files = [FileResult(path, "applied") for path in paths]
-    call = _Caller(out, scratch, diffs, context, copilot, budget, target, cancel, build_round)
+    # By their paths in the diffs; a moved file is edited where it is now.
+    original = {where: path for path, where in out.moved.items()}
+    files = [FileResult(original.get(path, path), "applied") for path in paths]
+    locations = {path: Location(path, where) for path, where in out.moved.items()}
+    call = _Caller(out, scratch, diffs, context, copilot, budget, target, cancel, build_round, locations)
     if stop := call(rung, files, 0, errors, _diff_of(scratch, paths), "build"):
         out.reason = stop
         return out
-    if not _check_rounds(out, call, scratch, diffs, rung, files):
+    if not _check_rounds(out, call, scratch, diffs, rung, [(rung, files)]):
         return out
     for file in out.files:
-        path = file["path"]
+        path = out.moved.get(file["path"], file["path"])
         if bundle.original_sections([out.patch or ""], [path]) != bundle.original_sections([previous.patch], [path]):
             file["rung"] = rung
             file["notes"] = [*file.get("notes", []), f"build fix {build_round}"]
@@ -200,7 +230,7 @@ def fix_build(
 
 def build_rung(result: LadderResult) -> bundle.Rung:
     """The rung a build fix of `result` runs at."""
-    return "resolve" if result.level == "resolve" else "port"
+    return "resolve" if result.level == "resolve" else "reimpl" if result.level == "reimpl" else "port"
 
 
 class _Caller:
@@ -217,9 +247,11 @@ class _Caller:
         target: Path | None,
         cancel: Callable[[], bool],
         build_round: int = 0,
+        locations: Mapping[str, Location] | None = None,
     ) -> None:
         self.out, self.scratch, self.diffs, self.context, self.copilot = out, scratch, diffs, context, copilot
         self.budget, self.target, self.cancel, self.build_round = budget, target, cancel, build_round
+        self.locations = locations or {}
 
     def __call__(
         self,
@@ -237,7 +269,7 @@ class _Caller:
             return "canceled"
         if not self.budget.take():
             return BUDGET_REACHED
-        prompt = bundle.build(rung, files, self.diffs, self.context, self.scratch.path, self.target, feedback, change, copilot.cap, kind)
+        prompt = bundle.build(rung, files, self.diffs, self.context, self.scratch.path, self.target, feedback, change, copilot.cap, kind, self.locations)
         copilot.prompts_dir.mkdir(parents=True, exist_ok=True)
         prompt_path = copilot.prompts_dir / f"call-{len(list(copilot.prompts_dir.glob('call-*.txt'))) + 1}.txt"
         prompt_path.write_text(prompt.prompt)
@@ -270,16 +302,25 @@ class _Caller:
         return None
 
 
-def _check_rounds(out: LadderResult, call: _Caller, scratch: Scratch, diffs: Sequence[str], rung: bundle.Rung, edited: Sequence[FileResult]) -> bool:
-    """Checks on the patch, their errors back as fix rounds; True with `out` patched, else False with its reason."""
-    paths = [f.path for f in edited]
-    item_files = touched_files(diffs)
+def _check_rounds(
+    out: LadderResult, call: _Caller, scratch: Scratch, diffs: Sequence[str], rung: bundle.Rung, groups: Sequence[tuple[bundle.Rung, Sequence[FileResult]]]
+) -> bool:
+    """Checks on the patch, their errors back as fix rounds at `rung`; True with `out` patched, else False with its reason.
+
+    `groups`: the files Copilot edited (by their paths in the diffs), each with the rung its intent is checked at.
+    """
+    edited = [f for _, files in groups for f in files]
+    paths = [out.moved.get(f.path, f.path) for f in edited]
+    item_files = [*touched_files(diffs), *out.moved.values()]
+    reimplemented = [Finding("intent", "warning", path, f"re-implemented from intent, {where}: review closely") for path, where in out.reimplemented.items()]
     rounds = 0
     previous: str | None = None
     while True:
         patch = scratch.patch()
         findings = checks.mechanical(scratch, patch, item_files)
-        findings += intent.check(diffs, patch, {p: _read(scratch.path / p) for p in paths}, rung, paths)
+        contents = {p: _read(scratch.path / p) for p in paths}
+        for step, files in groups:
+            findings += intent.check(diffs, patch, contents, step, [f.path for f in files], out.moved)
         blocking = checks.errors(findings)
         if not blocking or patch == previous:
             break
@@ -293,9 +334,9 @@ def _check_rounds(out: LadderResult, call: _Caller, scratch: Scratch, diffs: Seq
             # Only intent findings left: the patch goes to review with them.
             break
         out.reason = f"{stop}; {failing[0].text()}" if stop == BUDGET_REACHED and failing else stop
-        out.findings = findings
+        out.findings = [*findings, *reimplemented]
         return False
-    out.findings = findings
+    out.findings = [*findings, *reimplemented]
     failing = [f for f in checks.errors(findings) if f.kind == "check"]
     if failing:
         out.reason = failing[0].text()
