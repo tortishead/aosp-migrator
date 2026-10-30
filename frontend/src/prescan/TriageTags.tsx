@@ -16,7 +16,7 @@ export function TriageTags({ item }: { item: Item }) {
         </span>
       )}
       {item.dependencies.length > 0 && (
-        <span className="tag tag-warn" title={`Needs: ${item.dependencies.join("; ")}`}>
+        <span className="tag tag-warn" title={item.dependencies.join("; ")}>
           dependency
         </span>
       )}

@@ -117,8 +117,8 @@ export interface Item {
   triage_reason: string | null;
   /** Why the pre-scan results are out of date; empty when fresh or never scanned. */
   stale: string[];
-  /** What the current diffs still need, as of the last pre-scan: `KEY (path)` of another item's diff not in the target yet,
-   * `path: base in no diff`; empty when nothing. */
+  /** How the current diffs depend on other items' diffs, either way, as of the last pre-scan: `needs KEY (path)`,
+   * `needed by KEY (path)` (`, already in target` when the base is in), `path: base in no diff`; empty when none. */
   dependencies: string[];
   /** Result of the last finished build and why; null until built. */
   build_status: BuildStatus | null;
@@ -344,7 +344,7 @@ export interface PrescanSummary {
   /** Not scanned yet, or without diffs. */
   unlabeled: number;
   stale: number;
-  /** Items whose diffs still need another item's diff, or a base no diff makes. */
+  /** Items whose diffs depend on another item's diff or are needed by one, or need a base no diff makes. */
   dependencies: number;
 }
 

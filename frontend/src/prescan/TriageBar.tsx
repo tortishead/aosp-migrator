@@ -72,7 +72,7 @@ export function TriageBar({ workspaceId, search, update }: Props) {
           type="button"
           className="chip chip-warn"
           aria-pressed={dependsOnly}
-          title="Items whose diffs build on another item's diff not in the target yet, or on a base no diff has"
+          title="Items whose diffs build on another item's diff, or that another item's diff builds on, or on a base no diff has"
           onClick={() =>
             update((next) => {
               if (dependsOnly) next.delete("depends");

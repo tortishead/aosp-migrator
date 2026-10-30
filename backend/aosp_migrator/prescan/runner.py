@@ -376,31 +376,44 @@ def rebuild_dependencies(session: Session, workspace_id: int, tree: Path) -> Non
     )
 
 
-def unresolved_dependencies(session: Session, workspace_id: int, item_ids: list[int] | None = None) -> dict[int, list[str]]:
-    """What each item's current diffs still need (all items, or `item_ids`): another item's diff not in the target yet, or a base no diff makes.
+def item_dependencies(session: Session, workspace_id: int, item_ids: list[int] | None = None) -> dict[int, list[str]]:
+    """Every item on either side of a dependency between current diffs (all items, or `item_ids`), with what links it:
+    `needs KEY (path)`, `needed by KEY (path)` (`, already in target` when the target has the base), `path: base in no diff`.
 
-    Items without such a dependency are left out.
+    Items without any dependency are left out.
     """
     mine, theirs = aliased(Attachment), aliased(Attachment)
+    my_issue, their_issue = aliased(JiraIssue), aliased(JiraIssue)
+    my_item, their_item = aliased(Item), aliased(Item)
     query = (
-        select(Item.id, DiffDependency, JiraIssue.key)
+        select(my_item.id, my_issue.key, DiffDependency, their_item.id, their_issue.key)
         .join(mine, mine.id == DiffDependency.attachment_id)
-        .join(Item, Item.issue_id == mine.issue_id)
+        .join(my_issue, my_issue.id == mine.issue_id)
+        .join(my_item, my_item.issue_id == my_issue.id)
         .outerjoin(theirs, theirs.id == DiffDependency.depends_on_id)
-        .outerjoin(JiraIssue, JiraIssue.id == theirs.issue_id)
+        .outerjoin(their_issue, their_issue.id == theirs.issue_id)
+        .outerjoin(their_item, their_item.issue_id == their_issue.id)
         .where(
             DiffDependency.workspace_id == workspace_id,
-            DiffDependency.state.in_(("pending", "missing")),
             mine.is_current.is_(True),
             theirs.id.is_(None) | theirs.is_current.is_(True),
         )
-        .order_by(Item.id, JiraIssue.key, DiffDependency.path)
+        .order_by(my_issue.key, their_issue.key, DiffDependency.path)
     )
-    if item_ids is not None:
-        query = query.where(Item.id.in_(item_ids))
+    wanted = None if item_ids is None else set(item_ids)
     found: dict[int, list[str]] = {}
-    for item_id, dep, key in session.execute(query):
-        found.setdefault(item_id, []).append(f"{key} ({dep.path})" if key else f"{dep.path}: base in no diff")
+
+    def add(item_id: int, reason: str) -> None:
+        if wanted is None or item_id in wanted:
+            found.setdefault(item_id, []).append(reason)
+
+    for my_id, my_key, dep, their_id, their_key in session.execute(query):
+        done = ", already in target" if dep.state == "in_target" else ""
+        if their_id is None:
+            add(my_id, f"{dep.path}: base in no diff")
+            continue
+        add(my_id, f"needs {their_key} ({dep.path}){done}")
+        add(their_id, f"needed by {my_key} ({dep.path}){done}")
     return {item_id: list(dict.fromkeys(reasons)) for item_id, reasons in found.items()}
 
 

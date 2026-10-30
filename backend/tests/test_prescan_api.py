@@ -212,14 +212,15 @@ def test_dependencies_between_items(client: TestClient, workspace_id: int) -> No
         "dropped": False,
     }
 
-    # The backlog badge, its filter and count: what is still needed, not what is in already.
+    # The backlog badge, its filter and count: both sides of a dependency.
     by_key = {i["key"]: i["dependencies"] for i in items(client, workspace_id)}
-    assert by_key["PROJ-106"] == ["PROJ-105 (init/init.cpp)"]
+    assert by_key["PROJ-106"] == ["needs PROJ-105 (init/init.cpp)"]
+    assert by_key["PROJ-105"] == ["needed by PROJ-106 (init/init.cpp)"]
     assert by_key["PROJ-104"] == ["packages/SystemUI/res/drawable-xxhdpi/oem_battery.png: base in no diff"]
-    assert by_key["PROJ-105"] == []
-    assert keys(client, workspace_id, depends=True) == ["PROJ-104", "PROJ-106"]
-    assert "PROJ-106" not in keys(client, workspace_id, depends=False)
-    assert summary(client, workspace_id)["dependencies"] == 2
+    assert by_key["PROJ-101"] == []
+    assert keys(client, workspace_id, depends=True) == ["PROJ-104", "PROJ-105", "PROJ-106"]
+    assert "PROJ-105" not in keys(client, workspace_id, depends=False)
+    assert summary(client, workspace_id)["dependencies"] == 3
 
     # A single-item re-run finds them again for the whole workspace.
     run_prescan(client, workspace_id, ["PROJ-103"])

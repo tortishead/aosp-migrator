@@ -724,7 +724,7 @@ describe("Backlog pre-scan overview", () => {
             triage_label: "conflicts",
             triage_reason: "0001.patch: Foo.java",
             stale: ["frameworks/base HEAD moved"],
-            dependencies: ["PROJ-101 (Foo.java)", "icon.png: base in no diff"],
+            dependencies: ["needs PROJ-101 (Foo.java)", "icon.png: base in no diff"],
           }),
           item("PROJ-103", { diff_count: 0 }),
         ]),
@@ -737,7 +737,7 @@ describe("Backlog pre-scan overview", () => {
     const second = screen.getByRole("link", { name: "PROJ-102" }).closest("tr")!;
     expect(within(second).getByText("Conflicts")).toHaveClass("tag-error");
     expect(within(second).getByText("stale")).toHaveAttribute("title", "Out of date: frameworks/base HEAD moved");
-    expect(within(second).getByText("dependency")).toHaveAttribute("title", "Needs: PROJ-101 (Foo.java); icon.png: base in no diff");
+    expect(within(second).getByText("dependency")).toHaveAttribute("title", "needs PROJ-101 (Foo.java); icon.png: base in no diff");
     const third = screen.getByRole("link", { name: "PROJ-103" }).closest("tr")!;
     expect(third.querySelectorAll(".tag")).toHaveLength(0);
   });

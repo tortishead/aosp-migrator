@@ -25,7 +25,7 @@ from aosp_migrator.db.models import (
     Note,
     Workspace,
 )
-from aosp_migrator.prescan.runner import stacked_stale, stale_items, unresolved_dependencies
+from aosp_migrator.prescan.runner import item_dependencies, stacked_stale, stale_items
 from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/items")
@@ -77,8 +77,8 @@ class ItemOut(BaseModel):
     triage_reason: str | None
     # Why the pre-scan results are out of date; empty when fresh or never scanned.
     stale: list[str]
-    # What the current diffs still need, as of the last pre-scan: `KEY (path)` of another item's diff not in
-    # the target yet, `path: base in no diff`; empty when nothing.
+    # How the current diffs depend on other items' diffs, either way, as of the last pre-scan: `needs KEY (path)`,
+    # `needed by KEY (path)` (`, already in target` when the base is in), `path: base in no diff`; empty when none.
     dependencies: list[str]
     # Result of the last finished build and why; None until built.
     build_status: str | None
@@ -368,7 +368,7 @@ def list_items(
         stale_ids = list(stale_items(session, workspace_id, tree))
         conditions.append(Item.id.in_(stale_ids) if stale else Item.id.not_in(stale_ids))
     if depends is not None:
-        depends_ids = list(unresolved_dependencies(session, workspace_id))
+        depends_ids = list(item_dependencies(session, workspace_id))
         conditions.append(Item.id.in_(depends_ids) if depends else Item.id.not_in(depends_ids))
     if q:
         conditions.extend(_text_term(term) for term in q.split())
@@ -392,7 +392,7 @@ def list_items(
     subjects = _diff_subjects(session, [issue.id for _, issue, *_ in rows])
     projects = _target_projects(session, [issue.id for _, issue, *_ in rows])
     stale_reasons = stale_items(session, workspace_id, tree, [item.id for item, *_ in rows])
-    dependencies = unresolved_dependencies(session, workspace_id, [item.id for item, *_ in rows])
+    dependencies = item_dependencies(session, workspace_id, [item.id for item, *_ in rows])
     items = [
         ItemOut(
             id=item.id,

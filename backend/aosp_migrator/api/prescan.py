@@ -16,9 +16,9 @@ from aosp_migrator.prescan.runner import (
     current_diffs,
     current_patch,
     diff_scan,
+    item_dependencies,
     stale_items,
     target_projects,
-    unresolved_dependencies,
 )
 from aosp_migrator.prescan.triage import ORDER
 
@@ -146,7 +146,7 @@ class PrescanSummaryOut(BaseModel):
     # Items without a label: not scanned yet, or without diffs.
     unlabeled: int
     stale: int
-    # Items whose diffs still need another item's diff, or a base no diff makes.
+    # Items whose diffs depend on another item's diff or are needed by one, or need a base no diff makes.
     dependencies: int
 
 
@@ -231,7 +231,7 @@ def get_prescan_summary(workspace_id: int, session: SessionDep) -> PrescanSummar
         labels={label: counts.get(label, 0) for label in ORDER},
         unlabeled=counts.get(None, 0),
         stale=len(kept & stale.keys()),
-        dependencies=len(kept & unresolved_dependencies(session, workspace_id).keys()),
+        dependencies=len(kept & item_dependencies(session, workspace_id).keys()),
     )
 
 
