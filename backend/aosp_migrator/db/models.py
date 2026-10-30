@@ -101,6 +101,10 @@ class Item(Base):
     build_status: Mapped[str | None] = mapped_column(String, index=True)  # apply_failed / build_failed / build_successful
     build_reason: Mapped[str | None] = mapped_column(Text)
     built_at: Mapped[datetime | None]
+    # Outcome of the item's last finished rework attempt (see rework/attempt.py); None until reworked.
+    rework_status: Mapped[str | None] = mapped_column(String, index=True)  # proposed / accepted / rework_failed
+    rework_reason: Mapped[str | None] = mapped_column(Text)
+    reworked_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -324,6 +328,8 @@ class MigrationPatch(Base):
     review_note: Mapped[str | None] = mapped_column(Text)
     # Check and intent findings of a rework, shown in review.
     findings: Mapped[list[Any]] = mapped_column(default=list, server_default=text("'[]'"))
+    # The rework attempt that made it; None for `original` patches of the pre-scan.
+    attempt_id: Mapped[int | None] = mapped_column(ForeignKey("rework_attempt.id", ondelete="SET NULL"), index=True)
     diff: Mapped[str] = mapped_column(Text)
     # For the format-patch when pushing; None for a plain diff.
     author: Mapped[str | None] = mapped_column(String)
@@ -378,5 +384,34 @@ class BuildRun(Base):
     log_path: Mapped[str | None] = mapped_column(String)
     # `build.tree.InFlight` while patches may be in the tree; None (SQL NULL, not JSON null) once restored.
     inflight: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None]
+
+
+class ReworkAttempt(Base):
+    """One rework of an item, or of items reworked together (a unit), over its projects: rungs, Copilot calls, outcome."""
+
+    __tablename__ = "rework_attempt"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    # The rework job that ran it (MS5 5.6); None when run on its own.
+    job_id: Mapped[int | None]
+    # Several for a unit, in chain order.
+    item_ids: Mapped[list[Any]]
+    # Project path to its HEAD when the attempt started.
+    heads: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    # Patches of other items the attempt worked on top of, in apply order.
+    base_patch_ids: Mapped[list[Any]] = mapped_column(default=list)
+    # Rungs that ran, in order: stack / source / resolve / port.
+    rungs: Mapped[list[Any]] = mapped_column(default=list)
+    # [{project, path, status, rung, error, notes}]: per file the rung that fixed it, or why it failed.
+    files: Mapped[list[Any]] = mapped_column(default=list)
+    # [{project, rung, round, model, status, prompt_path, answer, error, usage, duration}] per Copilot call.
+    calls: Mapped[list[Any]] = mapped_column(default=list)
+    # Build runs of the build-fix loop (5.6).
+    build_run_ids: Mapped[list[Any]] = mapped_column(default=list)
+    status: Mapped[str] = mapped_column(String, default="running")  # running / patched / failed / canceled / error
+    reason: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     finished_at: Mapped[datetime | None]

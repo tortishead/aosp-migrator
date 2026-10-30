@@ -185,7 +185,8 @@ class Scratch:
 
     def patch(self) -> str | None:
         """The change against the base commit, worktree edits included; None when there is none."""
-        git.git(self.path, "add", "-A")
+        # `--sparse`: also files written outside the sparse patterns (Copilot creating one).
+        git.git(self.path, "add", "-A", "--sparse")
         return git.git(self.path, *_DIFF, "--cached", self.base).stdout or None
 
     def remove(self) -> None:
