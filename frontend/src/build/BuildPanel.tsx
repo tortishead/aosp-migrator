@@ -46,6 +46,14 @@ export function BuildPanel({ workspaceId }: { workspaceId: number }) {
     mutationFn: api.cancelBuild,
     onSuccess: (job) => queryClient.setQueryData(buildJobsKey(workspaceId), [job]),
   });
+  // Follow the live log: stay on the newest lines unless the reader scrolled up.
+  const tail = useRef<HTMLPreElement>(null);
+  const follow = useRef(true);
+  const toBottom = () => {
+    if (tail.current && follow.current) tail.current.scrollTop = tail.current.scrollHeight;
+  };
+  const logTail = job?.log_tail;
+  useEffect(toBottom, [logTail]);
   if (!job) return null;
   const running = job.status === "running";
   const items = (n: number) => `${n} ${n === 1 ? "item" : "items"}`;
@@ -62,9 +70,18 @@ export function BuildPanel({ workspaceId }: { workspaceId: number }) {
       </div>
       {cancel.isError && <p className="error">{cancel.error.message}</p>}
       {job.log_tail && (
-        <details className="import-errors build-tail">
+        <details className="import-errors build-tail" onToggle={toBottom}>
           <summary>{running ? "Live log" : "Log tail"}</summary>
-          <pre aria-label="Build log tail">{job.log_tail}</pre>
+          <pre
+            ref={tail}
+            aria-label="Build log tail"
+            onScroll={(e) => {
+              const pre = e.currentTarget;
+              follow.current = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+            }}
+          >
+            {job.log_tail}
+          </pre>
         </details>
       )}
       {job.skipped.length > 0 && (
