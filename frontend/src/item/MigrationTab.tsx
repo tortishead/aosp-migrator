@@ -114,7 +114,7 @@ export function MigrationTab({ workspaceId, itemKey, attachments }: Props) {
           )}
           {!(reworked && compare) && <ViewToggle viewType={viewType} onChange={setViewType} />}
         </div>
-        {reworked && <ReviewBox key={selected.id} workspaceId={workspaceId} patch={selected} attempt={attempt} />}
+        {reworked && <ReviewBox key={`review-${selected.id}`} workspaceId={workspaceId} patch={selected} attempt={attempt} />}
         {(selected.author || selected.message) && (
           <section className="commit-header" aria-label="Commit">
             {selected.author && (
@@ -127,10 +127,10 @@ export function MigrationTab({ workspaceId, itemKey, attachments }: Props) {
           </section>
         )}
         {reworked && compare ? (
-          <PatchCompare key={selected.id} workspaceId={workspaceId} patchId={selected.id} attachments={attachments} />
+          <PatchCompare key={`compare-${selected.id}`} workspaceId={workspaceId} patchId={selected.id} attachments={attachments} />
         ) : (
           <DiffBody
-            key={selected.id}
+            key={`diff-${selected.id}`}
             id={`patch-${selected.id}`}
             queryKey={["patch", workspaceId, selected.id]}
             load={() => api.patch(workspaceId, selected.id)}

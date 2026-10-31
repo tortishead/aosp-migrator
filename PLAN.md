@@ -17,7 +17,7 @@ Source of requirements: [spec.md](spec.md).
 | MS1 | Import + web UI (workspaces, backlog, item detail, settings, manual clustering) | Planned (below) |
 | MS2-1 | Pre-scan without Copilot (repo mapping, already-present check, apply check, triage labels) | Planned (below) |
 | MS6 | Deterministic migration patch (levels 1 + 2) and build of affected modules | Done except manual acceptance ([PLAN-MS6.md](PLAN-MS6.md)) |
-| MS5 | Rework of conflicting items: dependency-aware patches, then Copilot (migration level 3), adds `ai` patches to the MS6 flow | Planned ([PLAN-MS5.md](PLAN-MS5.md)), next |
+| MS5 | Rework of conflicting items: dependency-aware patches, then Copilot (migration level 3), adds `ai` patches to the MS6 flow | Done except manual acceptance ([PLAN-MS5.md](PLAN-MS5.md)) |
 | MS2-2 | Copilot evaluation on demand, dependencies, cluster suggestions | Needs grilling, after MS5 |
 | MS6-2 | Optional tests (CTS / atest) after a successful build | Needs grilling |
 | MS7 | Human review | Needs grilling |

@@ -487,6 +487,21 @@ describe("Migration tab review", () => {
     expect(within(box).queryByRole("button", { name: "Reject" })).toBeNull();
   });
 
+  it("shows one review, the selected patch's", async () => {
+    const older = reworkPatch({ review: "rejected", review_note: "keep the old lock order", current: false });
+    migrationApi(() => [reworkPatch({ id: 22 }), older], {
+      "GET /workspaces/1/patches/22": () => ({ ...cameraV2, format: "plain", commits: [] }),
+    });
+    renderRoute(MIGRATION);
+    expect(within(await review()).getByText("proposed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Patch 21" }));
+    await waitFor(() => expect(screen.getAllByRole("region", { name: "Review" })).toHaveLength(1));
+    expect(await review()).toHaveTextContent("Note: keep the old lock order");
+    await userEvent.click(screen.getByRole("button", { name: "Patch 22" }));
+    await waitFor(() => expect(screen.getAllByRole("region", { name: "Review" })).toHaveLength(1));
+    expect(within(await review()).getByText("proposed")).toBeInTheDocument();
+  });
+
   it("blocks accept while a base patch is not accepted, and shows a refused accept", async () => {
     const base = { id: 20, key: "PROJ-100", project: CORE, review: "proposed" as const };
     let patches = [reworkPatch({ source: "original", level: "stacked", base_patch_ids: [20], bases: [base] })];
