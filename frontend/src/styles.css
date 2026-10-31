@@ -214,6 +214,44 @@ input[type="checkbox"] {
   font-weight: 600;
 }
 
+/* A checkbox and its text on one line; long text wraps beside the box. */
+.check,
+.form label.check {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.check > input[type="checkbox"] {
+  flex: none;
+  margin: 0;
+  transform: translateY(0.15em);
+}
+
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.check-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.check-list > li > .hint {
+  flex-basis: 100%;
+  margin-left: 22px;
+}
+
 .form > button {
   align-self: flex-start;
 }
