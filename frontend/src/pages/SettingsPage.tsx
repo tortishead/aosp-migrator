@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { api, type CopilotSettingsUpdate, type CopilotTestResult, type JiraTestResult, type Settings, type Source } from "../api";
+import { api, type CopilotSettingsUpdate, type CopilotTestResult, type CopilotTokenCheck, type JiraTestResult, type Settings, type Source } from "../api";
 
 const settingsKey = ["settings"];
 
@@ -481,7 +481,16 @@ function CopilotSettingsForm({ settings, hidden }: { settings: Settings; hidden:
   );
 }
 
+const TOKEN_LABELS: Record<CopilotTokenCheck["status"], string> = {
+  valid: "Valid",
+  missing: "Missing",
+  invalid: "Invalid",
+  unverified: "Unverified",
+};
+
 function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed: number | null }) {
+  const token = result.token;
+  const tokenOk = !token || token.status === "valid";
   const usage = Object.entries(result.usage ?? {}).filter(([, v]) => typeof v === "number" || typeof v === "string");
   const took = elapsed === null ? null : `${elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed)} s`;
 
@@ -489,12 +498,13 @@ function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed
     return (
       <ResultCard tone="error" title="Copilot test failed" meta={took}>
         <p className="multiline">{result.error}</p>
+        {token && token.message !== result.error && <TokenRow token={token} />}
       </ResultCard>
     );
   }
 
   return (
-    <ResultCard tone="success" title="Copilot works" meta={took}>
+    <ResultCard tone={tokenOk ? "success" : "warning"} title={tokenOk ? "Copilot works" : "Copilot works, but check the token"} meta={took}>
       <dl className="result-facts">
         <div>
           <dt>CLI version</dt>
@@ -515,7 +525,20 @@ function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed
         <span className="result-reply-label">Reply</span>
         <blockquote>{result.reply}</blockquote>
       </div>
+      {token && <TokenRow token={token} />}
     </ResultCard>
+  );
+}
+
+function TokenRow({ token }: { token: CopilotTokenCheck }) {
+  const tone = token.status === "valid" ? "success" : token.status === "invalid" ? "error" : "warning";
+  return (
+    <div className="result-token">
+      <span className={`result-pill ${tone}`}>
+        {token.variable ?? "Token"} · {TOKEN_LABELS[token.status]}
+      </span>
+      <span className="result-token-message">{token.message}</span>
+    </div>
   );
 }
 

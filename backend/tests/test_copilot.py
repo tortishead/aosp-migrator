@@ -278,4 +278,7 @@ def test_test_copilot_reports_a_failing_prompt(api: TestClient, tmp_path: Path, 
     fake.write_text("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 1.0; exit 0; fi\necho 'Error: not logged in' >&2\nexit 1\n")
     fake.chmod(0o755)
     body = api.post("/api/settings/copilot/test", json={"binary": str(fake)}).json()
-    assert body == {"ok": False, "version": "1.0", "error": "Copilot failed: Error: not logged in"}
+    assert (body["ok"], body["version"], body["token"]["status"]) == (False, "1.0", "missing")
+    # No token in the environment: the error says so before the CLI's own.
+    assert body["error"].startswith("COPILOT_GITHUB_TOKEN is not set in the backend's environment")
+    assert body["error"].endswith("\nCopilot failed: Error: not logged in")

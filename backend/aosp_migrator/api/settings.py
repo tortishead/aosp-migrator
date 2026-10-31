@@ -24,6 +24,7 @@ from aosp_migrator.config import (
     Config,
     Field,
 )
+from aosp_migrator.copilot.auth import check_token
 from aosp_migrator.copilot.client import CopilotClient
 from aosp_migrator.jira.base import JiraAuthError, JiraError
 from aosp_migrator.jira.datacenter import DataCenterClient
@@ -202,20 +203,27 @@ def test_jira(body: JiraTestRequest, request: Request) -> dict:
 
 @router.post("/copilot/test")
 def test_copilot(body: CopilotTestRequest, request: Request) -> dict:
-    """Run the CLI as rework would: `--version`, then one short prompt (one premium request) in an empty directory.
+    """Check the token in the environment, then run the CLI as rework would: `--version`, then one short prompt (one premium request) in an empty directory.
 
+    A token GitHub rejects fails the test before the prompt. Without a token the CLI may
+    still be logged in (`/login`), so the prompt runs and the result carries the warning.
     Model: the one given, else the saved resolve model, else the CLI's default.
     """
     settings = _config(request).copilot()
+    token = check_token(transport=request.app.state.http_transport)
+    if token.status == "invalid":
+        return {"ok": False, "token": token.to_dict(), "error": token.message}
     client = CopilotClient((body.binary or "").strip() or settings.binary)
     model = normalize_model(body.model or "") or settings.models["resolve"]
     try:
         version = client.version()
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "error": f"Copilot CLI does not run: {exc}"}
+        return {"ok": False, "token": token.to_dict(), "error": f"Copilot CLI does not run: {exc}"}
     with tempfile.TemporaryDirectory(prefix="aosp-migrator-copilot-test-") as tmp:
         result = client.run(Path(tmp), COPILOT_TEST_PROMPT, model, COPILOT_TEST_TIMEOUT, tools=("view",))
     if result.status != "ok":
-        error = result.error or f"exit code {result.exit_code}"
-        return {"ok": False, "version": version, "error": f"Copilot {result.status}: {error}"}
-    return {"ok": True, "version": version, "model": model, "reply": result.output, "usage": result.usage}
+        error = f"Copilot {result.status}: {result.error or f'exit code {result.exit_code}'}"
+        if token.status == "missing":
+            error = f"{token.message}\n{error}"
+        return {"ok": False, "version": version, "token": token.to_dict(), "error": error}
+    return {"ok": True, "version": version, "model": model, "reply": result.output, "usage": result.usage, "token": token.to_dict()}

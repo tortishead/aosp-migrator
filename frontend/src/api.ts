@@ -67,8 +67,19 @@ export interface CopilotSettingsUpdate {
   build?: { dependents_cap?: number };
 }
 
+export interface CopilotTokenCheck {
+  /** missing: no token variable set; invalid: GitHub rejects it (or a classic PAT); unverified: GitHub not reachable. */
+  status: "missing" | "invalid" | "valid" | "unverified";
+  /** COPILOT_GITHUB_TOKEN, GH_TOKEN or GITHUB_TOKEN: the one the CLI uses. */
+  variable: string | null;
+  login: string | null;
+  message: string;
+}
+
 export interface CopilotTestResult {
   ok: boolean;
+  /** The GitHub token in the backend's environment, checked before the CLI runs. */
+  token?: CopilotTokenCheck;
   version?: string;
   model?: string | null;
   reply?: string;

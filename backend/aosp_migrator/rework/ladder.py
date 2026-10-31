@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from aosp_migrator.config import CopilotSettings
+from aosp_migrator.copilot.auth import auth_hint
 from aosp_migrator.copilot.client import CopilotClient
 from aosp_migrator.prescan.apply import BINARY
 from aosp_migrator.prescan.patch import Patch
@@ -296,7 +297,8 @@ class _Caller:
             return "canceled"
         if result.status != "ok":
             first_line = next(iter(result.error.splitlines()), "") or f"exit code {result.exit_code}"
-            return f"Copilot {result.status}: {first_line}"
+            hint = auth_hint(result.error)
+            return f"Copilot {result.status}: {first_line}" + (f" {hint}" if hint else "")
         if result.output:
             out.explanation = f"{out.explanation}\n\n{result.output}" if out.explanation else result.output
         return None

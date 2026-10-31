@@ -175,6 +175,10 @@ def test_without_copilot_or_with_a_failing_call(tree: RepoTree, tmp_path: Path, 
     context = scenario(scenarios, "broken", {"exit": 1, "stderr": "model unavailable\n"})
     result = ladder.run(scratch(tree, tmp_path / "c", [second]), [second], context, copilot, Budget(5))
     assert (result.status, result.reason, result.calls[0].status) == ("failed", "Copilot failed: model unavailable", "failed")
+    # Not logged in: the reason says the token is missing from the backend's environment.
+    context = scenario(scenarios, "no-auth", {"exit": 1, "stderr": "Error: No authentication information found.\n"})
+    result = ladder.run(scratch(tree, tmp_path / "e", [second]), [second], context, copilot, Budget(5))
+    assert result.reason.startswith("Copilot failed: Error: No authentication information found. COPILOT_GITHUB_TOKEN is not set")
     result = ladder.run(scratch(tree, tmp_path / "d", [second]), [second], context, copilot, Budget(5), cancel=lambda: True)
     assert (result.status, result.calls) == ("canceled", [])
 

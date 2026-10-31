@@ -190,6 +190,35 @@ describe("SettingsPage", () => {
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ binary: "/opt/copilot", model: "gpt-5-mini" });
   });
 
+  it("warns when the CLI answered without a token in the environment", async () => {
+    const message = "COPILOT_GITHUB_TOKEN is not set in the backend's environment (nor GH_TOKEN or GITHUB_TOKEN).";
+    mockApi({
+      "GET /settings": () => settings(),
+      "POST /settings/copilot/test": () => ({ ok: true, version: "1.0.105", model: null, reply: "OK", usage: {}, token: { status: "missing", variable: null, login: null, message } }),
+    });
+    renderRoute("/settings");
+    const form = within(await screen.findByRole("form", { name: "Copilot" }));
+    await userEvent.click(form.getByRole("button", { name: "Test Copilot" }));
+    const result = within(await form.findByRole("status", { name: "Copilot works, but check the token" }));
+    expect(result.getByText("CLI default")).toBeInTheDocument();
+    expect(result.getByText(message)).toBeInTheDocument();
+    expect(result.getByText("Token · Missing")).toHaveClass("warning");
+  });
+
+  it("shows that the token is not valid", async () => {
+    const message = "COPILOT_GITHUB_TOKEN is not valid: GitHub rejected it (HTTP 401, bad credentials).";
+    mockApi({
+      "GET /settings": () => settings(),
+      "POST /settings/copilot/test": () => ({ ok: false, error: message, token: { status: "invalid", variable: "COPILOT_GITHUB_TOKEN", login: null, message } }),
+    });
+    renderRoute("/settings");
+    const form = within(await screen.findByRole("form", { name: "Copilot" }));
+    await userEvent.click(form.getByRole("button", { name: "Test Copilot" }));
+    const result = within(await form.findByRole("status", { name: "Copilot test failed" }));
+    // The token message is the error: shown once.
+    expect(result.getAllByText(message)).toHaveLength(1);
+  });
+
   it("shows why the Copilot test failed", async () => {
     mockApi({
       "GET /settings": () => settings(),

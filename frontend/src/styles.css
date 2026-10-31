@@ -282,6 +282,14 @@ input[type="checkbox"] {
   color: var(--success);
 }
 
+.warning {
+  color: var(--warn);
+}
+
+.multiline {
+  white-space: pre-line;
+}
+
 .login {
   max-width: 420px;
   margin: 80px auto;

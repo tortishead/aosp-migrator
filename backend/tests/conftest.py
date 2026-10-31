@@ -5,6 +5,7 @@ import pytest
 from fake_jira import FakeJiraServer, FakeJiraStore, default_store, run_fake_jira
 
 from aosp_migrator.config import FIELDS, DATA_DIR_ENV, Config
+from aosp_migrator.copilot.auth import TOKEN_VARIABLES
 
 
 @pytest.fixture(autouse=True)
@@ -13,6 +14,9 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(DATA_DIR_ENV, raising=False)
     for field in FIELDS:
         monkeypatch.delenv(field.env, raising=False)
+    # Nor a real GitHub token: the Copilot test would check it against GitHub.
+    for variable in (*TOKEN_VARIABLES, "GH_HOST"):
+        monkeypatch.delenv(variable, raising=False)
 
 
 @pytest.fixture
