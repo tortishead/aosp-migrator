@@ -84,6 +84,8 @@ class ItemOut(BaseModel):
     # Result of the last finished build and why; None until built.
     build_status: str | None
     build_reason: str | None
+    # The ticket in Jira; None while no Jira base URL is set.
+    browse_url: str | None
 
 
 class ItemPage(BaseModel):
@@ -314,6 +316,7 @@ def _group_key(group: Group | None) -> list[Any]:
 @router.get("")
 def list_items(
     workspace_id: int,
+    request: Request,
     session: SessionDep,
     q: str | None = None,
     state: ListParam = None,
@@ -394,6 +397,8 @@ def list_items(
     projects = _target_projects(session, [issue.id for _, issue, *_ in rows])
     stale_reasons = stale_items(session, workspace_id, tree, [item.id for item, *_ in rows])
     dependencies = item_dependencies(session, workspace_id, [item.id for item, *_ in rows])
+    config: Config = request.app.state.config
+    base_url = config.get(JIRA_BASE_URL)
     items = [
         ItemOut(
             id=item.id,
@@ -417,6 +422,7 @@ def list_items(
             dependencies=dependencies.get(item.id, []),
             build_status=item.build_status,
             build_reason=item.build_reason,
+            browse_url=_browse_url(base_url, issue.key),
         )
         for item, issue, count, cluster_id, cluster_name in rows
     ]
@@ -499,6 +505,10 @@ def _local_url(workspace_id: int, attachment: Attachment) -> str | None:
     return f"/api/workspaces/{workspace_id}/attachments/{attachment.jira_id}/{quote(Path(attachment.local_path).name)}"
 
 
+def _browse_url(base_url: str | None, key: str) -> str | None:
+    return f"{base_url.rstrip('/')}/browse/{quote(key)}" if base_url else None
+
+
 def _issue_out(session: Session, issue: JiraIssue, base_url: str | None) -> IssueOut:
     comments = session.scalars(select(Comment).where(Comment.issue_id == issue.id).order_by(Comment.created, Comment.id))
     attachments = session.scalars(select(Attachment).where(Attachment.issue_id == issue.id).order_by(Attachment.created, Attachment.id))
@@ -512,7 +522,7 @@ def _issue_out(session: Session, issue: JiraIssue, base_url: str | None) -> Issu
         fix_versions=issue.fix_versions,
         jira_updated=issue.jira_updated,
         fetched_at=issue.fetched_at,
-        browse_url=f"{base_url.rstrip('/')}/browse/{quote(issue.key)}" if base_url else None,
+        browse_url=_browse_url(base_url, issue.key),
         comments=[CommentOut(id=c.id, author=c.author, created=c.created, body_html=c.body_html) for c in comments],
         attachments=[
             AttachmentOut(

@@ -95,6 +95,8 @@ def test_history_in_order(client: TestClient, imported: int, fake_jira: FakeJira
 def test_no_browse_url_without_jira_settings(app: FastAPI, client: TestClient, imported: int) -> None:
     app.state.config.set({JIRA_BASE_URL: None})
     assert detail(client, imported, "PROJ-104")["issue"]["browse_url"] is None
+    page = client.get(f"/api/workspaces/{imported}/items").json()
+    assert {i["browse_url"] for i in page["items"]} == {None}
 
 
 def test_diff_with_hunks(client: TestClient, imported: int) -> None:

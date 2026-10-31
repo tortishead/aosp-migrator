@@ -53,6 +53,7 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     dependencies: [],
     build_status: null,
     build_reason: null,
+    browse_url: null,
     ...overrides,
   };
 }
@@ -167,6 +168,7 @@ describe("BacklogPage", () => {
       "GET /workspaces/1/items": () =>
         page([
           item("PROJ-101", {
+            browse_url: "https://jira.example.com/browse/PROJ-101",
             local_state: "not_relevant",
             labels: ["camera", "oem-patch"],
             diff_subjects: ["[PATCH] camera: fix null deref on resume"],
@@ -177,7 +179,10 @@ describe("BacklogPage", () => {
     renderRoute("/workspaces/1");
     expect(await screen.findByRole("heading", { name: "Android 15" })).toBeInTheDocument();
     const first = (await screen.findByRole("link", { name: "PROJ-101" })).closest("tr")!;
-    expect(screen.getByRole("link", { name: "PROJ-101" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-101");
+    // The key opens the ticket in Jira; without a Jira URL it falls back to the item page.
+    expect(screen.getByRole("link", { name: "PROJ-101" })).toHaveAttribute("href", "https://jira.example.com/browse/PROJ-101");
+    expect(screen.getByRole("link", { name: "PROJ-101" })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: "PROJ-102" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-102");
     expect(within(first).getByText("Not relevant")).toBeInTheDocument();
     expect(within(first).getByText("camera, oem-patch")).toBeInTheDocument();
     expect(within(first).getByText("Open")).toHaveClass("badge");
