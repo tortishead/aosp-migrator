@@ -1028,6 +1028,7 @@ p.tag {
 }
 
 .item-actions {
+  margin-top: 12px;
   margin-bottom: 12px;
 }
 
@@ -1038,8 +1039,13 @@ p.tag {
   font-weight: 600;
 }
 
-/* Item page: the work on the left, the history in a panel on the right. */
-.item {
+/* Item page: back link and title across the top; below, the work on the left and
+   the ticket's fields and history in panels on the right, both columns starting level. */
+.item-head > p:first-child {
+  margin: 0 0 8px;
+}
+
+.item-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
   gap: 20px;
@@ -1049,12 +1055,17 @@ p.tag {
 .item-side {
   position: sticky;
   top: 64px;
-}
-
-.item-side > section {
   display: flex;
   flex-direction: column;
+  gap: 16px;
   max-height: calc(100vh - 88px);
+}
+
+/* The history takes what is left of the column and scrolls inside it. */
+.item-side > .history-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .item-side .timeline {
@@ -1067,22 +1078,37 @@ p.tag {
   gap: 2px;
 }
 
+/* Fields as name/value rows. */
+.details-panel .issue-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.details-panel .issue-fields > div {
+  display: contents;
+}
+
+.details-panel .issue-fields dt {
+  padding-top: 2px;
+}
+
+.details-panel .issue-fields dd {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1100px) {
-  .item {
+  .item-body {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .item-side {
     position: static;
-  }
-
-  .item-side > section {
     max-height: none;
   }
-}
-
-.item-main > p:first-child {
-  margin: 0 0 8px;
 }
 
 .item h2 {
@@ -1108,7 +1134,8 @@ p.tag {
   background: var(--bg);
 }
 
-.item-side > section {
+.item-side > section,
+.item-main > section:first-child {
   margin-top: 0;
 }
 
@@ -1138,20 +1165,22 @@ p.tag {
   padding: 2px 10px;
 }
 
-.jira-panel .issue-fields {
-  margin: 0;
-  padding: 0;
-  border: none;
+.jira-panel.collapsed .panel-header {
+  margin-bottom: -16px;
+  border-bottom: none;
+  border-radius: var(--radius);
+}
+
+.jira-panel-body > section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 .jira-panel-body > section {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid var(--border-muted);
-}
-
-.item-main > section.jira-panel {
-  margin-top: 0;
 }
 
 /* Item sections: a segmented control, the active section raised. */

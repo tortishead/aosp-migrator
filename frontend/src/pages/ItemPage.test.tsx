@@ -63,7 +63,9 @@ describe("ItemPage", () => {
     const prescan = screen.getByRole("region", { name: "Pre-scan" });
     const description = within(jira).getByRole("region", { name: "Description" });
     expect(description.compareDocumentPosition(prescan) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(screen.getByRole("complementary")).getByRole("region", { name: "History" })).toBeInTheDocument();
+    // The fields and the history are panels on the right, the fields first.
+    const side = screen.getByRole("complementary");
+    expect(within(side).getAllByRole("region").map((r) => r.getAttribute("aria-label"))).toEqual(["Details", "History"]);
     expect(within(description).getByRole("table")).toBeInTheDocument();
     expect(within(description).getByRole("cell", { name: "Pixel 8" })).toBeInTheDocument();
     expect(description.querySelector("script")).toBeNull();
@@ -90,10 +92,10 @@ describe("ItemPage", () => {
     // Linked-only ticket: no backlog item to open.
     expect(within(links).queryByRole("link", { name: "Open backlog item" })).toBeNull();
 
-    // The Jira panel collapses to its fields, and stays collapsed on the next visit.
+    // The Jira panel collapses (the fields stay in the side panel), and stays collapsed on the next visit.
     await userEvent.click(within(jira).getByRole("button", { name: "Hide" }));
     expect(screen.queryByRole("region", { name: "Description" })).toBeNull();
-    expect(within(jira).getByText("oem-patch, camera")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Details" })).getByText("oem-patch, camera")).toBeInTheDocument();
     expect(localStorage.getItem("aosp-migrator.item.jiraPanelOpen")).toBe("false");
   });
 
