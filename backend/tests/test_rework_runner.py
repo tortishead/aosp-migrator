@@ -159,7 +159,7 @@ def test_prerequisite_first_then_the_dependent_on_top(
     summary = client.get(f"/api/workspaces/{workspace}/rework-summary").json()
     assert summary["statuses"] == {"rework_failed": 0, "proposed": 2, "rejected": 0, "accepted": 0}
     found = client.get(f"/api/workspaces/{workspace}/items", params={"rework": "proposed"}).json()["items"]
-    assert [(i["key"], i["rework_status"]) for i in found] == [("PROJ-111", "proposed"), ("PROJ-112", "proposed")]
+    assert [(i["key"], i["rework_status"], i["rework_built"]) for i in found] == [("PROJ-111", "proposed", True), ("PROJ-112", "proposed", True)]
     assert client.get(f"/api/workspaces/{workspace}/items", params={"rework": "bogus"}).status_code == 422
 
     # Accept is blocked by a proposed base; accepting the base first unblocks it.
@@ -212,6 +212,22 @@ def test_closed_prerequisite_left_out(app: FastAPI, client: TestClient, rework: 
     assert job["skipped"] == [{"key": "PROJ-111", "reason": "left out, used as base as it is", "base": True}]
     latest = attempts(client, workspace, "PROJ-112")[0]
     assert (latest["status"], latest["base_patch_ids"], latest["notes"]) == ("patched", [base["id"]], [])
+
+
+def test_proposed_without_a_build_is_not_built(app: FastAPI, client: TestClient, rework: ReworkRunner, workspace: int, scenarios: Path) -> None:
+    with session(app) as s:
+        row = s.get(Workspace, workspace)
+        assert row is not None
+        row.lunch_target = None
+        s.commit()
+    scenario(scenarios, "PROJ-111", RESOLVE)
+    start(client, workspace, ["PROJ-111"])
+    (attempt,) = attempts(client, workspace, "PROJ-111")
+    assert (attempt["status"], attempt["build_runs"]) == ("patched", [])
+    (patch,) = [p for p in patches(client, workspace, "PROJ-111") if p["attempt_id"] == attempt["id"]]
+    assert any(f["message"].startswith("not built: ") for f in patch["findings"])
+    (found,) = client.get(f"/api/workspaces/{workspace}/items", params={"q": "PROJ-111"}).json()["items"]
+    assert (found["rework_status"], found["rework_built"]) == ("proposed", False)
 
 
 def test_build_fix_round_fixes_a_compile_error(app: FastAPI, client: TestClient, rework: ReworkRunner, workspace: int, target: Path, scenarios: Path, log: Path) -> None:

@@ -26,7 +26,7 @@ from aosp_migrator.db.models import (
     Note,
     Workspace,
 )
-from aosp_migrator.prescan.chain import stale_items
+from aosp_migrator.prescan.chain import current_patches, is_rework, stale_items
 from aosp_migrator.prescan.runner import item_dependencies, stacked_stale
 from aosp_migrator.prescan.triage import ORDER
 
@@ -90,6 +90,8 @@ class ItemOut(BaseModel):
     rework_reason: str | None
     # The ticket in Jira; None while no Jira base URL is set.
     browse_url: str | None
+    # Proposed only: every proposed rework patch passed the rework's build (none carries a `not built` finding).
+    rework_built: bool = False
 
 
 class ItemPage(BaseModel):
@@ -442,10 +444,17 @@ def list_items(
             rework_status=item.rework_status,
             rework_reason=item.rework_reason,
             browse_url=_browse_url(base_url, issue.key),
+            rework_built=item.rework_status == "proposed" and rework_built(session, item),
         )
         for item, issue, count, cluster_id, cluster_name in rows
     ]
     return ItemPage(items=items, total=total, offset=offset, limit=limit)
+
+
+def rework_built(session: Session, item: Item) -> bool:
+    """Whether the item's proposed rework patches all passed the rework's build: none was left `not built`."""
+    proposed = [p for p in current_patches(session, item) if is_rework(p) and p.review == "proposed"]
+    return bool(proposed) and not any(str(f.get("message", "")).startswith("not built") for p in proposed for f in p.findings or [])
 
 
 def _diff_subjects(session: Session, issue_ids: list[int]) -> dict[int, list[str]]:

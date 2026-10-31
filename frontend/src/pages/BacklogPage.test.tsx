@@ -56,6 +56,7 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     rework_status: null,
     rework_reason: null,
     browse_url: null,
+    rework_built: false,
     ...overrides,
   };
 }

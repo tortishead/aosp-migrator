@@ -64,6 +64,7 @@ def test_list_fields_and_natural_key_order(client: TestClient, imported: int, ji
         "rework_status": None,
         "rework_reason": None,
         "browse_url": f"{jira_url}/browse/PROJ-101",
+        "rework_built": False,
     }
     assert [i["diff_count"] for i in page["items"][1:4]] == [1, 1, 1]
 

@@ -509,6 +509,13 @@ button.danger:hover:not(:disabled) {
   color: var(--success);
 }
 
+/* Proposed and built by the rework: a lighter green than accepted. */
+.tag-built {
+  border-color: rgba(26, 127, 55, 0.15);
+  background: #effbf2;
+  color: #2c974b;
+}
+
 p.tag {
   display: inline-block;
   margin: 0 0 8px;

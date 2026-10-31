@@ -53,6 +53,7 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     rework_status: null,
     rework_reason: null,
     browse_url: null,
+    rework_built: false,
     ...overrides,
   };
 }
@@ -279,8 +280,12 @@ describe("Backlog rework", () => {
   it("shows the rework column, counts and filter", async () => {
     const calls = backlogApi({
       "GET /workspaces/1/items": () => ({
-        items: [item("PROJ-111", { rework_status: "proposed" }), item("PROJ-112", { rework_status: "rework_failed", rework_reason: "build failed: x.cpp" })],
-        total: 2,
+        items: [
+          item("PROJ-111", { rework_status: "proposed" }),
+          item("PROJ-112", { rework_status: "rework_failed", rework_reason: "build failed: x.cpp" }),
+          item("PROJ-113", { rework_status: "proposed", rework_built: true }),
+        ],
+        total: 3,
         offset: 0,
         limit: 50,
       }),
@@ -288,6 +293,12 @@ describe("Backlog rework", () => {
     });
     const { router } = renderRoute("/workspaces/1");
     expect(await screen.findByText("Rework failed", { selector: ".tag" })).toHaveAttribute("title", "build failed: x.cpp");
+    // A proposed patch that built is light green; one the rework did not build stays neutral.
+    const [unbuilt, built] = screen.getAllByText("Proposed", { selector: ".tag" });
+    expect(unbuilt).not.toHaveClass("tag-built");
+    expect(unbuilt).toHaveAttribute("title", "Not built by the rework");
+    expect(built).toHaveClass("tag-built");
+    expect(built).toHaveAttribute("title", "Built by the rework");
     const bar = await screen.findByRole("group", { name: "Rework counts" });
     expect(within(bar).getAllByRole("button").map((b) => b.textContent)).toEqual(["1 rework failed", "1 proposed"]);
     await userEvent.click(within(bar).getByRole("button", { name: "1 proposed" }));

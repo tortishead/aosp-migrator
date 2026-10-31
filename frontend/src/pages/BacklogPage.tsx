@@ -351,7 +351,7 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
         <BuildTag status={item.build_status} reason={item.build_reason} />
       </td>
       <td className="nowrap">
-        <ReworkTag status={item.rework_status} reason={item.rework_reason} />
+        <ReworkTag status={item.rework_status} reason={item.rework_reason} built={item.rework_built} />
       </td>
       <td>{item.cluster && <Link to={`/workspaces/${workspaceId}/clusters/${item.cluster.id}`}>{item.cluster.name}</Link>}</td>
       <td className="nowrap">{new Date(item.jira_updated).toLocaleDateString()}</td>

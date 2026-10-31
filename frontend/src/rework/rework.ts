@@ -21,7 +21,9 @@ export function reworkTone(status: ReworkStatus): "error" | "warn" | "ok" | "inf
   return "info";
 }
 
-export function reworkClass(status: ReworkStatus): string {
+/** A proposed patch that passed the rework's build is light green; one left unbuilt stays neutral. */
+export function reworkClass(status: ReworkStatus, built = false): string {
+  if (status === "proposed" && built) return "tag tag-built";
   const tone = reworkTone(status);
   return tone === "info" ? "tag" : `tag tag-${tone}`;
 }

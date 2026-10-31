@@ -175,6 +175,8 @@ export interface Item {
   rework_reason: string | null;
   // The ticket in Jira; null while no Jira base URL is set.
   browse_url: string | null;
+  /** Proposed only: every proposed rework patch passed the rework's build (none carries a `not built` finding). */
+  rework_built: boolean;
 }
 
 export interface ItemPage {
