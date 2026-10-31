@@ -82,8 +82,11 @@ def main() -> int:
         model = argv[argv.index("--model") + 1] if "--model" in argv else "auto"
         usage = {
             "totalPremiumRequestCost": 1,
+            "totalNanoAiu": 1_000_000_000,
             "totalUserRequests": 1,
-            "modelMetrics": {model: {"requests": {"count": 1, "cost": 1}, "usage": {"inputTokens": len(prompt) // 4, "outputTokens": 10}}},
+            "modelMetrics": {
+                model: {"requests": {"count": 1, "cost": 1}, "usage": {"inputTokens": len(prompt) // 4, "outputTokens": 10}, "totalNanoAiu": 1_000_000_000}
+            },
         }
         Path(argv[argv.index("--usage-output-file") + 1]).write_text(json.dumps(usage))
     print(scenario.get("reply", "done"))

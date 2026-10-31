@@ -29,6 +29,21 @@ export function premiumRequests(usage: Record<string, unknown> | null | undefine
   return num(usage?.totalPremiumRequestCost);
 }
 
+function nanoAiu(value: unknown): number | null {
+  const r = record(value);
+  return num(r.totalNanoAiu) ?? num(record(r.copilotUsage).totalNanoAiu);
+}
+
+/** GitHub AI credits the call consumed (`totalNanoAiu`, 1e9 per credit; else summed over its models), when the CLI reported them. */
+export function aiCredits(usage: Record<string, unknown> | null | undefined): number | null {
+  const total = nanoAiu(usage);
+  if (total !== null) return total / 1e9;
+  const perModel = Object.values(record(usage?.modelMetrics))
+    .map(nanoAiu)
+    .filter((n): n is number => n !== null);
+  return perModel.length ? perModel.reduce((a, b) => a + b, 0) / 1e9 : null;
+}
+
 /** The model a call asked for, else the ones that answered it (the CLI's default), else "default". */
 export function modelLabel(model: string | null | undefined, usage: Record<string, unknown> | null | undefined): string {
   if (model) return model;

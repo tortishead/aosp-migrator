@@ -1,8 +1,9 @@
 """Copilot usage over the calls rework attempts made (`ReworkAttempt.calls`), for the Copilot dashboard.
 
-A call's `usage` is what the CLI's `--usage-output-file` wrote: `totalPremiumRequestCost` and, per model that
-served it, `modelMetrics.<model>.requests.count` and `.usage.inputTokens` / `.outputTokens`. CLIs without that
-option report no usage: such calls count as calls, with no premium requests or tokens.
+A call's `usage` is what the CLI's `--usage-output-file` wrote: `totalPremiumRequestCost`, the AI credits it
+consumed as `totalNanoAiu` (nano AIU: 1e9 make a credit; usage-based billing CLIs), and, per model that served it,
+`modelMetrics.<model>.requests.count` and `.usage.inputTokens` / `.outputTokens`. CLIs without that option report no
+usage: such calls count as calls, with no premium requests, AI credits or tokens.
 """
 
 from collections.abc import Iterable, Mapping
@@ -28,6 +29,7 @@ class ModelMetrics:
     requests: float
     input_tokens: float
     output_tokens: float
+    ai_credits: float = 0.0
 
 
 def model_metrics(usage: Any) -> list[ModelMetrics]:
@@ -36,12 +38,47 @@ def model_metrics(usage: Any) -> list[ModelMetrics]:
     for model, metrics in _record(_record(usage).get("modelMetrics")).items():
         m = _record(metrics)
         tokens = _record(m.get("usage"))
-        out.append(ModelMetrics(str(model), _num(_record(m.get("requests")).get("count")), _num(tokens.get("inputTokens")), _num(tokens.get("outputTokens"))))
+        out.append(
+            ModelMetrics(
+                str(model),
+                _num(_record(m.get("requests")).get("count")),
+                _num(tokens.get("inputTokens")),
+                _num(tokens.get("outputTokens")),
+                model_ai_credits(m) or 0.0,
+            )
+        )
     return out
 
 
 def premium_requests(usage: Any) -> float:
     return _num(_record(usage).get("totalPremiumRequestCost"))
+
+
+NANO_AIU_PER_CREDIT = 1e9
+
+
+def _nano_aiu(record: Mapping[str, Any]) -> float | None:
+    """`totalNanoAiu`, at the top or under `copilotUsage`; None when neither is a number."""
+    for value in (record.get("totalNanoAiu"), _record(record.get("copilotUsage")).get("totalNanoAiu")):
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+def model_ai_credits(metrics: Any) -> float | None:
+    """AI credits one model's `modelMetrics` entry reports; None when it reports none."""
+    nano = _nano_aiu(_record(metrics))
+    return None if nano is None else nano / NANO_AIU_PER_CREDIT
+
+
+def ai_credits(usage: Any) -> float | None:
+    """AI credits the call consumed: the call's `totalNanoAiu`, else the sum over its models; None when the CLI reported none."""
+    u = _record(usage)
+    nano = _nano_aiu(u)
+    if nano is not None:
+        return nano / NANO_AIU_PER_CREDIT
+    per_model = [c for c in (model_ai_credits(m) for m in _record(u.get("modelMetrics")).values()) if c is not None]
+    return sum(per_model) if per_model else None
 
 
 @dataclass
@@ -64,6 +101,7 @@ class Bucket:
     # Calls whose CLI reported usage.
     reported: int = 0
     premium_requests: float = 0.0
+    ai_credits: float = 0.0
     input_tokens: float = 0.0
     output_tokens: float = 0.0
     # Seconds.
@@ -82,6 +120,7 @@ class Bucket:
         if isinstance(usage, Mapping):
             self.reported += 1
         self.premium_requests += premium_requests(usage)
+        self.ai_credits += ai_credits(usage) or 0.0
         for m in model_metrics(usage):
             self.input_tokens += m.input_tokens
             self.output_tokens += m.output_tokens
@@ -95,6 +134,7 @@ class Bucket:
             "canceled": self.canceled,
             "reported": self.reported,
             "premium_requests": self.premium_requests,
+            "ai_credits": round(self.ai_credits, 4),
             "input_tokens": int(self.input_tokens),
             "output_tokens": int(self.output_tokens),
             "duration": round(self.duration, 1),
@@ -106,6 +146,7 @@ class ModelBucket:
     # Calls it served, model API requests (one per tool round), tokens.
     calls: int = 0
     requests: float = 0.0
+    ai_credits: float = 0.0
     input_tokens: float = 0.0
     output_tokens: float = 0.0
 
@@ -140,6 +181,7 @@ def summarize(calls: Iterable[CallRef], workspace_names: Mapping[int, str]) -> d
             bucket = summary.by_model.setdefault(m.model, ModelBucket())
             bucket.calls += 1
             bucket.requests += m.requests
+            bucket.ai_credits += m.ai_credits
             bucket.input_tokens += m.input_tokens
             bucket.output_tokens += m.output_tokens
 
@@ -152,7 +194,13 @@ def summarize(calls: Iterable[CallRef], workspace_names: Mapping[int, str]) -> d
             for wid, b in sorted(summary.by_workspace.items(), key=lambda kv: -kv[1].calls)
         ],
         "by_model": [
-            {"model": model, "calls": b.calls, "requests": int(b.requests), "input_tokens": int(b.input_tokens), "output_tokens": int(b.output_tokens)}
+            {
+                "model": model,
+                "calls": b.calls,
+                "requests": int(b.requests),
+                "ai_credits": round(b.ai_credits, 4),
+                "input_tokens": int(b.input_tokens), "output_tokens": int(b.output_tokens),
+            }
             for model, b in sorted(summary.by_model.items(), key=lambda kv: -(kv[1].input_tokens + kv[1].output_tokens))
         ],
         "by_requested_model": [
@@ -180,6 +228,7 @@ def _recent(ref: CallRef, workspace_names: Mapping[int, str]) -> dict[str, Any]:
         "served_models": [m.model for m in metrics],
         "status": call.get("status"),
         "premium_requests": premium_requests(usage) if isinstance(usage, Mapping) else None,
+        "ai_credits": ai_credits(usage),
         "input_tokens": int(sum(m.input_tokens for m in metrics)) if metrics else None,
         "output_tokens": int(sum(m.output_tokens for m in metrics)) if metrics else None,
         "duration": round(_num(call.get("duration")), 1),

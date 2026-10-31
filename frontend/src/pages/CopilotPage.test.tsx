@@ -7,13 +7,13 @@ import { mockApi, renderRoute } from "../test-utils";
 import { dailySeries, formatDuration, formatTokens } from "./CopilotPage";
 
 function bucket(over: Partial<CopilotUsageBucket> = {}): CopilotUsageBucket {
-  return { calls: 0, ok: 0, failed: 0, canceled: 0, reported: 0, premium_requests: 0, input_tokens: 0, output_tokens: 0, duration: 0, ...over };
+  return { calls: 0, ok: 0, failed: 0, canceled: 0, reported: 0, premium_requests: 0, ai_credits: 0, input_tokens: 0, output_tokens: 0, duration: 0, ...over };
 }
 
 const today = new Date().toISOString().slice(0, 10);
 
 function usage(over: Partial<CopilotUsage> = {}): CopilotUsage {
-  const b = bucket({ calls: 3, ok: 2, failed: 1, reported: 2, premium_requests: 2.5, input_tokens: 4000, output_tokens: 400, duration: 920 });
+  const b = bucket({ calls: 3, ok: 2, failed: 1, reported: 2, premium_requests: 2.5, ai_credits: 4.25, input_tokens: 4000, output_tokens: 400, duration: 920 });
   return {
     workspace_id: null,
     days: 30,
@@ -24,7 +24,7 @@ function usage(over: Partial<CopilotUsage> = {}): CopilotUsage {
       { workspace_id: 1, name: "A15", ...b },
       { workspace_id: 2, name: "A16", ...bucket({ calls: 1 }) },
     ],
-    by_model: [{ model: "claude-sonnet-4.5", calls: 2, requests: 7, input_tokens: 4000, output_tokens: 400 }],
+    by_model: [{ model: "claude-sonnet-4.5", calls: 2, requests: 7, ai_credits: 4.25, input_tokens: 4000, output_tokens: 400 }],
     by_requested_model: [{ model: null, ...b }],
     recent: [
       {
@@ -41,6 +41,7 @@ function usage(over: Partial<CopilotUsage> = {}): CopilotUsage {
         served_models: ["claude-sonnet-4.5"],
         status: "ok",
         premium_requests: 1,
+        ai_credits: 1.5,
         input_tokens: 1834,
         output_tokens: 42,
         duration: 12.5,
@@ -56,7 +57,7 @@ describe("CopilotPage", () => {
     renderRoute("/copilot");
     expect(await screen.findByText("Premium requests", { selector: ".stat-label" })).toBeInTheDocument();
     const tiles = screen.getAllByText(/./, { selector: ".stat-value" }).map((e) => e.textContent);
-    expect(tiles).toEqual(["3", "2.5", "4,400", "67%", "15 min"]);
+    expect(tiles).toEqual(["3", "2.5", "4.25", "4,400", "67%", "15 min"]);
     expect(screen.getByText(/1 of 3 calls reported no usage/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "By workspace" })).toBeInTheDocument();
     const recent = screen.getByRole("heading", { name: "Recent calls" }).closest("section")!;

@@ -718,6 +718,8 @@ export interface CopilotUsageBucket {
   /** Calls whose CLI reported usage. */
   reported: number;
   premium_requests: number;
+  /** GitHub AI credits (usage-based billing), from the CLI's `totalNanoAiu`. */
+  ai_credits: number;
   input_tokens: number;
   output_tokens: number;
   /** Seconds. */
@@ -742,6 +744,8 @@ export interface CopilotUsageCall {
   status: string | null;
   /** Null when the CLI reported no usage. */
   premium_requests: number | null;
+  /** Null when the CLI reported no AI credits. */
+  ai_credits: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
   duration: number;
@@ -755,7 +759,7 @@ export interface CopilotUsage {
   by_day: (CopilotUsageBucket & { day: string })[];
   by_workspace: (CopilotUsageBucket & { workspace_id: number; name: string })[];
   /** By the model that answered. */
-  by_model: { model: string; calls: number; requests: number; input_tokens: number; output_tokens: number }[];
+  by_model: { model: string; calls: number; requests: number; ai_credits: number; input_tokens: number; output_tokens: number }[];
   /** By the model asked for; null is the CLI's default. */
   by_requested_model: (CopilotUsageBucket & { model: string | null })[];
   /** Newest first, at most 50. */

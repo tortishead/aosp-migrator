@@ -35,7 +35,7 @@ function percent(part: number, whole: number): string {
 }
 
 /** Every UTC day of the period, with zeros for days without calls. */
-export function dailySeries(usage: CopilotUsage, today: Date = new Date()): { day: string; calls: number; premium: number; tokens: number }[] {
+export function dailySeries(usage: CopilotUsage, today: Date = new Date()): { day: string; calls: number; premium: number; credits: number; tokens: number }[] {
   const byDay = new Map(usage.by_day.map((d) => [d.day, d]));
   const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   const first = usage.days ? new Date(end.getTime() - (usage.days - 1) * 86_400_000) : usage.by_day.length ? new Date(`${usage.by_day[0].day}T00:00:00Z`) : end;
@@ -43,7 +43,7 @@ export function dailySeries(usage: CopilotUsage, today: Date = new Date()): { da
   for (let t = first.getTime(); t <= end.getTime(); t += 86_400_000) {
     const day = new Date(t).toISOString().slice(0, 10);
     const d = byDay.get(day);
-    out.push({ day, calls: d?.calls ?? 0, premium: d?.premium_requests ?? 0, tokens: (d?.input_tokens ?? 0) + (d?.output_tokens ?? 0) });
+    out.push({ day, calls: d?.calls ?? 0, premium: d?.premium_requests ?? 0, credits: d?.ai_credits ?? 0, tokens: (d?.input_tokens ?? 0) + (d?.output_tokens ?? 0) });
   }
   return out;
 }
@@ -120,6 +120,7 @@ function Dashboard({ usage }: { usage: CopilotUsage }) {
       <div className="stat-tiles">
         <Stat label="Copilot calls" value={integer.format(t.calls)} note={`in ${integer.format(t.attempts)} rework attempt${t.attempts === 1 ? "" : "s"}`} />
         <Stat label="Premium requests" value={decimal.format(t.premium_requests)} note={t.calls ? `${decimal.format(t.premium_requests / t.calls)} per call` : undefined} />
+        <Stat label="AI credits" value={decimal.format(t.ai_credits)} note={t.calls ? `${decimal.format(t.ai_credits / t.calls)} per call` : undefined} />
         <Stat
           label="Tokens"
           value={formatTokens(tokens)}
@@ -132,7 +133,7 @@ function Dashboard({ usage }: { usage: CopilotUsage }) {
       {t.reported < t.calls && (
         <p className="hint copilot-note">
           {integer.format(t.calls - t.reported)} of {integer.format(t.calls)} calls reported no usage (a Copilot CLI without{" "}
-          <code>--usage-output-file</code>, or a call that failed early): premium requests and tokens leave them out.
+          <code>--usage-output-file</code>, or a call that failed early): premium requests, AI credits and tokens leave them out.
         </p>
       )}
       <DailyChart usage={usage} />
@@ -182,11 +183,12 @@ function Stat({ label, value, note, title }: { label: string; value: string; not
   );
 }
 
-type Metric = "calls" | "premium" | "tokens";
+type Metric = "calls" | "premium" | "credits" | "tokens";
 
 const METRICS: { id: Metric; label: string; format: (n: number) => string }[] = [
   { id: "calls", label: "Calls", format: (n) => integer.format(n) },
   { id: "premium", label: "Premium requests", format: (n) => decimal.format(n) },
+  { id: "credits", label: "AI credits", format: (n) => decimal.format(n) },
   { id: "tokens", label: "Tokens", format: formatTokens },
 ];
 
@@ -236,6 +238,7 @@ function DailyChart({ usage }: { usage: CopilotUsage }) {
             <strong>{shown.day}</strong>
             <div>{integer.format(shown.calls)} calls</div>
             <div>{decimal.format(shown.premium)} premium requests</div>
+            <div>{decimal.format(shown.credits)} AI credits</div>
             <div>{formatTokens(shown.tokens)} tokens</div>
           </div>
         )}
@@ -260,6 +263,7 @@ function ModelTable({ usage }: { usage: CopilotUsage }) {
           <th className="num" title="Model API requests: one per tool round">
             Requests
           </th>
+          <th className="num">AI credits</th>
           <th className="num">Input tokens</th>
           <th className="num">Output tokens</th>
           <th>Share of tokens</th>
@@ -273,6 +277,7 @@ function ModelTable({ usage }: { usage: CopilotUsage }) {
               <td className="mono">{m.model}</td>
               <td className="num">{integer.format(m.calls)}</td>
               <td className="num">{integer.format(m.requests)}</td>
+              <td className="num">{decimal.format(m.ai_credits)}</td>
               <td className="num" title={integer.format(m.input_tokens)}>
                 {formatTokens(m.input_tokens)}
               </td>
@@ -310,6 +315,7 @@ function BucketTable({ label, rows }: { label: string; rows: { key: string; name
           <th className="num">Calls</th>
           <th className="num">Succeeded</th>
           <th className="num">Premium</th>
+          <th className="num">AI credits</th>
           <th className="num">Tokens</th>
           <th className="num">Time</th>
         </tr>
@@ -321,6 +327,7 @@ function BucketTable({ label, rows }: { label: string; rows: { key: string; name
             <td className="num">{integer.format(b.calls)}</td>
             <td className="num">{percent(b.ok, b.calls)}</td>
             <td className="num">{decimal.format(b.premium_requests)}</td>
+            <td className="num">{decimal.format(b.ai_credits)}</td>
             <td className="num" title={integer.format(b.input_tokens + b.output_tokens)}>
               {formatTokens(b.input_tokens + b.output_tokens)}
             </td>
@@ -351,6 +358,7 @@ function RecentCalls({ usage }: { usage: CopilotUsage }) {
           <th>Model</th>
           <th>Status</th>
           <th className="num">Premium</th>
+          <th className="num">AI credits</th>
           <th className="num">Tokens in / out</th>
           <th className="num">Time</th>
         </tr>
@@ -377,6 +385,7 @@ function RecentCalls({ usage }: { usage: CopilotUsage }) {
             <td className="mono">{c.model ?? (c.served_models.length ? `${c.served_models.join(", ")} (default)` : "default")}</td>
             <td>{statusTag(c.status)}</td>
             <td className="num">{c.premium_requests === null ? "–" : decimal.format(c.premium_requests)}</td>
+            <td className="num">{c.ai_credits === null ? "–" : decimal.format(c.ai_credits)}</td>
             <td className="num">{c.input_tokens === null ? "–" : `${formatTokens(c.input_tokens)} / ${formatTokens(c.output_tokens ?? 0)}`}</td>
             <td className="num">{formatDuration(c.duration)}</td>
           </tr>

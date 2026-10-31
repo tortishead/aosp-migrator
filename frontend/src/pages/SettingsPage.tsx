@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { modelUsage, premiumRequests } from "../copilot/usage";
+import { aiCredits, modelUsage, premiumRequests } from "../copilot/usage";
 import { api, type CopilotSettingsUpdate, type CopilotTestResult, type CopilotTokenCheck, type JiraTestResult, type Settings, type Source } from "../api";
 
 const settingsKey = ["settings"];
@@ -494,6 +494,7 @@ function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed
   const tokenOk = !token || token.status === "valid";
   const models = modelUsage(result.usage);
   const premium = premiumRequests(result.usage);
+  const credits = aiCredits(result.usage);
   const took = elapsed === null ? null : `${elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed)} s`;
 
   if (!result.ok) {
@@ -531,6 +532,12 @@ function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed
           <div>
             <dt>Premium requests</dt>
             <dd className="mono">{premium}</dd>
+          </div>
+        )}
+        {credits !== null && (
+          <div>
+            <dt>AI credits</dt>
+            <dd className="mono">{Number(credits.toFixed(4))}</dd>
           </div>
         )}
       </dl>
