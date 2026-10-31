@@ -108,7 +108,9 @@ export function prescanStatusText(job: PrescanJob): string {
       return (
         (job.stage === "projects"
           ? `${name}: finding target projects…`
-          : `${job.scope === "stacked" ? "Stacking" : "Pre-scanning"}… ${job.done} / ${job.total ?? "?"}`) +
+          : job.stage === "dependencies"
+            ? `${name}: finding dependencies…`
+            : `${job.scope === "stacked" ? "Stacking" : "Pre-scanning"}… ${job.done} / ${job.total ?? "?"}`) +
         (job.cancel_requested ? " (canceling)" : "")
       );
     case "done":

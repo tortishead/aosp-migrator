@@ -117,6 +117,9 @@ export interface Item {
   triage_reason: string | null;
   /** Why the pre-scan results are out of date; empty when fresh or never scanned. */
   stale: string[];
+  /** How the current diffs depend on other items' diffs, either way, as of the last pre-scan: `needs KEY (path)`,
+   * `needed by KEY (path)` (`, already in target` when the base is in), `path: base in no diff`; empty when none. */
+  dependencies: string[];
   /** Result of the last finished build and why; null until built. */
   build_status: BuildStatus | null;
   build_reason: string | null;
@@ -308,8 +311,8 @@ export interface PrescanJob {
   scope: "all" | "keys" | "stacked";
   issue_keys: string[];
   status: JobStatus;
-  /** While running: `projects` (git/plain trees only), then `scan` (repo mapping, already-present check). */
-  stage: "projects" | "scan" | null;
+  /** While running: `projects` (git/plain trees only), then `scan` (repo mapping, already-present check), then `dependencies`. */
+  stage: "projects" | "scan" | "dependencies" | null;
   done: number;
   total: number | null;
   errors: { key: string; message: string }[];
@@ -341,6 +344,8 @@ export interface PrescanSummary {
   /** Not scanned yet, or without diffs. */
   unlabeled: number;
   stale: number;
+  /** Items whose diffs depend on another item's diff or are needed by one, or need a base no diff makes. */
+  dependencies: number;
 }
 
 export interface DiffScan {
@@ -405,6 +410,25 @@ export interface ItemPrescan {
   /** Why the results are out of date; empty when fresh. */
   stale: string[];
   diffs: DiffScan[];
+  /** Files of this item's diffs written on top of a version the target lacks, as of the last pre-scan. */
+  depends_on: Dependency[];
+  /** Other items' files written on top of what this item's diffs make. */
+  needed_by: Dependency[];
+}
+
+/** `pending`: another item's diff makes the base version, the target lacks it. `in_target`: it is in already.
+ * `missing`: no known diff makes it and the target lacks it (only for conflicting files). */
+export type DependencyState = "pending" | "in_target" | "missing";
+
+export interface Dependency {
+  /** This item's diff and file. */
+  filename: string;
+  path: string;
+  /** Base version (blob id) as written in the diff. */
+  blob: string;
+  state: DependencyState;
+  /** The item on the other side; null when `missing`. */
+  other: { key: string; summary: string; filename: string; triage_label: TriageLabel | null; dropped: boolean } | null;
 }
 
 /** Worst first. */

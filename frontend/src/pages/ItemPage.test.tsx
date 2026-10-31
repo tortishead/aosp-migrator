@@ -24,7 +24,7 @@ const URL = "/workspaces/1/items/PROJ-101";
 function itemApi(handlers: Parameters<typeof mockApi>[0] = {}) {
   return mockApi({
     "GET /workspaces/1/items/PROJ-101": () => itemDetail(),
-    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, label: null, label_reason: null, stale: [], diffs: [] }),
+    "GET /workspaces/1/items/PROJ-101/prescan": () => ({ scanned: false, label: null, label_reason: null, stale: [], diffs: [], depends_on: [], needed_by: [] }),
     "GET /workspaces/1/prescan-jobs": () => [],
     ...diffHandlers,
     ...handlers,
@@ -314,6 +314,8 @@ function scannedItem(overrides: Partial<ItemPrescan> = {}): ItemPrescan {
     label_reason: "build.patch: one of system/core, hardware/interfaces",
     stale: [],
     diffs: [unmappedDiff()],
+    depends_on: [],
+    needed_by: [],
     ...overrides,
   };
 }
@@ -325,6 +327,8 @@ describe("ItemPage pre-scan", () => {
       label: "conflicts",
       label_reason: "frameworks/av: icon.png conflict",
       stale: ["frameworks/av HEAD moved"],
+      depends_on: [],
+      needed_by: [],
       diffs: [
         {
           attachment_id: 2,
@@ -397,6 +401,38 @@ describe("ItemPage pre-scan", () => {
     const evidence = await screen.findByRole("list", { name: "Line evidence" });
     expect(evidence).toHaveTextContent("Power.java: 2 of 3 added lines found, 1 of 1 removed lines gone");
     expect(within(evidence).getByText("if (lock == null) return;").tagName).toBe("CODE");
+  });
+
+  it("lists the items this one depends on and is needed by", async () => {
+    const other = { key: "PROJ-105", summary: "Boot props loader", filename: "0001-loader.patch", triage_label: "applies" as const, dropped: false };
+    itemApi({
+      "GET /workspaces/1/items/PROJ-101/prescan": () =>
+        scannedItem({
+          depends_on: [
+            { filename: "0002-use.patch", path: "init/init.cpp", blob: "45c5620", state: "pending", other },
+            { filename: "0002-use.patch", path: "init/oem.rc", blob: "1a2b3c4", state: "missing", other: null },
+          ],
+          needed_by: [{ filename: "0002-use.patch", path: "init/init.cpp", blob: "9f8e7d6", state: "in_target", other: { ...other, key: "PROJ-107", dropped: true } }],
+        }),
+    });
+    renderRoute(URL);
+    const dependsOn = await screen.findByRole("list", { name: "Depends on" });
+    const [pending, missing] = within(dependsOn).getAllByRole("listitem");
+    expect(within(pending).getByRole("link", { name: "PROJ-105" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-105");
+    expect(pending).toHaveTextContent("init/init.cpp Not in target (0002-use.patch ← 0001-loader.patch, base 45c5620)");
+    expect(missing).toHaveTextContent("init/oem.rc Base in no diff (0002-use.patch, base 1a2b3c4)");
+    const neededBy = screen.getByRole("list", { name: "Needed by" });
+    expect(neededBy).toHaveTextContent("PROJ-107");
+    expect(neededBy).toHaveTextContent("Dropped");
+    expect(neededBy).toHaveTextContent("Already in target");
+    expect(screen.queryByText(/No dependencies found/)).not.toBeInTheDocument();
+  });
+
+  it("says when no dependencies were found", async () => {
+    itemApi({ "GET /workspaces/1/items/PROJ-101/prescan": () => scannedItem() });
+    renderRoute(URL);
+    expect(await screen.findByText(/No dependencies found/)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Depends on" })).not.toBeInTheDocument();
   });
 
   it("picks a project for an unmapped diff and shows the new results", async () => {
@@ -512,7 +548,7 @@ describe("ItemPage pre-scan", () => {
       },
       "GET /workspaces/1/items/PROJ-101/prescan": () => {
         resultFetches += 1;
-        return { scanned: resultFetches > 1, label: "present", label_reason: "every file reverse-applies", stale: [], diffs: [] };
+        return { scanned: resultFetches > 1, label: "present", label_reason: "every file reverse-applies", stale: [], diffs: [], depends_on: [], needed_by: [] };
       },
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });

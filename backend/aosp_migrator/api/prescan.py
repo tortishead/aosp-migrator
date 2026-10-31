@@ -5,11 +5,21 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from aosp_migrator.api.deps import get_session
-from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace
-from aosp_migrator.prescan.runner import JobConflictError, PrescanError, PrescanRunner, current_diffs, current_patch, diff_scan, stale_items, target_projects
+from aosp_migrator.db.models import Attachment, DiffDependency, DiffScan, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace
+from aosp_migrator.prescan.runner import (
+    JobConflictError,
+    PrescanError,
+    PrescanRunner,
+    current_diffs,
+    current_patch,
+    diff_scan,
+    item_dependencies,
+    stale_items,
+    target_projects,
+)
 from aosp_migrator.prescan.triage import ORDER
 
 router = APIRouter()
@@ -94,6 +104,24 @@ class DiffScanOut(BaseModel):
         )
 
 
+class DependencyItemOut(BaseModel):
+    key: str
+    summary: str
+    filename: str
+    triage_label: str | None
+    dropped: bool
+
+
+class DependencyOut(BaseModel):
+    # This item's diff and file.
+    filename: str
+    path: str
+    blob: str
+    state: str  # pending / in_target / missing
+    # The item on the other side: the one making the blob, or needing it; None when missing.
+    other: DependencyItemOut | None
+
+
 class ItemPrescanOut(BaseModel):
     scanned: bool
     # Triage label of the item and why; None until scanned, and for items without diffs.
@@ -101,6 +129,10 @@ class ItemPrescanOut(BaseModel):
     label_reason: str | None
     stale: list[str]
     diffs: list[DiffScanOut]
+    # Files of this item's diffs written on top of a version the target lacks, as of the last pre-scan.
+    depends_on: list[DependencyOut]
+    # Other items' files written on top of what this item's diffs make.
+    needed_by: list[DependencyOut]
 
 
 class ProjectPick(BaseModel):
@@ -114,6 +146,8 @@ class PrescanSummaryOut(BaseModel):
     # Items without a label: not scanned yet, or without diffs.
     unlabeled: int
     stale: int
+    # Items whose diffs depend on another item's diff or are needed by one, or need a base no diff makes.
+    dependencies: int
 
 
 def _workspace(session: Session, workspace_id: int) -> Workspace:
@@ -197,6 +231,7 @@ def get_prescan_summary(workspace_id: int, session: SessionDep) -> PrescanSummar
         labels={label: counts.get(label, 0) for label in ORDER},
         unlabeled=counts.get(None, 0),
         stale=len(kept & stale.keys()),
+        dependencies=len(kept & item_dependencies(session, workspace_id).keys()),
     )
 
 
@@ -244,15 +279,45 @@ def get_item_prescan(workspace_id: int, key: str, session: SessionDep) -> ItemPr
     workspace = _workspace(session, workspace_id)
     item, issue = _item(session, workspace_id, key)
 
+    attachments = current_diffs(session, issue.id)
     diffs = []
-    for attachment in current_diffs(session, issue.id):
+    for attachment in attachments:
         scan = diff_scan(session, attachment.id)
         diffs.append(DiffScanOut.of(attachment, scan, current_patch(session, scan)))
+    ids = [a.id for a in attachments]
     return ItemPrescanOut(
         scanned=any(d.scanned_at is not None for d in diffs),
         label=item.triage_label,
         label_reason=item.triage_reason,
         stale=stale_items(session, workspace_id, Path(workspace.target_tree), [item.id]).get(item.id, []),
         diffs=diffs,
+        depends_on=_dependencies(session, ids, DiffDependency.attachment_id, DiffDependency.depends_on_id),
+        needed_by=_dependencies(session, ids, DiffDependency.depends_on_id, DiffDependency.attachment_id),
     )
+
+
+def _dependencies(session: Session, ids: list[int], own_id: Any, other_id: Any) -> list[DependencyOut]:
+    """Dependency rows whose `own_id` is one of `ids`, with the item `other_id` points at; rows of an outdated diff version are left out."""
+    mine, theirs = aliased(Attachment), aliased(Attachment)
+    rows = session.execute(
+        select(DiffDependency, mine, theirs, JiraIssue, Item)
+        .join(mine, mine.id == own_id)
+        .outerjoin(theirs, theirs.id == other_id)
+        .outerjoin(JiraIssue, JiraIssue.id == theirs.issue_id)
+        .outerjoin(Item, Item.issue_id == JiraIssue.id)
+        .where(own_id.in_(ids), theirs.id.is_(None) | theirs.is_current.is_(True))
+        .order_by(JiraIssue.key, mine.filename, DiffDependency.path)
+    )
+    return [
+        DependencyOut(
+            filename=attachment.filename,
+            path=dep.path,
+            blob=dep.blob,
+            state=dep.state,
+            other=DependencyItemOut(key=issue.key, summary=issue.summary, filename=other.filename, triage_label=other_item.triage_label, dropped=other_item.dropped)
+            if other is not None and issue is not None and other_item is not None
+            else None,
+        )
+        for dep, attachment, other, issue, other_item in rows
+    ]
 

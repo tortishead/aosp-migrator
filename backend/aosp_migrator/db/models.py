@@ -256,6 +256,27 @@ class DiffScan(Base):
     scanned_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class DiffDependency(Base):
+    """A file of a diff written on top of a version (blob) the target project lacks, and the diff that makes it.
+
+    Rebuilt for the whole workspace after each pre-scan, see `prescan.deps`.
+    """
+
+    __tablename__ = "diff_dependency"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    # The diff that needs the blob.
+    attachment_id: Mapped[int] = mapped_column(ForeignKey("attachment.id", ondelete="CASCADE"), index=True)
+    # Its file, path before the change.
+    path: Mapped[str] = mapped_column(String)
+    # Preimage blob id as written in the diff's `index` line, maybe abbreviated.
+    blob: Mapped[str] = mapped_column(String)
+    # The diff of another item whose result is that blob; None when no known diff makes it.
+    depends_on_id: Mapped[int | None] = mapped_column(ForeignKey("attachment.id", ondelete="CASCADE"), index=True)
+    state: Mapped[str] = mapped_column(String)  # pending / in_target / missing
+
+
 class PrescanJob(Base):
     __tablename__ = "prescan_job"
 
@@ -265,7 +286,7 @@ class PrescanJob(Base):
     # Backlog items to scan when scope is `keys`.
     issue_keys: Mapped[list[Any]]
     status: Mapped[str] = mapped_column(String, default="running")
-    stage: Mapped[str | None] = mapped_column(String)  # projects / scan
+    stage: Mapped[str | None] = mapped_column(String)  # projects / scan / dependencies
     done: Mapped[int] = mapped_column(default=0)
     total: Mapped[int | None]
     # [{key, message}] per failed item; the job itself carries on.

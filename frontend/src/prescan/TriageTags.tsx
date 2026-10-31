@@ -1,7 +1,7 @@
 import type { Item } from "../api";
 import { TRIAGE_TEXT, triageClass } from "./triage";
 
-/** Backlog pre-scan column: the triage label (the apply result whenever the diffs were apply-checked) and a stale marker. */
+/** Backlog pre-scan column: the triage label (the apply result whenever the diffs were apply-checked), a stale and a dependency marker. */
 export function TriageTags({ item }: { item: Item }) {
   return (
     <>
@@ -13,6 +13,11 @@ export function TriageTags({ item }: { item: Item }) {
       {item.stale.length > 0 && (
         <span className="tag tag-warn" title={`Out of date: ${item.stale.join("; ")}`}>
           stale
+        </span>
+      )}
+      {item.dependencies.length > 0 && (
+        <span className="tag tag-warn" title={item.dependencies.join("; ")}>
+          dependency
         </span>
       )}
     </>

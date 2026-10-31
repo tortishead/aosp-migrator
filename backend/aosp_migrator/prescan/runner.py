@@ -5,7 +5,8 @@ stacks a list of them in the given order (`stacked`, see `_Job.stack`).
 Stage `scan` maps each current diff to a target project, checks whether it is
 already present and, when not, whether it applies, keeps the migration patch the
 apply check made, then sets the item's triage label. Each item is written in its own transaction; an item that fails records an
-error (and the label `error`) while the job goes on. Only errors that would hit
+error (and the label `error`) while the job goes on. Stage `dependencies` then finds
+again which diffs of the workspace build on which (`prescan.deps`). Only errors that would hit
 every item (no project list, missing tree) fail the whole job. The local state is
 never touched.
 
@@ -21,13 +22,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
-from aosp_migrator.db.models import Attachment, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace, utcnow
+from aosp_migrator.db.models import Attachment, DiffDependency, DiffScan, HistoryEvent, ImportJob, Item, JiraIssue, MigrationPatch, PrescanJob, Workspace, utcnow
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan import git
 from aosp_migrator.prescan.apply import ApplyCheck, check_apply
+from aosp_migrator.prescan.deps import DiffFiles, file_blobs, find
 from aosp_migrator.prescan.mapping import PROJECT_LIST, ProjectListMissing, discover_projects, map_diff, path_hints, projects_under, read_project_list, repository_hints
 from aosp_migrator.prescan.patch import Patch
 from aosp_migrator.prescan.presence import check_presence
@@ -178,6 +180,8 @@ class PrescanRunner:
                 log.exception("Pre-scan of %s failed", issue.key)
                 _label_error(item, exc)
             session.commit()
+            rebuild_dependencies(session, workspace_id, tree)
+            session.commit()
 
     @staticmethod
     def _check_free(session: Session, workspace_id: int) -> None:
@@ -256,6 +260,10 @@ class _Job:
                 _label_error(item, exc)
             self.job.done += 1
             self.session.commit()
+        self.job.stage = "dependencies"
+        self.session.commit()
+        rebuild_dependencies(self.session, workspace.id, tree)
+        self.session.commit()
 
     def stack(self, tree: Path, projects: list[str], items: list[tuple[Item, JiraIssue]]) -> None:
         """Stack each item's diffs on the items before it that applied; record the outcome in its history.
@@ -345,6 +353,68 @@ def stack_diff(session: Session, attachment: Attachment, issue: JiraIssue, tree:
     presence = check_presence(tree / project, text, upstream_domains)
     present = [s.path for s in Patch.parse(text).files] if presence.status == "present" else presence.files("present")
     return StackDiff(attachment.filename, project, text, present)
+
+
+def rebuild_dependencies(session: Session, workspace_id: int, tree: Path) -> None:
+    """Find the dependencies between the current diffs of every item again; they replace the earlier ones."""
+    rows = session.execute(
+        select(Attachment, Item.id, DiffScan.project, DiffScan.apply_detail)
+        .join(Item, Item.issue_id == Attachment.issue_id)
+        .outerjoin(DiffScan, DiffScan.attachment_id == Attachment.id)
+        .where(Item.workspace_id == workspace_id, Attachment.kind == "diff", Attachment.is_current.is_(True), Attachment.local_path.is_not(None))
+        .order_by(Attachment.created, Attachment.id)
+    )
+    diffs = [
+        DiffFiles(a.id, item_id, project, file_blobs(text), frozenset(p for p, s in (detail or {}).get("files", {}).items() if s == "conflicts"))
+        for a, item_id, project, detail in rows
+        if (text := read_diff_text(a)) is not None
+    ]
+    session.execute(delete(DiffDependency).where(DiffDependency.workspace_id == workspace_id))
+    session.add_all(
+        DiffDependency(workspace_id=workspace_id, attachment_id=d.attachment_id, path=d.path, blob=d.blob, depends_on_id=d.depends_on_id, state=d.state)
+        for d in find(tree, diffs)
+    )
+
+
+def item_dependencies(session: Session, workspace_id: int, item_ids: list[int] | None = None) -> dict[int, list[str]]:
+    """Every item on either side of a dependency between current diffs (all items, or `item_ids`), with what links it:
+    `needs KEY (path)`, `needed by KEY (path)` (`, already in target` when the target has the base), `path: base in no diff`.
+
+    Items without any dependency are left out.
+    """
+    mine, theirs = aliased(Attachment), aliased(Attachment)
+    my_issue, their_issue = aliased(JiraIssue), aliased(JiraIssue)
+    my_item, their_item = aliased(Item), aliased(Item)
+    query = (
+        select(my_item.id, my_issue.key, DiffDependency, their_item.id, their_issue.key)
+        .join(mine, mine.id == DiffDependency.attachment_id)
+        .join(my_issue, my_issue.id == mine.issue_id)
+        .join(my_item, my_item.issue_id == my_issue.id)
+        .outerjoin(theirs, theirs.id == DiffDependency.depends_on_id)
+        .outerjoin(their_issue, their_issue.id == theirs.issue_id)
+        .outerjoin(their_item, their_item.issue_id == their_issue.id)
+        .where(
+            DiffDependency.workspace_id == workspace_id,
+            mine.is_current.is_(True),
+            theirs.id.is_(None) | theirs.is_current.is_(True),
+        )
+        .order_by(my_issue.key, their_issue.key, DiffDependency.path)
+    )
+    wanted = None if item_ids is None else set(item_ids)
+    found: dict[int, list[str]] = {}
+
+    def add(item_id: int, reason: str) -> None:
+        if wanted is None or item_id in wanted:
+            found.setdefault(item_id, []).append(reason)
+
+    for my_id, my_key, dep, their_id, their_key in session.execute(query):
+        done = ", already in target" if dep.state == "in_target" else ""
+        if their_id is None:
+            add(my_id, f"{dep.path}: base in no diff")
+            continue
+        add(my_id, f"needs {their_key} ({dep.path}){done}")
+        add(their_id, f"needed by {my_key} ({dep.path}){done}")
+    return {item_id: list(dict.fromkeys(reasons)) for item_id, reasons in found.items()}
 
 
 def scan_item(session: Session, item: Item, issue: JiraIssue, tree: Path, projects: list[str], upstream_domains: list[str]) -> None:

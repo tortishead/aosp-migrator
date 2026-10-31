@@ -6,7 +6,7 @@ export const PAGE_SIZE = 50;
 export const LIST_FILTERS = ["status", "label", "triage", "build"] as const;
 export type ListFilter = (typeof LIST_FILTERS)[number];
 
-const FILTERS = [...LIST_FILTERS, "q", "has_error", "cluster", "stale"];
+const FILTERS = [...LIST_FILTERS, "q", "has_error", "cluster", "stale", "depends"];
 // URL params the items API understands; `page` is turned into offset/limit.
 const API_PARAMS = [...FILTERS, "sort", "group"];
 /** How the list is shown, not which items: kept by "Clear filters". */
