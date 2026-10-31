@@ -51,6 +51,7 @@ function item(key: string, overrides: Partial<Item> = {}): Item {
     build_reason: null,
     rework_status: null,
     rework_reason: null,
+    browse_url: null,
     ...overrides,
   };
 }
