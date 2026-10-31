@@ -4,6 +4,7 @@ import { Layout } from "./Layout";
 import { BacklogPage } from "./pages/BacklogPage";
 import { ClusterPage } from "./pages/ClusterPage";
 import { ClustersPage } from "./pages/ClustersPage";
+import { CopilotPage } from "./pages/CopilotPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { WorkspaceFormPage } from "./pages/WorkspaceFormPage";
@@ -14,6 +15,7 @@ export const routes: RouteObject[] = [
     element: <Layout />,
     children: [
       { path: "/", element: <WorkspacesPage /> },
+      { path: "/copilot", element: <CopilotPage /> },
       { path: "/settings", element: <SettingsPage /> },
       { path: "/workspaces/new", element: <WorkspaceFormPage /> },
       { path: "/workspaces/:workspaceId", element: <BacklogPage /> },

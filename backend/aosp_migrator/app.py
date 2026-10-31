@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from aosp_migrator import db
-from aosp_migrator.api import auth, build, clusters, health, imports, items, migration, prescan, rework, settings, workspaces
+from aosp_migrator.api import auth, build, clusters, copilot, health, imports, items, migration, prescan, rework, settings, workspaces
 from aosp_migrator.build import runner as build_runner
 from aosp_migrator.config import BUILD_DEPENDENTS_CAP, Config, resolve_data_dir
 from aosp_migrator.importer.runner import ImportRunner, fail_interrupted_jobs
@@ -67,6 +67,7 @@ def create_app(
     app.include_router(rework.router, prefix="/api")
     app.include_router(items.router, prefix="/api")
     app.include_router(clusters.router, prefix="/api")
+    app.include_router(copilot.router, prefix="/api")
 
     static_root = (static_dir or DEFAULT_STATIC_DIR).resolve()
 

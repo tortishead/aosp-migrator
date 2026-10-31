@@ -25,6 +25,7 @@ export function Layout() {
           <NavLink to="/" end>
             Workspaces
           </NavLink>
+          <NavLink to="/copilot">Copilot</NavLink>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
         <WorkspaceSwitcher />

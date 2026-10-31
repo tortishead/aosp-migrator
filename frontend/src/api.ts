@@ -707,6 +707,59 @@ export async function fetchText(url: string): Promise<string> {
   return response.text();
 }
 
+/** Copilot calls of one group; premium requests and tokens only from calls whose CLI reported usage. */
+export interface CopilotUsageBucket {
+  calls: number;
+  ok: number;
+  failed: number;
+  canceled: number;
+  /** Calls whose CLI reported usage. */
+  reported: number;
+  premium_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  /** Seconds. */
+  duration: number;
+}
+
+export interface CopilotUsageCall {
+  attempt_id: number;
+  workspace_id: number;
+  workspace: string;
+  keys: string[];
+  /** When the attempt started. */
+  at: string;
+  project: string | null;
+  rung: string | null;
+  round: number;
+  build_round: number;
+  /** Asked for; null is the CLI's default. */
+  model: string | null;
+  /** The models that answered, from the usage. */
+  served_models: string[];
+  status: string | null;
+  /** Null when the CLI reported no usage. */
+  premium_requests: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  duration: number;
+}
+
+export interface CopilotUsage {
+  workspace_id: number | null;
+  days: number | null;
+  totals: CopilotUsageBucket & { attempts: number };
+  by_rung: (CopilotUsageBucket & { rung: string })[];
+  by_day: (CopilotUsageBucket & { day: string })[];
+  by_workspace: (CopilotUsageBucket & { workspace_id: number; name: string })[];
+  /** By the model that answered. */
+  by_model: { model: string; calls: number; requests: number; input_tokens: number; output_tokens: number }[];
+  /** By the model asked for; null is the CLI's default. */
+  by_requested_model: (CopilotUsageBucket & { model: string | null })[];
+  /** Newest first, at most 50. */
+  recent: CopilotUsageCall[];
+}
+
 export const api = {
   authStatus: () => apiFetch<AuthStatus>("/auth/status"),
   login: (token: string) =>
@@ -719,6 +772,13 @@ export const api = {
     apiFetch<JiraTestResult>("/settings/jira/test", { method: "POST", body: JSON.stringify(values) }),
   testCopilot: (values: { binary?: string; model?: string }) =>
     apiFetch<CopilotTestResult>("/settings/copilot/test", { method: "POST", body: JSON.stringify(values) }),
+  copilotUsage: (filter: { workspaceId?: number | null; days?: number | null }) => {
+    const params = new URLSearchParams();
+    if (filter.workspaceId) params.set("workspace_id", String(filter.workspaceId));
+    if (filter.days) params.set("days", String(filter.days));
+    const query = params.toString();
+    return apiFetch<CopilotUsage>(`/copilot/usage${query ? `?${query}` : ""}`);
+  },
   workspaces: () => apiFetch<Workspace[]>("/workspaces"),
   workspace: (id: number) => apiFetch<Workspace>(`/workspaces/${id}`),
   createWorkspace: (input: WorkspaceInput) =>
