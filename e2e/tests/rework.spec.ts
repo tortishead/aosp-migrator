@@ -31,7 +31,11 @@ function copilotPrompts(): string[] {
 async function openMigration(page: Page, key: string) {
   const back = page.getByRole("link", { name: "← Backlog" });
   if (await back.isVisible()) await back.click();
-  await page.locator("table.backlog tbody tr").getByRole("link", { name: key, exact: true }).click();
+  await page
+    .locator("table.backlog tbody tr")
+    .filter({ has: page.getByRole("link", { name: key, exact: true }) })
+    .locator("a.summary-link")
+    .click();
   await page.getByRole("tab", { name: /Migration/ }).click();
 }
 
@@ -90,7 +94,7 @@ test("rework a chain of two conflicting items, accept, build stacked, reject and
   await expect(counts.getByRole("button")).toHaveText(["2 proposed"]);
 
   // PROJ-112's patch sits on PROJ-111's: accept is blocked until the base is accepted.
-  await rows.getByRole("link", { name: "PROJ-112", exact: true }).click();
+  await rows.filter({ has: page.getByRole("link", { name: "PROJ-112", exact: true }) }).locator("a.summary-link").click();
   await page.getByRole("tab", { name: /Migration/ }).click();
   let review = page.getByRole("region", { name: "Review", exact: true });
   await expect(page.getByRole("table", { name: "Patches", exact: true })).toContainText("Stacked");

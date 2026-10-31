@@ -2074,7 +2074,7 @@ p.tag {
 .setting-badge {
   margin-left: 6px;
   padding: 0 7px;
-  border: 1px solid rgba(154, 103, 0, 0.3);
+  border: 1px solid var(--warn-border);
   border-radius: 999px;
   background: var(--warn-subtle);
   color: var(--warn);
@@ -2158,6 +2158,7 @@ p.tag {
   --tone: var(--fg-muted);
   --tone-subtle: var(--bg-subtle);
   --tone-border: var(--border);
+  --tone-solid: var(--neutral-solid);
   overflow: hidden;
   border: 1px solid var(--tone-border);
   border-radius: 8px;
@@ -2177,25 +2178,29 @@ p.tag {
 .result-card.success {
   --tone: var(--success);
   --tone-subtle: var(--success-subtle);
-  --tone-border: rgba(26, 127, 55, 0.3);
+  --tone-border: var(--success-border);
+  --tone-solid: var(--success-solid);
 }
 
 .result-card.warning {
   --tone: var(--warn);
   --tone-subtle: var(--warn-subtle);
-  --tone-border: rgba(154, 103, 0, 0.3);
+  --tone-border: var(--warn-border);
+  --tone-solid: var(--warn-solid);
 }
 
 .result-card.error {
   --tone: var(--danger);
   --tone-subtle: var(--danger-subtle);
-  --tone-border: rgba(209, 36, 47, 0.3);
+  --tone-border: var(--danger-border);
+  --tone-solid: var(--danger-solid);
 }
 
 .result-card.pending {
   --tone: var(--accent);
   --tone-subtle: var(--accent-subtle);
-  --tone-border: rgba(9, 105, 218, 0.25);
+  --tone-border: var(--accent-border);
+  --tone-solid: var(--accent-solid);
 }
 
 .result-card-head {
@@ -2214,8 +2219,8 @@ p.tag {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: var(--tone);
-  color: #fff;
+  background: var(--tone-solid);
+  color: var(--accent-fg);
 }
 
 .result-card.pending .result-card-icon {
@@ -2464,7 +2469,7 @@ p.tag {
 
 .copilot-periods button[aria-pressed="true"] {
   background: var(--accent-subtle);
-  color: #0550ae;
+  color: var(--accent-strong);
   font-weight: 600;
 }
 
@@ -2576,7 +2581,7 @@ p.tag {
 }
 
 .copilot-bar.active {
-  fill: #0550ae;
+  fill: var(--accent-strong);
 }
 
 .copilot-tooltip {
