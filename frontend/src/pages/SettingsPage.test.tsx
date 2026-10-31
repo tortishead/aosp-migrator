@@ -122,4 +122,17 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("Upstream author domains")).toHaveValue("corp.example.com");
     expect(screen.getByText("Set by AOSP_MIGRATOR_UPSTREAM_DOMAINS.")).toBeInTheDocument();
   });
+
+  it("filters settings by the search box and hides sections without a match", async () => {
+    mockApi({ "GET /settings": () => settings() });
+    renderRoute("/settings");
+    await screen.findByLabelText("Base URL");
+    await userEvent.type(screen.getByLabelText("Search settings"), "domains");
+    expect(screen.getByLabelText("Upstream author domains")).toBeVisible();
+    expect(screen.queryByRole("form", { name: "Jira" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Jira/ })).toBeDisabled();
+    await userEvent.clear(screen.getByLabelText("Search settings"));
+    await userEvent.type(screen.getByLabelText("Search settings"), "zzz");
+    expect(screen.getByText("No settings found for “zzz”.")).toBeInTheDocument();
+  });
 });
