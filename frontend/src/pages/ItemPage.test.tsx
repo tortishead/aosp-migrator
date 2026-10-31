@@ -56,7 +56,15 @@ describe("ItemPage", () => {
     renderRoute(URL);
     expect(await screen.findByRole("heading", { name: "PROJ-101 Camera HAL crash on resume" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PROJ-101" })).toHaveAttribute("href", "https://jira.example.com/browse/PROJ-101");
-    expect(screen.getByText("oem-patch, camera")).toBeInTheDocument();
+    // Status as a Jira lozenge, labels as stacked Jira tags; no components or fix versions.
+    const details = screen.getByRole("region", { name: "Details" });
+    expect(within(details).getByText("In Progress")).toHaveClass("jira-status", "jira-status-active");
+    expect(within(within(details).getByRole("list", { name: "Labels" })).getAllByRole("listitem").map((l) => l.textContent)).toEqual([
+      "oem-patch",
+      "camera",
+    ]);
+    expect(within(details).queryByText("Components")).toBeNull();
+    expect(within(details).queryByText("Fix versions")).toBeNull();
 
     // The Jira panel holds the ticket and sits on top, above the pre-scan verdict; the history is beside it.
     const jira = screen.getByRole("region", { name: "Jira" });
@@ -95,7 +103,7 @@ describe("ItemPage", () => {
     // The Jira panel collapses (the fields stay in the side panel), and stays collapsed on the next visit.
     await userEvent.click(within(jira).getByRole("button", { name: "Hide" }));
     expect(screen.queryByRole("region", { name: "Description" })).toBeNull();
-    expect(within(screen.getByRole("region", { name: "Details" })).getByText("oem-patch, camera")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Details" })).getByText("camera")).toBeInTheDocument();
     expect(localStorage.getItem("aosp-migrator.item.jiraPanelOpen")).toBe("false");
   });
 

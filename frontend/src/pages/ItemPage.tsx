@@ -12,6 +12,7 @@ import { DiffTabs } from "../item/DiffViewer";
 import { HistoryTimeline } from "../item/History";
 import { JiraHtml } from "../item/JiraHtml";
 import { MigrationTab } from "../item/MigrationTab";
+import { statusCategory } from "../jira";
 import { PrescanSection } from "../prescan/PrescanSection";
 
 type Tab = "overview" | "patches" | "migration";
@@ -208,22 +209,38 @@ function BuildActions({ workspaceId, itemKey }: { workspaceId: number; itemKey: 
 }
 
 function IssueFields({ issue }: { issue: Issue }) {
-  const fields: [string, string][] = [
-    ["Jira status", issue.status],
-    ["Labels", issue.labels.join(", ")],
-    ["Components", issue.components.join(", ")],
-    ["Fix versions", issue.fix_versions.join(", ")],
-    ["Updated in Jira", new Date(issue.jira_updated).toLocaleString()],
-    ["Imported", new Date(issue.fetched_at).toLocaleString()],
-  ];
   return (
     <dl className="issue-fields">
-      {fields.map(([name, value]) => (
-        <div key={name}>
-          <dt>{name}</dt>
-          <dd>{value || "—"}</dd>
-        </div>
-      ))}
+      <div>
+        <dt>Status</dt>
+        <dd>
+          <span className={`jira-status jira-status-${statusCategory(issue.status)}`}>{issue.status}</span>
+        </dd>
+      </div>
+      <div>
+        <dt>Labels</dt>
+        <dd>
+          {issue.labels.length === 0 ? (
+            "—"
+          ) : (
+            <ul className="jira-labels" aria-label="Labels">
+              {issue.labels.map((label) => (
+                <li key={label} className="jira-label">
+                  {label}
+                </li>
+              ))}
+            </ul>
+          )}
+        </dd>
+      </div>
+      <div>
+        <dt>Updated in Jira</dt>
+        <dd>{new Date(issue.jira_updated).toLocaleString()}</dd>
+      </div>
+      <div>
+        <dt>Imported</dt>
+        <dd>{new Date(issue.fetched_at).toLocaleString()}</dd>
+      </div>
     </dl>
   );
 }
