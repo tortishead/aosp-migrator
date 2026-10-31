@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { api, fetchText, type ReworkAttempt } from "../api";
 import { BUILD_TEXT, buildClass } from "../build/build";
+import { modelLabel } from "../copilot/usage";
 import { ATTEMPT_RUNG_TEXT, ATTEMPT_TEXT, reworkAttemptsKey } from "./rework";
 
 export function useReworkAttempts(workspaceId: number, itemKey: string) {
@@ -101,7 +102,7 @@ function Attempt({ itemKey, attempt }: { itemKey: string; attempt: ReworkAttempt
                     {c.round === 0 ? "first" : `fix ${c.round}`}
                     {c.build_round > 0 && ` (build fix ${c.build_round})`}
                   </td>
-                  <td className="mono">{c.model ?? "default"}</td>
+                  <td className="mono">{modelLabel(c.model, c.usage)}</td>
                   <td>{c.status}</td>
                   <td className="nowrap">{c.duration.toFixed(1)} s</td>
                   <td>{c.error ? <span className="error">{c.error}</span> : <pre className="copilot-answer">{c.answer}</pre>}</td>

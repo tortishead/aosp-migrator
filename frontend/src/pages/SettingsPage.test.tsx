@@ -190,6 +190,27 @@ describe("SettingsPage", () => {
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ binary: "/opt/copilot", model: "gpt-5-mini" });
   });
 
+  it("shows the CLI's default model from the usage file", async () => {
+    mockApi({
+      "GET /settings": () => settings({}, undefined),
+      "POST /settings/copilot/test": () => ({
+        ok: true,
+        version: "1.0.105",
+        model: null,
+        reply: "OK",
+        usage: { totalPremiumRequestCost: 1, modelMetrics: { "claude-sonnet-4.5": { requests: { count: 1, cost: 1 }, usage: { inputTokens: 1834, outputTokens: 10 } } } },
+      }),
+    });
+    renderRoute("/settings");
+    const form = within(await screen.findByRole("form", { name: "Copilot" }));
+    await userEvent.clear(form.getByLabelText("Model for resolving conflicts"));
+    await userEvent.click(form.getByRole("button", { name: "Test Copilot" }));
+    const result = within(await form.findByRole("status", { name: "Copilot works" }));
+    expect(result.getAllByText("claude-sonnet-4.5")).toHaveLength(2);
+    expect(result.getByText("CLI default")).toBeInTheDocument();
+    expect(within(result.getByRole("list", { name: "Models used" })).getByText("1 call · 1,834 tokens in · 10 out")).toBeInTheDocument();
+  });
+
   it("warns when the CLI answered without a token in the environment", async () => {
     const message = "COPILOT_GITHUB_TOKEN is not set in the backend's environment (nor GH_TOKEN or GITHUB_TOKEN).";
     mockApi({

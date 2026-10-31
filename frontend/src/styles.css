@@ -1968,6 +1968,33 @@ p.tag {
   font-weight: 600;
 }
 
+.result-fact-note {
+  display: block;
+  color: var(--fg-muted);
+  font-size: 0.8em;
+  font-weight: normal;
+}
+
+.result-models {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.result-models > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.result-models .mono {
+  font-weight: 600;
+}
+
 .result-reply {
   display: flex;
   flex-direction: column;

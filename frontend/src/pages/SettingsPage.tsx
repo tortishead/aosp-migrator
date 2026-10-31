@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { modelUsage, premiumRequests } from "../copilot/usage";
 import { api, type CopilotSettingsUpdate, type CopilotTestResult, type CopilotTokenCheck, type JiraTestResult, type Settings, type Source } from "../api";
 
 const settingsKey = ["settings"];
@@ -491,7 +492,8 @@ const TOKEN_LABELS: Record<CopilotTokenCheck["status"], string> = {
 function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed: number | null }) {
   const token = result.token;
   const tokenOk = !token || token.status === "valid";
-  const usage = Object.entries(result.usage ?? {}).filter(([, v]) => typeof v === "number" || typeof v === "string");
+  const models = modelUsage(result.usage);
+  const premium = premiumRequests(result.usage);
   const took = elapsed === null ? null : `${elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed)} s`;
 
   if (!result.ok) {
@@ -503,6 +505,8 @@ function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed
     );
   }
 
+  // With no model set, the models in the usage file are the CLI's default.
+  const served = models.map((m) => m.model).join(", ");
   return (
     <ResultCard tone={tokenOk ? "success" : "warning"} title={tokenOk ? "Copilot works" : "Copilot works, but check the token"} meta={took}>
       <dl className="result-facts">
@@ -512,15 +516,42 @@ function CopilotResult({ result, elapsed }: { result: CopilotTestResult; elapsed
         </div>
         <div>
           <dt>Model</dt>
-          <dd className={result.model ? "mono" : undefined}>{result.model ?? "CLI default"}</dd>
+          {result.model ? (
+            <dd className="mono">{result.model}</dd>
+          ) : served ? (
+            <dd>
+              <span className="mono">{served}</span>
+              <span className="result-fact-note">CLI default</span>
+            </dd>
+          ) : (
+            <dd title="The CLI wrote no usage file, so the model it picked is not known.">CLI default</dd>
+          )}
         </div>
-        {usage.map(([key, value]) => (
-          <div key={key}>
-            <dt>{key.replace(/[_-]/g, " ")}</dt>
-            <dd className="mono">{String(value)}</dd>
+        {premium !== null && (
+          <div>
+            <dt>Premium requests</dt>
+            <dd className="mono">{premium}</dd>
           </div>
-        ))}
+        )}
       </dl>
+      {models.length > 0 && (
+        <ul className="result-models" aria-label="Models used">
+          {models.map((m) => (
+            <li key={m.model}>
+              <span className="mono">{m.model}</span>
+              <span className="hint">
+                {[
+                  m.requests !== null && `${m.requests} ${m.requests === 1 ? "call" : "calls"}`,
+                  m.inputTokens !== null && `${m.inputTokens.toLocaleString()} tokens in`,
+                  m.outputTokens !== null && `${m.outputTokens.toLocaleString()} out`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="result-reply">
         <span className="result-reply-label">Reply</span>
         <blockquote>{result.reply}</blockquote>
