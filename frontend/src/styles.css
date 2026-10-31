@@ -39,6 +39,15 @@
   --shadow-button: 0 1px 0 rgba(31, 35, 40, 0.04);
   --shadow-pop: 0 8px 24px rgba(66, 74, 83, 0.18);
 
+  --lozenge-todo-bg: #dfe1e6;
+  --lozenge-todo-fg: #42526e;
+  --lozenge-active-bg: #deebff;
+  --lozenge-active-fg: #0747a6;
+  --lozenge-done-bg: #e3fcef;
+  --lozenge-done-fg: #006644;
+  --jira-label-bg: #ebecf0;
+  --jira-label-fg: #42526e;
+
   --syn-comment: #6e7781;
   --syn-keyword: #cf222e;
   --syn-string: #0a3069;
@@ -96,6 +105,15 @@
   --shadow: 0 1px 3px rgba(1, 4, 9, 0.5);
   --shadow-button: 0 0 transparent;
   --shadow-pop: 0 8px 24px rgba(1, 4, 9, 0.6);
+
+  --lozenge-todo-bg: #3a434d;
+  --lozenge-todo-fg: #c7d1db;
+  --lozenge-active-bg: #1c3a66;
+  --lozenge-active-fg: #9dc4ff;
+  --lozenge-done-bg: #164b35;
+  --lozenge-done-fg: #7ee2b8;
+  --jira-label-bg: #2c333a;
+  --jira-label-fg: #b6c2cf;
 
   --syn-comment: #9198a1;
   --syn-keyword: #ff7b72;
@@ -1098,6 +1116,53 @@ p.tag {
 
 .details-panel .issue-fields dd {
   overflow-wrap: anywhere;
+}
+
+/* Jira's status lozenge and label tags. */
+.jira-status {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.jira-status-todo {
+  background: var(--lozenge-todo-bg);
+  color: var(--lozenge-todo-fg);
+}
+
+.jira-status-active {
+  background: var(--lozenge-active-bg);
+  color: var(--lozenge-active-fg);
+}
+
+.jira-status-done {
+  background: var(--lozenge-done-bg);
+  color: var(--lozenge-done-fg);
+}
+
+.jira-labels {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jira-label {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--jira-label-bg);
+  color: var(--jira-label-fg);
+  font-size: 12px;
+  line-height: 20px;
 }
 
 @media (max-width: 1100px) {

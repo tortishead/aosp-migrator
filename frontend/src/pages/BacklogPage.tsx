@@ -12,6 +12,7 @@ import { BUILD_TEXT } from "../build/build";
 import { useStartBuild } from "../build/BuildPanel";
 import { BuildTag } from "../build/BuildTag";
 import { clustersKey, confirmingDissolve, useRefreshClusters } from "../clusters/shared";
+import { statusCategory } from "../jira";
 import { PrescanButton, useStartPrescan } from "../prescan/PrescanPanel";
 import { REWORK_TEXT } from "../rework/rework";
 import { ReworkBar } from "../rework/ReworkBar";
@@ -286,12 +287,8 @@ export function BacklogPage() {
   );
 }
 
-// Jira only hands us the status name, so colour by the usual workflow words.
 function statusClass(status: string): string {
-  const name = status.toLowerCase();
-  if (/done|closed|resolved|fixed|merged/.test(name)) return "badge badge-done";
-  if (/progress|review|testing|verify/.test(name)) return "badge badge-active";
-  return "badge";
+  return { todo: "badge", active: "badge badge-active", done: "badge badge-done" }[statusCategory(status)];
 }
 
 interface RowProps {
