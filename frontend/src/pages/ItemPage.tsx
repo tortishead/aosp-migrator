@@ -62,80 +62,128 @@ export function ItemPage() {
 
   return (
     <article className="item">
-      <p>
-        <Link to={`/workspaces/${workspaceId}`}>← Backlog</Link>
-      </p>
-      <div className="page-header">
-        <h1>
-          {issue.browse_url ? (
-            <a href={issue.browse_url} target="_blank" rel="noopener noreferrer" title="Open in Jira">
-              {issue.key}
-            </a>
+      <div className="item-main">
+        <p>
+          <Link to={`/workspaces/${workspaceId}`}>← Backlog</Link>
+        </p>
+        <div className="page-header">
+          <h1>
+            {issue.browse_url ? (
+              <a href={issue.browse_url} target="_blank" rel="noopener noreferrer" title="Open in Jira">
+                {issue.key}
+              </a>
+            ) : (
+              issue.key
+            )}{" "}
+            {issue.summary}
+          </h1>
+        </div>
+        <JiraPanel workspaceId={workspaceId} detail={detail} />
+        {detail.dropped && <p className="tag tag-warn">Dropped: no longer matched by the workspace JQL</p>}
+        {detail.last_import_error && <p className="error">Last import failed: {detail.last_import_error}</p>}
+        <ItemActions workspaceId={workspaceId} detail={detail} />
+        <ClusterBox workspaceId={workspaceId} detail={detail} />
+
+        <div className="tab-bar page-tabs" role="tablist" aria-label="Item sections">
+          {(Object.entries(TABS) as [Tab, string][]).map(([value, label]) => (
+            <button
+              key={value}
+              role="tab"
+              id={`tab-${value}`}
+              aria-selected={tab === value}
+              aria-controls={`panel-${value}`}
+              className={tab === value ? "tab active" : "tab"}
+              onClick={() => selectTab(value)}
+            >
+              {label}
+              {value === "patches" && <span className="count">{diffCount}</span>}
+            </button>
+          ))}
+        </div>
+        <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+          {tab === "overview" ? (
+            <>
+              <PrescanSection workspaceId={workspaceId} itemKey={key} />
+              <Notes workspaceId={workspaceId} itemKey={key} detail={detail} />
+            </>
+          ) : tab === "patches" ? (
+            <section aria-label="Diffs">
+              <h2>Diffs</h2>
+              <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
+            </section>
           ) : (
-            issue.key
-          )}{" "}
-          {issue.summary}
-        </h1>
+            <>
+              <section aria-label="Builds">
+                <h2>Builds</h2>
+                <BuildActions workspaceId={workspaceId} itemKey={key} />
+                <BuildRuns workspaceId={workspaceId} itemKey={key} />
+              </section>
+              <section aria-label="Migration patches">
+                <h2>Migration patches</h2>
+                <MigrationTab workspaceId={workspaceId} itemKey={key} />
+              </section>
+            </>
+          )}
+        </div>
+      </div>
+      <aside className="item-side">
+        <section aria-label="History">
+          <h2>History</h2>
+          <HistoryTimeline events={detail.history} />
+        </section>
+      </aside>
+    </article>
+  );
+}
+
+const JIRA_PANEL_KEY = "aosp-migrator.item.jiraPanelOpen";
+
+function loadJiraPanelOpen(): boolean {
+  try {
+    return localStorage.getItem(JIRA_PANEL_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+/** Everything that comes from the ticket in Jira, in one panel above the local work. Collapsible, remembered. */
+function JiraPanel({ workspaceId, detail }: { workspaceId: number; detail: ItemDetail }) {
+  const issue = detail.issue;
+  const [open, setOpen] = useState(loadJiraPanelOpen);
+  const toggle = () => {
+    setOpen(!open);
+    try {
+      localStorage.setItem(JIRA_PANEL_KEY, String(!open));
+    } catch {
+      // Storage blocked: the choice lasts for this page only.
+    }
+  };
+  return (
+    <section aria-label="Jira" className="jira-panel">
+      <div className="panel-header">
+        <h2>Jira</h2>
+        {issue.browse_url && (
+          <a href={issue.browse_url} target="_blank" rel="noopener noreferrer">
+            Open {issue.key} in Jira ↗
+          </a>
+        )}
+        <button className="panel-toggle" aria-expanded={open} onClick={toggle}>
+          {open ? "Hide" : "Show"}
+        </button>
       </div>
       <IssueFields issue={issue} />
-      {detail.dropped && <p className="tag tag-warn">Dropped: no longer matched by the workspace JQL</p>}
-      {detail.last_import_error && <p className="error">Last import failed: {detail.last_import_error}</p>}
-      <ItemActions workspaceId={workspaceId} detail={detail} />
-      <ClusterBox workspaceId={workspaceId} detail={detail} />
-
-      <div className="tab-bar page-tabs" role="tablist" aria-label="Item sections">
-        {(Object.entries(TABS) as [Tab, string][]).map(([value, label]) => (
-          <button
-            key={value}
-            role="tab"
-            id={`tab-${value}`}
-            aria-selected={tab === value}
-            aria-controls={`panel-${value}`}
-            className={tab === value ? "tab active" : "tab"}
-            onClick={() => selectTab(value)}
-          >
-            {label}
-            {value === "patches" && <span className="count">{diffCount}</span>}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-        {tab === "overview" ? (
-          <>
-            <PrescanSection workspaceId={workspaceId} itemKey={key} />
-            <section aria-label="Description">
-              <h2>Description</h2>
-              <JiraHtml html={issue.description_html} baseUrl={detail.jira_base_url} />
-            </section>
-            <OtherAttachments attachments={issue.attachments} />
-            <Comments issue={issue} baseUrl={detail.jira_base_url} />
-            <LinkedTickets workspaceId={workspaceId} detail={detail} />
-            <Notes workspaceId={workspaceId} itemKey={key} detail={detail} />
-            <section aria-label="History">
-              <h2>History</h2>
-              <HistoryTimeline events={detail.history} />
-            </section>
-          </>
-        ) : tab === "patches" ? (
-          <section aria-label="Diffs">
-            <h2>Diffs</h2>
-            <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
+      {open && (
+        <div className="jira-panel-body">
+          <section aria-label="Description">
+            <h3>Description</h3>
+            <JiraHtml html={issue.description_html} baseUrl={detail.jira_base_url} />
           </section>
-        ) : (
-          <>
-            <section aria-label="Builds">
-              <h2>Builds</h2>
-              <BuildActions workspaceId={workspaceId} itemKey={key} />
-              <BuildRuns workspaceId={workspaceId} itemKey={key} />
-            </section>
-            <section aria-label="Migration patches">
-              <h2>Migration patches</h2>
-              <MigrationTab workspaceId={workspaceId} itemKey={key} />
-            </section>
-          </>
-        )}
-      </div>
-    </article>
+          <OtherAttachments attachments={issue.attachments} />
+          <Comments issue={issue} baseUrl={detail.jira_base_url} />
+          <LinkedTickets workspaceId={workspaceId} detail={detail} />
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -318,7 +366,7 @@ function OtherAttachments({ attachments, of }: { attachments: Attachment[]; of?:
   const others = attachments.filter((a) => a.kind !== "diff");
   return (
     <section aria-label={of ? `${of} other attachments` : "Other attachments"}>
-      <h2>Other attachments</h2>
+      <h3>Other attachments</h3>
       {others.length === 0 ? (
         <p className="hint">None.</p>
       ) : (
@@ -354,7 +402,7 @@ function OtherAttachments({ attachments, of }: { attachments: Attachment[]; of?:
 function Comments({ issue, baseUrl, of }: { issue: Issue; baseUrl: string | null; of?: string }) {
   return (
     <section aria-label={of ? `${of} comments` : "Comments"}>
-      <h2>Comments ({issue.comments.length})</h2>
+      <h3>Comments ({issue.comments.length})</h3>
       {issue.comments.length === 0 && <p className="hint">No comments.</p>}
       {issue.comments.map((c) => (
         <div key={c.id} className="jira-comment">
@@ -371,7 +419,7 @@ function Comments({ issue, baseUrl, of }: { issue: Issue; baseUrl: string | null
 function LinkedTickets({ workspaceId, detail }: { workspaceId: number; detail: ItemDetail }) {
   return (
     <section aria-label="Linked tickets">
-      <h2>Linked tickets</h2>
+      <h3>Linked tickets</h3>
       {detail.links.length === 0 && <p className="hint">None.</p>}
       {detail.links.map((link) => {
         const linked = link.issue;

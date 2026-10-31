@@ -58,10 +58,12 @@ describe("ItemPage", () => {
     expect(screen.getByRole("link", { name: "PROJ-101" })).toHaveAttribute("href", "https://jira.example.com/browse/PROJ-101");
     expect(screen.getByText("oem-patch, camera")).toBeInTheDocument();
 
-    // The pre-scan verdict leads the overview, above the description.
+    // The Jira panel holds the ticket and sits on top, above the pre-scan verdict; the history is beside it.
+    const jira = screen.getByRole("region", { name: "Jira" });
     const prescan = screen.getByRole("region", { name: "Pre-scan" });
-    const description = screen.getByRole("region", { name: "Description" });
-    expect(prescan.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const description = within(jira).getByRole("region", { name: "Description" });
+    expect(description.compareDocumentPosition(prescan) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(screen.getByRole("complementary")).getByRole("region", { name: "History" })).toBeInTheDocument();
     expect(within(description).getByRole("table")).toBeInTheDocument();
     expect(within(description).getByRole("cell", { name: "Pixel 8" })).toBeInTheDocument();
     expect(description.querySelector("script")).toBeNull();
@@ -87,6 +89,12 @@ describe("ItemPage", () => {
     expect(within(links).getByText("relates to")).toBeInTheDocument();
     // Linked-only ticket: no backlog item to open.
     expect(within(links).queryByRole("link", { name: "Open backlog item" })).toBeNull();
+
+    // The Jira panel collapses to its fields, and stays collapsed on the next visit.
+    await userEvent.click(within(jira).getByRole("button", { name: "Hide" }));
+    expect(screen.queryByRole("region", { name: "Description" })).toBeNull();
+    expect(within(jira).getByText("oem-patch, camera")).toBeInTheDocument();
+    expect(localStorage.getItem("aosp-migrator.item.jiraPanelOpen")).toBe("false");
   });
 
   it("shows diffs on the Patches tab, kept in the URL", async () => {
@@ -99,7 +107,8 @@ describe("ItemPage", () => {
     expect(patches).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("region", { name: "services/camera/libcameraservice/CameraService.cpp" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Pre-scan" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Description" })).toBeNull();
+    // The Jira panel stays above the tabs.
+    expect(screen.getByRole("region", { name: "Description" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: "Overview" }));
     expect(router.state.location.search).toBe("");

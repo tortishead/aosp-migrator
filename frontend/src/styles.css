@@ -826,10 +826,6 @@ p.tag {
   box-shadow: var(--shadow);
 }
 
-.backlog .summary-link:hover {
-  color: var(--accent);
-}
-
 .jobs-button {
   display: inline-flex;
   align-items: center;
@@ -995,7 +991,50 @@ p.tag {
   font-weight: 600;
 }
 
-.item > p:first-child {
+/* Item page: the work on the left, the history in a panel on the right. */
+.item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
+  gap: 20px;
+  align-items: start;
+}
+
+.item-side {
+  position: sticky;
+  top: 64px;
+}
+
+.item-side > section {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 88px);
+}
+
+.item-side .timeline {
+  overflow-y: auto;
+}
+
+/* Narrow panel: the time above its event instead of beside it. */
+.item-side .timeline > li {
+  grid-template-columns: 1fr;
+  gap: 2px;
+}
+
+@media (max-width: 1100px) {
+  .item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .item-side {
+    position: static;
+  }
+
+  .item-side > section {
+    max-height: none;
+  }
+}
+
+.item-main > p:first-child {
   margin: 0 0 8px;
 }
 
@@ -1005,9 +1044,16 @@ p.tag {
   font-weight: 600;
 }
 
+.item h3 {
+  margin: 0 0 8px;
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
 /* Top-level item sections are cards with a header bar. */
-.item > section,
-.item > [role="tabpanel"] > section {
+.item-main > section,
+.item-main > [role="tabpanel"] > section,
+.item-side > section {
   margin-top: 16px;
   padding: 16px;
   border: 1px solid var(--border);
@@ -1015,13 +1061,50 @@ p.tag {
   background: var(--bg);
 }
 
-.item > section > h2,
-.item > [role="tabpanel"] > section > h2 {
+.item-side > section {
+  margin-top: 0;
+}
+
+.item-main > section > h2,
+.item-main > [role="tabpanel"] > section > h2,
+.item-side > section > h2,
+.item .panel-header {
   margin: -16px -16px 12px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
   border-radius: var(--radius) var(--radius) 0 0;
   background: var(--bg-subtle);
+}
+
+.item .panel-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.item .panel-header h2 {
+  margin: 0;
+}
+
+.panel-toggle {
+  margin-left: auto;
+  padding: 2px 10px;
+}
+
+.jira-panel .issue-fields {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.jira-panel-body > section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-muted);
+}
+
+.item-main > section.jira-panel {
+  margin-top: 0;
 }
 
 .page-tabs {
@@ -1361,7 +1444,8 @@ p.tag {
 }
 
 .summary-link {
-  color: inherit;
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .table.backlog tr.group-row th {
@@ -1494,7 +1578,7 @@ p.tag {
   margin-bottom: 12px;
 }
 
-.item > section.cluster-box {
+.item-main > section.cluster-box {
   margin-top: 0;
   padding: 10px 16px;
 }
