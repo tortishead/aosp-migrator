@@ -228,7 +228,7 @@ def test_build_fix_round_fixes_a_compile_error(app: FastAPI, client: TestClient,
     assert "does not build: fix the build errors listed below" in prompt and f"## Build errors\n```\n{BUILD_ERROR}\n" in prompt
     assert f"packages/apps/Settings: {SETTINGS_STRINGS}" not in prompt and f"- {SETTINGS_STRINGS}\n" in prompt
     (patch,) = [p for p in patches(client, workspace, "PROJ-102") if p["attempt_id"] == attempt["id"]]
-    assert (patch["source"], patch["level"], patch["review"]) == ("ai", "port", "proposed")
+    assert (patch["source"], patch["level"], patch["review"], patch["filename"]) == ("ai", "port", "proposed", "settings_modified.diff")
     text = patch_text(app, patch["id"])
     assert "FAIL_BUILD" not in text and "Screen brightness" in text
     fixed = next(f for f in attempt["files"] if f["path"] == SETTINGS_STRINGS)

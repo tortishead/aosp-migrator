@@ -8,9 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
-from aosp_migrator.db.models import Attachment, Item, JiraIssue, MigrationPatch, Workspace
+from aosp_migrator.db.models import Attachment, DiffScan, Item, JiraIssue, MigrationPatch, Workspace
 from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan.chain import current_patches, is_rework, patch_stale
+from aosp_migrator.prescan.runner import current_diffs
 
 router = APIRouter(prefix="/workspaces/{workspace_id}")
 
@@ -29,6 +30,7 @@ class PatchOut(BaseModel):
     attachment_id: int | None
     # The Jira diff it was made from; None for `ai` patches.
     jira_id: str | None
+    # That diff's filename; for a rework patch, the item's diff of its project with `_modified` before the extension.
     filename: str | None
     project: str
     source: str
@@ -50,6 +52,22 @@ class PatchOut(BaseModel):
     # What a build applies now: a rework patch of its project, else the current diff version's patch as last scanned.
     current: bool
     created_at: datetime
+
+
+def modified_name(filename: str) -> str:
+    """`0001-fix.patch` -> `0001-fix_modified.patch`; `fix` -> `fix_modified`."""
+    stem, dot, ext = filename.rpartition(".")
+    return f"{stem}_modified.{ext}" if dot and stem else f"{filename}_modified"
+
+
+def _diff_names(session: Session, item: Item) -> dict[str, str]:
+    """Project to the filename of the item's first current diff mapped to it."""
+    names: dict[str, str] = {}
+    for attachment in current_diffs(session, item.issue_id):
+        project = session.scalar(select(DiffScan.project).where(DiffScan.attachment_id == attachment.id))
+        if project is not None:
+            names.setdefault(project, attachment.filename)
+    return names
 
 
 def _item(session: Session, workspace_id: int, key: str) -> tuple[Item, JiraIssue]:
@@ -79,6 +97,7 @@ def list_item_patches(workspace_id: int, key: str, session: SessionDep) -> list[
         .order_by(MigrationPatch.id.desc())
     )
     rows = list(rows)
+    diff_names = _diff_names(session, item)
     stale = {patch.id: patch_stale(session, Path(workspace.target_tree), patch, heads) for patch, _ in rows if is_rework(patch)}
     base_ids = {i for patch, _ in rows for i in patch.base_patch_ids}
     bases = {
@@ -95,7 +114,7 @@ def list_item_patches(workspace_id: int, key: str, session: SessionDep) -> list[
             id=patch.id,
             attachment_id=patch.attachment_id,
             jira_id=attachment.jira_id if attachment else None,
-            filename=attachment.filename if attachment else None,
+            filename=attachment.filename if attachment else modified_name(diff_names[patch.project]) if patch.project in diff_names else None,
             project=patch.project,
             source=patch.source,
             level=patch.level,

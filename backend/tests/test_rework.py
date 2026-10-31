@@ -11,6 +11,7 @@ from test_prescan_api import app, client, target, workspace_id  # noqa: F401
 from test_scratch import CORE, C, H, change, lines, scratch, series, tree  # noqa: F401
 from test_tree import snapshot
 
+from aosp_migrator.api.migration import modified_name
 from aosp_migrator.config import Config, CopilotSettings
 from aosp_migrator.copilot.client import CopilotClient
 from aosp_migrator.db.models import Item, MigrationPatch, ReworkAttempt
@@ -387,3 +388,7 @@ def test_binary_without_data_is_not_reimplemented(tree: RepoTree, tmp_path: Path
     s = scratch(tree, tmp_path, [binary])
     result = ladder.run(s, [binary], Context("K", "s", ""), copilot, Budget(5), rungs=ladder.COPILOT_RUNGS)
     assert (result.status, result.calls) == ("failed", []) and ladder.NEEDS_REIMPL not in (result.reason or "")
+
+
+def test_modified_name() -> None:
+    assert [modified_name(n) for n in ("0001-fix.patch", "settings.diff", "fix", ".patch")] == ["0001-fix_modified.patch", "settings_modified.diff", "fix_modified", ".patch_modified"]
