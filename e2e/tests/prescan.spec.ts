@@ -39,7 +39,7 @@ test("pre-scan the backlog, pick a project by hand, close present items", async 
   await expect(rows).toContainText("Unmapped");
 
   // Item page: pick the project; the item is scanned again right away.
-  await rows.getByRole("link", { name: "PROJ-110" }).click();
+  await rows.filter({ has: page.getByRole("link", { name: "PROJ-110", exact: true }) }).locator("a.summary-link").click();
   await expect(page).toHaveURL(/\/items\/PROJ-110$/);
   const section = page.getByRole("region", { name: "Pre-scan" });
   await expect(section).toContainText("Label: Unmapped");
@@ -68,7 +68,7 @@ test("pre-scan the backlog, pick a project by hand, close present items", async 
   await bulk.getByRole("button", { name: "Apply" }).click();
   await expect(rows.nth(0)).toContainText("Closed");
   await expect(rows.nth(1)).toContainText("Closed");
-  await rows.getByRole("link", { name: "PROJ-109" }).click();
+  await rows.filter({ has: page.getByRole("link", { name: "PROJ-109", exact: true }) }).locator("a.summary-link").click();
   await expect(page.getByRole("combobox", { name: "State" })).toHaveValue("closed");
   await expect(page.getByRole("region", { name: "History" })).toContainText("State: New → Closed");
 });

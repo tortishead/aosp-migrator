@@ -308,7 +308,13 @@ function Row({ workspaceId, item, selected, toggle }: RowProps) {
         <input type="checkbox" aria-label={`Select ${item.key}`} checked={selected} onChange={(e) => toggle(item.key, e.target.checked)} />
       </td>
       <td className="nowrap">
-        <Link to={`/workspaces/${workspaceId}/items/${item.key}`}>{item.key}</Link>
+        {item.browse_url ? (
+          <a href={item.browse_url} target="_blank" rel="noopener noreferrer" title="Open in Jira">
+            {item.key}
+          </a>
+        ) : (
+          <Link to={`/workspaces/${workspaceId}/items/${item.key}`}>{item.key}</Link>
+        )}
       </td>
       <td>
         <Link to={`/workspaces/${workspaceId}/items/${item.key}`} className="summary-link">

@@ -52,7 +52,7 @@ test("import from fake Jira, triage an item, reimport keeps local state", async 
   await expect(rows).toHaveCount(1);
 
   // Item detail.
-  await rows.getByRole("link", { name: "PROJ-101" }).click();
+  await rows.filter({ has: page.getByRole("link", { name: "PROJ-101", exact: true }) }).locator("a.summary-link").click();
   await expect(page.getByRole("heading", { level: 1 })).toContainText("Camera HAL crash on resume");
   const description = page.getByRole("region", { name: "Description" });
   await expect(description.getByRole("cell", { name: "Pixel 8" })).toBeVisible();
@@ -90,7 +90,7 @@ test("import from fake Jira, triage an item, reimport keeps local state", async 
   // Backlog shows the state.
   await page.getByRole("link", { name: "← Backlog" }).click();
   await expect(rows).toHaveCount(25);
-  await expect(rows.filter({ hasText: "PROJ-101" })).toContainText("Not relevant");
+  await expect(rows.filter({ has: page.getByRole("link", { name: "PROJ-101", exact: true }) })).toContainText("Not relevant");
 
   // Cluster two related items; default order is oldest diff first (PROJ-102), then reorder.
   await page.getByRole("checkbox", { name: "Select PROJ-101" }).click();

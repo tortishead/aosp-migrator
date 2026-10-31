@@ -173,6 +173,8 @@ export interface Item {
   /** Outcome of the last finished rework or review and why; null until reworked. */
   rework_status: ReworkStatus | null;
   rework_reason: string | null;
+  // The ticket in Jira; null while no Jira base URL is set.
+  browse_url: string | null;
 }
 
 export interface ItemPage {

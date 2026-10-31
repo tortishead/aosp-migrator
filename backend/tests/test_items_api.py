@@ -32,7 +32,7 @@ def set_state(client: TestClient, workspace_id: int, state: str, *item_keys: str
     return client.post(f"/api/workspaces/{workspace_id}/items/state", json={"keys": list(item_keys), "state": state})
 
 
-def test_list_fields_and_natural_key_order(client: TestClient, imported: int) -> None:
+def test_list_fields_and_natural_key_order(client: TestClient, imported: int, jira_url: str) -> None:
     page = items(client, imported)
     assert page["total"] == 25
     # Linked-only PROJ-201 is not a backlog item; PROJ-105 sorts after PROJ-104, not after PROJ-1xx strings.
@@ -63,6 +63,7 @@ def test_list_fields_and_natural_key_order(client: TestClient, imported: int) ->
         "build_reason": None,
         "rework_status": None,
         "rework_reason": None,
+        "browse_url": f"{jira_url}/browse/PROJ-101",
     }
     assert [i["diff_count"] for i in page["items"][1:4]] == [1, 1, 1]
 

@@ -60,7 +60,7 @@ test("build a 3-way item and a failing one, the tree stays clean", async ({ page
   await expect(rows).toContainText("Build failed");
 
   // The failing item: summary and full log.
-  await rows.getByRole("link", { name: "PROJ-102" }).click();
+  await rows.filter({ has: page.getByRole("link", { name: "PROJ-102", exact: true }) }).locator("a.summary-link").click();
   await page.getByRole("tab", { name: /Migration/ }).click();
   const builds = page.getByRole("region", { name: "Builds" });
   const runs = builds.getByRole("table", { name: "Build runs" });
@@ -74,7 +74,7 @@ test("build a 3-way item and a failing one, the tree stays clean", async ({ page
   // The 3-way item: the merged patch, the successful run and its log.
   await page.getByRole("link", { name: "← Backlog" }).click();
   await counts.getByRole("button", { name: "1 built" }).click();
-  await rows.getByRole("link", { name: "PROJ-105" }).click();
+  await rows.filter({ has: page.getByRole("link", { name: "PROJ-105", exact: true }) }).locator("a.summary-link").click();
   await page.getByRole("tab", { name: /Migration/ }).click();
   const patches = page.getByRole("region", { name: "Migration patches" });
   await expect(patches.getByRole("table", { name: "Patches" })).toContainText("3-way merge");
