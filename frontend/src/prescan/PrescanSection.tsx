@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api, type ApplyResult, type Dependency, type DependencyState, type DiffScan, type Presence } from "../api";
 import { itemsKey } from "../backlog/ImportPanel";
 import { itemKey } from "../pages/ItemPage";
-import { itemPrescanKey, PrescanStatus, useLatestPrescan, useStartPrescan } from "./PrescanPanel";
+import { itemPrescanKey, PrescanStatus, useLatestPrescan } from "./PrescanPanel";
 import { TRIAGE_TEXT, triageClass } from "./triage";
 
 export const PRESENCE_LABELS: Record<Presence, string> = {
@@ -47,11 +47,10 @@ function applyClass(apply: ApplyResult): string {
   return { applies: "tag", "3way": "tag tag-warn", conflicts: "tag tag-error" }[apply];
 }
 
-/** Read-only pre-scan results for one item, with a re-run button. */
+/** Read-only pre-scan results for one item, with the progress of its re-run (started from the item toolbar). */
 export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; itemKey: string }) {
   const result = useQuery({ queryKey: itemPrescanKey(workspaceId, itemKey), queryFn: () => api.itemPrescan(workspaceId, itemKey) });
   const job = useLatestPrescan(workspaceId);
-  const start = useStartPrescan(workspaceId);
   const running = job?.status === "running";
   // Only this item's own re-runs, or a scan still going, are news here.
   const showJob = job && (running || (job.scope === "keys" && job.issue_keys.includes(itemKey)));
@@ -60,13 +59,11 @@ export function PrescanSection({ workspaceId, itemKey }: { workspaceId: number; 
   return (
     <section aria-label="Pre-scan">
       <h2>Pre-scan</h2>
-      <p className="actions">
-        <button onClick={() => start.mutate([itemKey])} disabled={running || start.isPending}>
-          Pre-scan this item
-        </button>
-        {showJob && <PrescanStatus job={job} />}
-        {start.isError && <span className="error">{start.error.message}</span>}
-      </p>
+      {showJob && (
+        <p className="actions">
+          <PrescanStatus job={job} />
+        </p>
+      )}
       {result.isError && <p className="error">{result.error.message}</p>}
       {prescan && !prescan.scanned && <p className="hint">Not pre-scanned yet.</p>}
       {prescan?.scanned && (

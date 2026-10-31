@@ -18,13 +18,15 @@ interface Props {
   workspaceId: number;
   keys: string[];
   onClose: () => void;
+  /** Called once the rework has started, before the dialog closes. */
+  onStarted?: () => void;
 }
 
 /**
  * What a rework of the selected items would do, from the server's plan: units in order, the prerequisites outside the selection
  * (added by default, closed / not relevant ones only when ticked), Copilot rungs (preselected by the plan), caps and the estimate.
  */
-export function ReworkDialog({ workspaceId, keys, onClose }: Props) {
+export function ReworkDialog({ workspaceId, keys, onClose, onStarted }: Props) {
   const [includeDependents, setIncludeDependents] = useState(false);
   const [together, setTogether] = useState(false);
   const [include, setInclude] = useState<string[]>([]);
@@ -207,7 +209,17 @@ export function ReworkDialog({ workspaceId, keys, onClose }: Props) {
         )}
         <div className="actions">
           <button
-            onClick={() => start.mutate({ ...request, rungs: chosen }, { onSuccess: onClose })}
+            onClick={() =>
+              start.mutate(
+                { ...request, rungs: chosen },
+                {
+                  onSuccess: () => {
+                    onStarted?.();
+                    onClose();
+                  },
+                },
+              )
+            }
             disabled={!data || plan.isError || data.units.length === 0 || invalidCap !== undefined || start.isPending}
             title={invalidCap ? `${invalidCap[1]}: ${invalidCap[2]} to ${invalidCap[3]}` : undefined}
           >

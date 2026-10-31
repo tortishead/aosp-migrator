@@ -1045,16 +1045,60 @@ p.tag {
   margin: 0;
 }
 
-.item-actions {
-  margin-top: 12px;
-  margin-bottom: 12px;
+/* Item toolbar: every action on the item in one bar under its title, in groups split by a rule,
+   the Jira group pushed to the end. Wraps group by group on narrow screens. */
+.item-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 0;
+  margin-bottom: 16px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
 }
 
-.item-actions label {
+.toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.toolbar-group:first-child {
+  padding-left: 0;
+}
+
+.toolbar-group + .toolbar-group:not(.toolbar-end) {
+  border-left: 1px solid var(--border);
+}
+
+.toolbar-end {
+  margin-left: auto;
+  padding-right: 0;
+}
+
+.toolbar-field {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-weight: 600;
+}
+
+.toolbar-link {
+  padding: 4px 8px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.item-toolbar-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: -8px 0 16px;
+  font-size: 0.92em;
 }
 
 /* Item page: back link and title across the top; below, the work on the left and

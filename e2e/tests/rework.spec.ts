@@ -155,7 +155,7 @@ test("rework a chain of two conflicting items, accept, build stacked, reject and
   await expect(review).toContainText("Note: say why level stays 5");
   copilotAnswers("PROJ-111", `${PROPS}: mode 1; level stays 5, the target set it on purpose`);
   const calls = copilotPrompts().length;
-  await page.getByRole("region", { name: "Migration patches" }).getByRole("button", { name: "Rework…" }).click();
+  await page.getByRole("group", { name: "Item actions" }).getByRole("button", { name: "Rework…" }).click();
   await expect(units).toHaveText(["PROJ-111"]);
   await dialog.getByRole("button", { name: "Start rework" }).click();
   await expect(page.getByRole("region", { name: "Migration patches" }).getByRole("status")).toHaveText("Rework done: 1 unit, 1 Copilot call", {

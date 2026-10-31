@@ -228,6 +228,47 @@ describe("ItemPage", () => {
     expect(await screen.findByText("An import is already running")).toBeInTheDocument();
   });
 
+  it("gathers the item's actions in a toolbar, and shows a started job's tab", async () => {
+    const running = {
+      id: 5,
+      workspace_id: 1,
+      scope: "keys",
+      issue_keys: ["PROJ-101"],
+      status: "running",
+      stage: null,
+      done: 0,
+      total: 1,
+      errors: [],
+      error: null,
+      cancel_requested: false,
+      started_at: "2026-10-26T10:00:00Z",
+      finished_at: null,
+      rework_candidates: [],
+    };
+    let prescans: (typeof running)[] = [];
+    itemApi({
+      "GET /workspaces/1/prescan-jobs": () => prescans,
+      "GET /workspaces/1/build-jobs": () => [],
+      "GET /workspaces/1/rework-jobs": () => [],
+      "POST /workspaces/1/prescan": () => {
+        prescans = [running];
+        return { status: 202, body: running };
+      },
+    });
+    renderRoute(`${URL}?tab=patches`);
+    const toolbar = await screen.findByRole("group", { name: "Item actions" });
+    const groups = within(toolbar).getAllByRole("group").map((g) => g.getAttribute("aria-label"));
+    expect(groups).toEqual(["Triage", "Migration", "Jira"]);
+    const migration = within(toolbar).getByRole("group", { name: "Migration" });
+    expect(within(migration).getAllByRole("button").map((b) => b.textContent)).toEqual(["Pre-scan", "Build", "Rework…"]);
+    expect(within(toolbar).getByRole("link", { name: "Open in Jira ↗" })).toHaveAttribute("href", itemDetail().issue.browse_url);
+
+    await userEvent.click(within(migration).getByRole("button", { name: "Pre-scan" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true"));
+    expect(await within(await screen.findByRole("region", { name: "Pre-scan" })).findByText(/Pre-scanning… 0 \/ 1/)).toBeInTheDocument();
+    expect(within(migration).getByRole("button", { name: "Pre-scanning…" })).toBeDisabled();
+  });
+
   it("shows flags and a missing item", async () => {
     itemApi({ "GET /workspaces/1/items/PROJ-101": () => itemDetail({ dropped: true, last_import_error: "HTTP 500" }) });
     renderRoute(URL);
@@ -575,7 +616,7 @@ describe("ItemPage pre-scan", () => {
       renderRoute(URL);
       const section = await screen.findByRole("region", { name: "Pre-scan" });
       expect(await within(section).findByText("Not pre-scanned yet.")).toBeInTheDocument();
-      await userEvent.click(within(section).getByRole("button", { name: "Pre-scan this item" }));
+      await userEvent.click(within(screen.getByRole("group", { name: "Item actions" })).getByRole("button", { name: "Pre-scan" }));
       expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/prescan")?.body).toEqual({ keys: ["PROJ-101"] });
       expect(await within(section).findByText(/Pre-scanning… 0 \/ 1/)).toBeInTheDocument();
       await vi.advanceTimersByTimeAsync(POLL_MS);
@@ -759,7 +800,7 @@ describe("ItemPage builds", () => {
       renderRoute(`${URL}?tab=migration`);
       const section = await screen.findByRole("region", { name: "Builds" });
       expect(await within(section).findByText("Not built yet.")).toBeInTheDocument();
-      await userEvent.click(within(section).getByRole("button", { name: "Build" }));
+      await userEvent.click(within(screen.getByRole("group", { name: "Item actions" })).getByRole("button", { name: "Build" }));
       expect(calls.find((c) => c.method === "POST" && c.path === "/workspaces/1/build")?.body).toEqual({ keys: ["PROJ-101"] });
       expect(await within(section).findByText(/Building PROJ-101 \(0 \/ 1\)/)).toBeInTheDocument();
       jobs = [{ ...running, status: "done", done: 1, finished_at: "2026-10-26T20:10:00Z" }];

@@ -1,21 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
-import { api, type Attachment, type Issue, type IssueLink, type ItemDetail, type LocalState } from "../api";
-import { facetsKey, itemsKey, POLL_MS } from "../backlog/ImportPanel";
-import { STATE_LABELS } from "../backlog/params";
+import { api, type Attachment, type Issue, type IssueLink, type ItemDetail } from "../api";
 import { confirmingDissolve, memberWarning, useRefreshClusters } from "../clusters/shared";
-import { BuildPanel, useStartBuild } from "../build/BuildPanel";
+import { BuildPanel } from "../build/BuildPanel";
 import { BuildRuns } from "../build/BuildRuns";
 import { DiffTabs } from "../item/DiffViewer";
 import { HistoryTimeline } from "../item/History";
+import { ItemToolbar } from "../item/ItemToolbar";
 import { JiraHtml } from "../item/JiraHtml";
 import { MigrationTab } from "../item/MigrationTab";
 import { statusCategory } from "../jira";
 import { PrescanSection } from "../prescan/PrescanSection";
 import { ReworkAttempts } from "../rework/ReworkAttempts";
-import { ReworkDialog } from "../rework/ReworkDialog";
 import { ReworkPanel, useLatestRework } from "../rework/ReworkPanel";
 
 type Tab = "overview" | "patches" | "migration";
@@ -82,13 +80,13 @@ export function ItemPage() {
             {issue.summary}
           </h1>
         </div>
+        <ItemToolbar workspaceId={workspaceId} detail={detail} onShow={selectTab} />
       </div>
       <div className="item-body">
         <div className="item-main">
           <JiraPanel workspaceId={workspaceId} detail={detail} />
           {detail.dropped && <p className="tag tag-warn">Dropped: no longer matched by the workspace JQL</p>}
           {detail.last_import_error && <p className="error">Last import failed: {detail.last_import_error}</p>}
-          <ItemActions workspaceId={workspaceId} detail={detail} />
           <ClusterBox workspaceId={workspaceId} detail={detail} />
 
           <div className="tab-bar page-tabs" role="tablist" aria-label="Item sections">
@@ -122,12 +120,12 @@ export function ItemPage() {
               <>
                 <section aria-label="Builds">
                   <h2>Builds</h2>
-                  <BuildActions workspaceId={workspaceId} itemKey={key} />
+                  <BuildPanel workspaceId={workspaceId} />
                   <BuildRuns workspaceId={workspaceId} itemKey={key} />
                 </section>
                 <section aria-label="Migration patches">
                   <h2>Migration patches</h2>
-                  <ReworkActions workspaceId={workspaceId} itemKey={key} />
+                  <LatestRework workspaceId={workspaceId} />
                   <MigrationTab workspaceId={workspaceId} itemKey={key} attachments={issue.attachments} />
                 </section>
                 <section aria-label="Rework">
@@ -179,11 +177,6 @@ function JiraPanel({ workspaceId, detail }: { workspaceId: number; detail: ItemD
     <section aria-label="Jira" className={open ? "jira-panel" : "jira-panel collapsed"}>
       <div className="panel-header">
         <h2>Jira</h2>
-        {issue.browse_url && (
-          <a href={issue.browse_url} target="_blank" rel="noopener noreferrer">
-            Open {issue.key} in Jira ↗
-          </a>
-        )}
         <button className="panel-toggle" aria-expanded={open} onClick={toggle}>
           {open ? "Hide" : "Show"}
         </button>
@@ -203,31 +196,9 @@ function JiraPanel({ workspaceId, detail }: { workspaceId: number; detail: ItemD
   );
 }
 
-function BuildActions({ workspaceId, itemKey }: { workspaceId: number; itemKey: string }) {
-  const build = useStartBuild(workspaceId);
-  return (
-    <div className="actions">
-      <button onClick={() => build.mutate({ keys: [itemKey] })} disabled={build.isPending}>
-        Build
-      </button>
-      <BuildPanel workspaceId={workspaceId} />
-      {build.isError && <span className="error">{build.error.message}</span>}
-    </div>
-  );
-}
-
-function ReworkActions({ workspaceId, itemKey }: { workspaceId: number; itemKey: string }) {
-  const [open, setOpen] = useState(false);
-  const job = useLatestRework(workspaceId);
-  return (
-    <div className="actions">
-      <button onClick={() => setOpen(true)} disabled={job?.status === "running"}>
-        Rework…
-      </button>
-      {job && <ReworkPanel workspaceId={workspaceId} />}
-      {open && <ReworkDialog workspaceId={workspaceId} keys={[itemKey]} onClose={() => setOpen(false)} />}
-    </div>
-  );
+/** The workspace's latest rework, once there has been one. */
+function LatestRework({ workspaceId }: { workspaceId: number }) {
+  return useLatestRework(workspaceId) ? <ReworkPanel workspaceId={workspaceId} /> : null;
 }
 
 function IssueFields({ issue }: { issue: Issue }) {
@@ -331,79 +302,6 @@ function AddToMyCluster({ workspaceId, detail, link }: { workspaceId: number; de
       </button>
       {add.isError && <span className="error">{add.error.message}</span>}
     </>
-  );
-}
-
-function ItemActions({ workspaceId, detail }: { workspaceId: number; detail: ItemDetail }) {
-  const queryClient = useQueryClient();
-  const key = detail.issue.key;
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: itemKey(workspaceId, key) });
-    void queryClient.invalidateQueries({ queryKey: itemsKey(workspaceId) });
-  };
-
-  const changeState = useMutation({
-    mutationFn: (state: LocalState) => api.changeState(workspaceId, [key], state),
-    onSuccess: refresh,
-  });
-
-  const [jobId, setJobId] = useState<number | null>(null);
-  const reimport = useMutation({ mutationFn: () => api.startImport(workspaceId, [key]), onSuccess: (job) => setJobId(job.id) });
-  const job = useQuery({
-    queryKey: ["importJob", jobId],
-    queryFn: () => api.importJob(jobId!),
-    enabled: jobId !== null,
-    refetchInterval: (query) => (query.state.data?.status === "running" ? POLL_MS : false),
-  });
-  const status = job.data?.status;
-  const running = reimport.isPending || status === "running";
-  // Reload the item once the reimport finishes.
-  const seen = useRef(status);
-  useEffect(() => {
-    if (status === seen.current) return;
-    seen.current = status;
-    if (status && status !== "running") {
-      refresh();
-      void queryClient.invalidateQueries({ queryKey: facetsKey(workspaceId) });
-    }
-  }, [status]);
-
-  return (
-    <div className="actions item-actions">
-      <label>
-        State{" "}
-        <select
-          aria-label="State"
-          value={detail.local_state}
-          disabled={changeState.isPending}
-          onChange={(e) => changeState.mutate(e.target.value as LocalState)}
-        >
-          {(Object.entries(STATE_LABELS) as [LocalState, string][]).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button onClick={() => reimport.mutate()} disabled={running}>
-        Reimport from Jira
-      </button>
-      {running && <span role="status">Reimporting…</span>}
-      {status === "done" && job.data!.errors.length === 0 && <span role="status">Reimported.</span>}
-      {status === "done" && job.data!.errors.length > 0 && (
-        <span role="status" className="error">
-          Reimport failed: {job.data!.errors.map((e) => e.message).join("; ")}
-        </span>
-      )}
-      {(status === "failed" || status === "canceled") && (
-        <span role="status" className="error">
-          Reimport {status}
-          {job.data!.error && `: ${job.data!.error}`}
-        </span>
-      )}
-      {changeState.isError && <span className="error">{changeState.error.message}</span>}
-      {reimport.isError && <span className="error">{reimport.error.message}</span>}
-    </div>
   );
 }
 
