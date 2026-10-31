@@ -49,7 +49,7 @@ from aosp_migrator.config import Config, CopilotSettings
 from aosp_migrator.copilot.client import CopilotClient
 from aosp_migrator.db.models import Attachment, BuildJob, HistoryEvent, Item, JiraIssue, MigrationPatch, PrescanJob, ReworkAttempt, ReworkJob, Workspace, utcnow
 from aosp_migrator.prescan import git
-from aosp_migrator.prescan.chain import chain, current_patches, item_needs, patch_plan, stale_items
+from aosp_migrator.prescan.chain import chain, current_patches, item_needs, patch_plan, patch_stale, stale_items
 from aosp_migrator.prescan.patch import Patch
 from aosp_migrator.prescan.runner import current_diffs, diff_scan, read_diff_text
 from aosp_migrator.rework import attempt as attempts
@@ -65,6 +65,8 @@ RUNGS = ladder.COPILOT_RUNGS
 DEFAULT_RUNGS = ladder.DEFAULT_RUNGS
 LEFT_OUT_STATES = ("closed", "not_relevant")
 NEEDS_REIMPL = ladder.NEEDS_REIMPL
+# Why a rework proposed nothing: its result is the patch the item already has.
+SAME_CHANGE = "same change as the current patch: nothing new to propose"
 _QUOTED = re.compile(r"[‘'`\"]([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?[’'\"]")
 _SYMBOL = re.compile(r"symbol:\s+(?:(?:class|method|variable|function)\s+)?([A-Za-z_][A-Za-z0-9_]*)")
 # Shortest symbol name looked for in other items' diffs.
@@ -424,8 +426,7 @@ class _Job:
             try:
                 self._ladder(attempt, projects, base_items, budgets)
                 self._build_loop(attempt, projects, base_items, budgets)
-                self._save(attempt, projects)
-                status, reason = "patched", None
+                status, reason = ("patched", None) if self._save(attempt, projects) else ("unchanged", SAME_CHANGE)
             except _UnitFailed as failed:
                 status, reason = "failed", str(failed)
             except _Canceled:
@@ -579,14 +580,31 @@ class _Job:
                 raise _UnitFailed(f"{failure} (a build-fix round changed nothing)")
             previous = summary
 
-    def _save(self, attempt: ReworkAttempt, projects: list[_Project]) -> None:
+    def _save(self, attempt: ReworkAttempt, projects: list[_Project]) -> bool:
+        """Propose each member's patch, except one making the same change as the patch its item already uses for the
+        project (e.g. a Jira patch that applies as it is): that one is kept. Whether anything was proposed.
+        """
+        proposed = False
+        heads: dict[str, str | None] = {}
         for project in projects:
             base_ids = [p.id for p in project.base]
             for member in project.members:
-                assert member.result is not None
+                assert member.result is not None and member.result.patch is not None
+                existing = next((p for p in current_patches(self.session, member.item) if p.project == project.path), None)
+                if (
+                    existing is not None
+                    and attempts.same_change(existing.diff, member.result.patch)
+                    and not patch_stale(self.session, self.tree, existing, heads)
+                ):
+                    attempt.notes = [*attempt.notes, self._reason(member, project, projects, SAME_CHANGE)]
+                    base_ids = [*base_ids, existing.id]
+                    continue
                 parsed = Patch.parse(member.diffs[0])
                 patch = attempts.save_patch(self.session, attempt, member.item.id, project.path, member.result, project.head, base_ids, parsed.author, parsed.message)
                 base_ids = [*base_ids, patch.id]
+                proposed = True
+        self.session.commit()
+        return proposed
 
     def _reason(self, member: _Member, project: _Project, projects: list[_Project], reason: str | None) -> str:
         """`reason` with the key when the unit has several items, the project when the item has several."""

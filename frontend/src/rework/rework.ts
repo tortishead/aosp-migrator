@@ -50,6 +50,7 @@ export const ATTEMPT_RUNG_TEXT: Record<string, string> = {
 export const ATTEMPT_TEXT: Record<ReworkAttempt["status"], string> = {
   running: "Running",
   patched: "Patched",
+  unchanged: "Nothing new",
   failed: "Failed",
   canceled: "Canceled",
   error: "Error",

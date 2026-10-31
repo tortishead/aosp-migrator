@@ -15,11 +15,13 @@ note. The item's rework status follows its current rework patches.
 
 from collections.abc import Sequence
 from dataclasses import asdict
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.db.models import HistoryEvent, Item, JiraIssue, MigrationPatch, ReworkAttempt, utcnow
+from aosp_migrator.importer.diffparse import parse_diff
 from aosp_migrator.prescan.chain import REWORK_LEVELS, base_patches, current_patches, is_rework
 from aosp_migrator.prescan.runner import current_diffs, diff_scan, read_diff_text
 from aosp_migrator.rework.bundle import Context, Prerequisite
@@ -82,10 +84,28 @@ def save_patch(
     return patch
 
 
+def same_change(a: str, b: str) -> bool:
+    """Whether two diffs make the same change: the same files with the same added and removed lines, in order.
+    Line numbers, context and headers may differ (a Jira patch and the rework's diff of it); binary files never match.
+    """
+
+    def change(text: str) -> list[tuple[Any, ...]] | None:
+        files = parse_diff(text).files
+        if any(f.binary for f in files):
+            return None
+        lines = (tuple(line for hunk in f.hunks for line in hunk.splitlines()[1:] if line.startswith(("+", "-"))) for f in files)
+        return sorted((f.path, f.old_path, f.status, changed) for f, changed in zip(files, lines, strict=True))
+
+    first = change(a)
+    return first is not None and bool(first) and first == change(b)
+
+
 def finish(session: Session, attempt: ReworkAttempt, status: str, reason: str | None = None) -> None:
-    """End the attempt (`patched` / `failed` / `canceled` / `error`); its items take the outcome, except on cancel."""
+    """End the attempt (`patched` / `unchanged` / `failed` / `canceled` / `error`); its items take the outcome, except on
+    cancel, and on `unchanged`: nothing new was proposed, so the item keeps the patch and rework status it had.
+    """
     attempt.status, attempt.reason, attempt.finished_at = status, reason, utcnow()
-    if status != "canceled":
+    if status not in ("canceled", "unchanged"):
         for item in session.scalars(select(Item).where(Item.id.in_(attempt.item_ids))):
             item.rework_status = "proposed" if status == "patched" else "rework_failed"
             item.rework_reason = reason

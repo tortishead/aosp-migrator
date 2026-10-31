@@ -692,7 +692,7 @@ export interface ReworkAttempt {
   build_runs: { id: number; status: BuildRun["status"]; summary: string | null; log_url: string | null }[];
   notes: string[];
   patch_ids: number[];
-  status: "running" | "patched" | "failed" | "canceled" | "error";
+  status: "running" | "patched" | "unchanged" | "failed" | "canceled" | "error";
   reason: string | null;
   started_at: string;
   finished_at: string | null;

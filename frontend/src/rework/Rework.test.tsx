@@ -556,6 +556,17 @@ describe("Migration tab review", () => {
     expect(within(row).getAllByRole("region", { name: CPP })).toHaveLength(2);
   });
 
+  it("shows an attempt that proposed nothing new as such, not as a failure", async () => {
+    const reason = "same change as the current patch: nothing new to propose";
+    migrationApi(() => [], {
+      "GET /workspaces/1/items/PROJ-101/rework-attempts": () => [attempt({ status: "unchanged", reason, patch_ids: [], calls: [], build_runs: [] })],
+    });
+    renderRoute(MIGRATION);
+    const entry = within(await screen.findByRole("list", { name: "Rework attempts" })).getByRole("listitem", { name: "Attempt 8" });
+    expect(entry).toHaveTextContent("Nothing new");
+    expect(within(entry).getByText(reason)).toHaveClass("hint");
+  });
+
   it("lists the attempts with rungs, calls, build rounds and their logs", async () => {
     migrationApi(() => [], {
       "GET /workspaces/1/items/PROJ-101/rework-attempts": () => [

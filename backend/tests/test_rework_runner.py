@@ -24,7 +24,8 @@ from aosp_migrator.config import Config
 from aosp_migrator.copilot.client import CopilotClient
 from aosp_migrator.db.models import BuildJob, BuildRun, HistoryEvent, MigrationPatch, ReworkAttempt, ReworkJob, Workspace
 from aosp_migrator.prescan.runner import JobConflictError
-from aosp_migrator.rework.runner import Options, ReworkJobConflict, ReworkRunner, error_symbols, fail_interrupted_jobs, missing_dependency
+from aosp_migrator.rework.attempt import same_change
+from aosp_migrator.rework.runner import SAME_CHANGE, Options, ReworkJobConflict, ReworkRunner, error_symbols, fail_interrupted_jobs, missing_dependency
 
 LUNCH = "aosp_x86_64-eng"
 SETTINGS_STRINGS = "res/values/oem_strings.xml"
@@ -177,7 +178,7 @@ def test_prerequisite_first_then_the_dependent_on_top(
         assert (run.status, run.patch_ids) == ("build_successful", [base["id"], dependent["id"]])
 
     # Ripple: a new patch of the prerequisite makes the dependent's stale; nothing is reworked by itself.
-    scenario(scenarios, "PROJ-111", {**RESOLVE, "reply": "again"})
+    scenario(scenarios, "PROJ-111", {"reply": "again", "edits": [{"path": PROPS, "old": REGION, "new": f"// resolved again\n{RESOLVED}"}]})
     start(client, workspace, ["PROJ-111"])
     assert next(p for p in patches(client, workspace, "PROJ-112") if p["id"] == dependent["id"])["stale"] == ["base PROJ-111 changed"]
     stale = client.get(f"/api/workspaces/{workspace}/items", params={"q": "PROJ-112"}).json()["items"][0]["stale"]
@@ -454,3 +455,25 @@ def test_reimplement_after_a_needs_reimplement_failure(app: FastAPI, client: Tes
     assert f"+++ b/{BOOT_MOVED}" in patch_text(app, patch["id"]) and "+int boot_delay = 3;" in patch_text(app, patch["id"])
     assert "Re-implement what the change does" in calls(log)[0]["prompt"]
     assert snapshot(target) == before
+
+
+def test_an_item_that_applies_proposes_nothing_new(app: FastAPI, client: TestClient, rework: ReworkRunner, workspace: int) -> None:
+    assert item(app, "PROJ-101").triage_label == "applies"
+    job = start(client, workspace, ["PROJ-101"])
+    assert (job["status"], job["done"], job["errors"]) == ("done", 1, [])
+    (attempt,) = attempts(client, workspace, "PROJ-101")
+    assert (attempt["status"], attempt["reason"], attempt["patch_ids"]) == ("unchanged", SAME_CHANGE, [])
+    assert attempt["notes"] == [SAME_CHANGE]
+    # The Jira patch stays the one a build applies; the item is not marked as having a proposal.
+    (patch,) = patches(client, workspace, "PROJ-101")
+    assert (patch["source"], patch["level"], patch["current"]) == ("original", "plain", True)
+    assert item(app, "PROJ-101").rework_status is None
+
+
+def test_same_change_ignores_line_numbers_context_and_headers() -> None:
+    jira = "diff --git a/f.c b/f.c\nindex 1..2 100644\n--- a/f.c\n+++ b/f.c\n@@ -1200,2 +1200,3 @@ int f() {\n a\n+b\n c\n-- \n2.43.0\n"
+    rework = "diff --git a/f.c b/f.c\nindex 3..4 100644\n--- a/f.c\n+++ b/f.c\n@@ -15,2 +15,3 @@\n a\n+b\n c\n"
+    assert same_change(jira, rework)
+    assert not same_change(jira, rework.replace("+b", "+B"))
+    assert not same_change(jira, rework.replace("f.c", "g.c"))
+    assert not same_change("", "")

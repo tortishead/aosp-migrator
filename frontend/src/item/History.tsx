@@ -116,6 +116,7 @@ function describeStacked(event: HistoryEvent): Description {
 
 const REWORK_FINISHED: Record<string, string> = {
   patched: "patch proposed",
+  unchanged: "nothing new to propose",
   failed: "failed",
   canceled: "canceled",
   error: "error",

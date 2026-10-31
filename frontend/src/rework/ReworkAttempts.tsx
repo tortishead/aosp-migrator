@@ -11,7 +11,7 @@ export function useReworkAttempts(workspaceId: number, itemKey: string) {
 }
 
 function attemptClass(status: ReworkAttempt["status"]): string {
-  return status === "patched" ? "tag tag-ok" : status === "failed" || status === "error" ? "tag tag-error" : status === "running" ? "tag" : "tag tag-warn";
+  return status === "patched" ? "tag tag-ok" : status === "failed" || status === "error" ? "tag tag-error" : status === "running" || status === "unchanged" ? "tag" : "tag tag-warn";
 }
 
 /** Every rework attempt that included the item, newest first: outcome, rungs, Copilot calls, build rounds and their logs. */
@@ -48,7 +48,7 @@ function Attempt({ itemKey, attempt }: { itemKey: string; attempt: ReworkAttempt
         )}
         {others.length > 0 && <span className="hint">with {others.join(", ")}</span>}
       </div>
-      {attempt.reason && <p className={attempt.status === "patched" ? "hint" : "error"}>{attempt.reason}</p>}
+      {attempt.reason && <p className={attempt.status === "patched" || attempt.status === "unchanged" ? "hint" : "error"}>{attempt.reason}</p>}
       {attempt.notes.length > 0 && (
         <ul className="hint">
           {attempt.notes.map((n, i) => (
