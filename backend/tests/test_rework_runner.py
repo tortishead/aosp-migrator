@@ -261,16 +261,27 @@ def test_running_job_reports_its_phase_and_build_log(app: FastAPI, client: TestC
 
     app.state.rework_runner = make_runner(app, config, scenarios, log, executor)
     # Holds the build-fix call long enough to look at the job.
-    scenario(scenarios, "PROJ-102", {"sleep": 30, **FIX_BUILD})
+    scenario(scenarios, "PROJ-102", {"sleep": 30, "progress": ["reading strings.xml", "editing strings.xml"], **FIX_BUILD})
     job_id = client.post(f"/api/workspaces/{workspace}/rework", json={"keys": ["PROJ-102"]}).json()["id"]
     wait_for(lambda: bool(calls(log)))
     job = client.get(f"/api/rework-jobs/{job_id}").json()
     assert (job["unit_keys"], job["phase"], job["builds"]) == (["PROJ-102"], "fixing", 1)
     assert BUILD_ERROR in job["log_tail"]
+    # The running Copilot call, with what the CLI has written so far.
+    wait_for(lambda: "editing" in (client.get(f"/api/rework-jobs/{job_id}").json()["copilot_call"] or {}).get("log", ""))
+    current = client.get(f"/api/rework-jobs/{job_id}").json()["copilot_call"]
+    assert (current["key"], current["project"], current["call"], current["rung"], current["round"], current["build_round"]) == (
+        "PROJ-102", "packages/apps/Settings", "call-1", "port", 0, 1
+    )  # fmt: skip
+    assert current["log"] == "reading strings.xml\nediting strings.xml" and current["elapsed"] >= 0
+    (running,) = client.get("/api/copilot/live").json()
+    assert (running["job_id"], running["keys"], running["call"], running["workspace_id"]) == (job_id, ["PROJ-102"], "call-1", workspace)
+    assert client.get("/api/copilot/live", params={"workspace_id": workspace + 1}).json() == []
     assert client.post(f"/api/rework-jobs/{job_id}/cancel").status_code == 202
     threads[0].join(30)
     job = client.get(f"/api/rework-jobs/{job_id}").json()
-    assert (job["status"], job["phase"], job["builds"]) == ("canceled", None, 1)
+    assert (job["status"], job["phase"], job["builds"], job["copilot_call"]) == ("canceled", None, 1, None)
+    assert client.get("/api/copilot/live").json() == []
 
 
 def test_build_fix_without_progress_stops(app: FastAPI, client: TestClient, rework: ReworkRunner, workspace: int, scenarios: Path, log: Path) -> None:

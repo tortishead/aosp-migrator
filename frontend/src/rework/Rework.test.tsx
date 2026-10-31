@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import type { BuildJob, Item, ItemPatch, PlanItem, PrescanJob, ReworkAttempt, ReworkJob, ReworkPlan, ReworkRequest } from "../api";
 import { cameraV2, diffHandlers, itemDetail, PATCH } from "../item/fixtures";
 import { mockApi, renderRoute, type ApiCall } from "../test-utils";
-import { reworkStatusText } from "./ReworkPanel";
+import { clock } from "./LiveCall";
+import { reworkProgress, reworkStatusText } from "./ReworkPanel";
 
 const workspace = {
   id: 1,
@@ -322,6 +323,50 @@ describe("Backlog rework", () => {
     await userEvent.click(within(panel).getByRole("button", { name: "Cancel rework" }));
     expect(calls.some((c) => c.method === "POST" && c.path === "/rework-jobs/3/cancel")).toBe(true);
     await waitFor(() => expect(within(panel).getByRole("status")).toHaveTextContent("(canceling)"));
+  });
+
+  it("animates a running rework: bar through the phases, steps, timer and the Copilot call running now", async () => {
+    const job = reworkJob({
+      phase: "fixing",
+      builds: 1,
+      calls: 1,
+      copilot_call: {
+        key: "PROJ-111",
+        project: "system/core",
+        call: "call-1",
+        rung: "port",
+        round: 0,
+        build_round: 1,
+        model: "gpt-5",
+        started_at: "2026-10-30T10:00:00Z",
+        elapsed: 42,
+        log: "reading oem_props.h\nediting oem_props.h",
+      },
+    });
+    backlogApi({ "GET /workspaces/1/rework-jobs": () => [job] });
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByRole("button", { name: /^Job status/ }));
+    const panel = within(screen.getByRole("dialog", { name: "Job status" })).getByRole("region", { name: "Rework" });
+    const bar = within(panel).getByRole("progressbar", { name: "Rework progress" });
+    expect(bar).toHaveAttribute("aria-valuetext", "0 of 2 units done");
+    expect((bar.firstElementChild as HTMLElement).style.width).toBe("35%");
+    const steps = within(within(panel).getByRole("list", { name: "Rework steps" })).getAllByRole("listitem");
+    expect(steps.map((s) => s.className)).toEqual(["done", "done", "active", ""]);
+    expect(steps[2]).toHaveAttribute("aria-current", "step");
+    const call = within(panel).getByRole("region", { name: "Copilot call running" });
+    expect(call).toHaveTextContent("Port rejected hunks · build fix 1");
+    expect(call).toHaveTextContent("PROJ-111 (system/core)");
+    expect(call).toHaveTextContent("gpt-5");
+    expect(within(call).getByLabelText("Copilot call time")).toHaveTextContent(/^0:4[2-4]$/);
+    expect(within(call).getByLabelText("Copilot output")).toHaveTextContent("editing oem_props.h");
+  });
+
+  it("puts the current unit's phase into the job's progress", () => {
+    expect(reworkProgress(reworkJob({ done: 0, total: 2, phase: null }))).toBe(0);
+    expect(reworkProgress(reworkJob({ done: 1, total: 2, phase: "patching" }))).toBeCloseTo(0.575);
+    expect(reworkProgress(reworkJob({ done: 1, total: 2, phase: "building", builds: 3 }))).toBeCloseTo(0.8);
+    expect(reworkProgress(reworkJob({ done: 2, total: 2, phase: null }))).toBe(1);
+    expect([clock(5), clock(75), clock(3725)]).toEqual(["0:05", "1:15", "1:02:05"]);
   });
 
   it.each([

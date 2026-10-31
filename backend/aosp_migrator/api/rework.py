@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 from aosp_migrator.api.build import log_tail
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.db.models import BuildRun, Item, JiraIssue, MigrationPatch, ReworkAttempt, ReworkJob, Workspace
+from aosp_migrator.config import Config
 from aosp_migrator.rework import attempt as attempts
+from aosp_migrator.rework import live
 from aosp_migrator.rework.runner import Options, ReworkError, ReworkJobConflict, ReworkRunner
 
 router = APIRouter()
@@ -95,6 +97,8 @@ class ReworkJobOut(BaseModel):
     builds: int = 0
     # Last lines of that unit's latest build log.
     log_tail: str | None = None
+    # The Copilot call running now: key, project, call, rung, round, build_round, model, started_at, elapsed (s), log.
+    copilot_call: dict[str, Any] | None = None
 
 
 class BuildRunRef(BaseModel):
@@ -160,7 +164,7 @@ def _keys(session: Session, item_ids: list[int]) -> dict[int, str]:
     return {item_id: key for item_id, key in rows}
 
 
-def _job_out(session: Session, job: ReworkJob) -> ReworkJobOut:
+def _job_out(session: Session, job: ReworkJob, config: Config) -> ReworkJobOut:
     out = ReworkJobOut.model_validate(job)
     attempt = session.scalar(select(ReworkAttempt).where(ReworkAttempt.job_id == job.id).order_by(ReworkAttempt.id.desc()).limit(1))
     if attempt is not None:
@@ -172,6 +176,7 @@ def _job_out(session: Session, job: ReworkJob) -> ReworkJobOut:
             out.log_tail = log_tail(Path(run.log_path))
         if job.status == "running" and attempt.status == "running":
             out.phase = "patching" if run is None else {"running": "building", "build_failed": "fixing"}.get(run.status, "saving")
+            out.copilot_call = live.read(live.prompts_dir(config.workspace_dir(job.workspace_id), attempt.id))
     return out
 
 
@@ -245,30 +250,30 @@ def start_rework(workspace_id: int, body: ReworkRequest, request: Request, sessi
     except ReworkError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     session.expire_all()
-    return _job_out(session, _job(session, job.id))
+    return _job_out(session, _job(session, job.id), request.app.state.config)
 
 
 @router.get("/workspaces/{workspace_id}/rework-jobs")
-def list_rework_jobs(workspace_id: int, session: SessionDep, limit: int = 20) -> list[ReworkJobOut]:
+def list_rework_jobs(workspace_id: int, request: Request, session: SessionDep, limit: int = 20) -> list[ReworkJobOut]:
     _workspace(session, workspace_id)
     jobs = session.scalars(select(ReworkJob).where(ReworkJob.workspace_id == workspace_id).order_by(ReworkJob.id.desc()).limit(limit))
-    return [_job_out(session, job) for job in jobs]
+    return [_job_out(session, job, request.app.state.config) for job in jobs]
 
 
 @router.get("/rework-jobs/{job_id}")
-def get_rework_job(job_id: int, session: SessionDep) -> ReworkJobOut:
-    return _job_out(session, _job(session, job_id))
+def get_rework_job(job_id: int, request: Request, session: SessionDep) -> ReworkJobOut:
+    return _job_out(session, _job(session, job_id), request.app.state.config)
 
 
 @router.post("/rework-jobs/{job_id}/cancel", status_code=202)
-def cancel_rework_job(job_id: int, session: SessionDep) -> ReworkJobOut:
+def cancel_rework_job(job_id: int, request: Request, session: SessionDep) -> ReworkJobOut:
     """Ask the job to stop: a running Copilot call or build is killed, the scratch checkouts deleted; no further unit starts."""
     job = _job(session, job_id)
     if job.status != "running":
         raise HTTPException(status_code=409, detail=f"Rework job is {job.status}")
     job.cancel_requested = True
     session.commit()
-    return _job_out(session, job)
+    return _job_out(session, job, request.app.state.config)
 
 
 @router.get("/workspaces/{workspace_id}/rework-summary")

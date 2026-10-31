@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -62,6 +62,42 @@ describe("CopilotPage", () => {
     const recent = screen.getByRole("heading", { name: "Recent calls" }).closest("section")!;
     expect(within(recent).getByRole("link", { name: "PROJ-1" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-1");
     expect(within(recent).getByText("claude-sonnet-4.5 (default)")).toBeInTheDocument();
+  });
+
+  it("shows the Copilot calls running now and refreshes the statistics when one ends", async () => {
+    let live = [
+      {
+        workspace_id: 1,
+        workspace: "A15",
+        job_id: 7,
+        attempt_id: 9,
+        keys: ["PROJ-2"],
+        key: "PROJ-2",
+        project: "frameworks/base",
+        call: "call-3",
+        rung: "resolve",
+        round: 1,
+        build_round: 0,
+        model: null,
+        started_at: new Date().toISOString(),
+        elapsed: 3,
+        log: "thinking about the conflict",
+      },
+    ];
+    const calls = mockApi({ "GET /copilot/usage": () => usage(), "GET /copilot/live": () => live, "GET /workspaces": () => [{ id: 1, name: "A15" }] });
+    renderRoute("/copilot");
+    const running = await screen.findByRole("region", { name: "Running now" });
+    const call = within(running).getByRole("region", { name: "Copilot call running" });
+    expect(call).toHaveTextContent("Copilot · A15");
+    expect(call).toHaveTextContent("Resolve conflicts · fix round 1");
+    expect(call).toHaveTextContent("PROJ-2 (frameworks/base)");
+    expect(call).toHaveTextContent("default model");
+    expect(within(call).getByLabelText("Copilot output")).toHaveTextContent("thinking about the conflict");
+    expect(within(running).getByRole("link", { name: "PROJ-2" })).toHaveAttribute("href", "/workspaces/1/items/PROJ-2?tab=migration");
+    const before = calls.filter((c) => c.path.startsWith("/copilot/usage")).length;
+    live = [];
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Running now" })).not.toBeInTheDocument(), { timeout: 3000 });
+    await waitFor(() => expect(calls.filter((c) => c.path.startsWith("/copilot/usage")).length).toBeGreaterThan(before));
   });
 
   it("filters by workspace and period", async () => {

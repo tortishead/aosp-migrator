@@ -21,6 +21,9 @@
   --success-subtle: #dafbe1;
   --success-border: rgba(26, 127, 55, 0.25);
   --success-solid: #1a7f37;
+  --built: #2c974b;
+  --built-subtle: #effbf2;
+  --built-border: rgba(26, 127, 55, 0.15);
   --warn: #9a6700;
   --warn-subtle: #fff8c5;
   --warn-border: rgba(154, 103, 0, 0.25);
@@ -88,6 +91,9 @@
   --success-subtle: rgba(46, 160, 67, 0.15);
   --success-border: rgba(46, 160, 67, 0.4);
   --success-solid: #238636;
+  --built: #56d364;
+  --built-subtle: rgba(46, 160, 67, 0.08);
+  --built-border: rgba(46, 160, 67, 0.25);
   --warn: #d29922;
   --warn-subtle: rgba(187, 128, 9, 0.15);
   --warn-border: rgba(187, 128, 9, 0.4);
@@ -511,9 +517,9 @@ button.danger:hover:not(:disabled) {
 
 /* Proposed and built by the rework: a lighter green than accepted. */
 .tag-built {
-  border-color: rgba(26, 127, 55, 0.15);
-  background: #effbf2;
-  color: #2c974b;
+  border-color: var(--built-border);
+  background: var(--built-subtle);
+  color: var(--built);
 }
 
 p.tag {
@@ -2707,4 +2713,187 @@ p.tag {
   color: var(--fg-muted);
   font-size: 0.85em;
   font-variant-numeric: tabular-nums;
+}
+
+/* Running rework: a bar that moves through each unit's phases, the phases, and the Copilot call running now */
+.rework-live {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rework-bar {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-muted);
+}
+
+.rework-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--accent-solid);
+  transition: width 600ms ease;
+}
+
+.rework-bar.running .rework-bar-fill {
+  background-image: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.25) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.25) 50%,
+    rgba(255, 255, 255, 0.25) 75%,
+    transparent 75%
+  );
+  background-size: 16px 16px;
+  animation: rework-stripes 800ms linear infinite;
+}
+
+/* A sheen sweeping the whole track, so the bar visibly works even while the fill waits on a long step. */
+.rework-bar.running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: rework-sheen 1.8s ease-in-out infinite;
+}
+
+@keyframes rework-stripes {
+  to {
+    background-position: 16px 0;
+  }
+}
+
+@keyframes rework-sheen {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
+.rework-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--fg-muted);
+  font-size: 0.85em;
+}
+
+.rework-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rework-steps li::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+}
+
+.rework-steps li.done::before {
+  border-color: var(--success-solid);
+  background: var(--success-solid);
+}
+
+.rework-steps li.active {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.rework-steps li.active::before {
+  border-color: var(--accent-solid);
+  background: var(--accent-solid);
+  animation: rework-ping 1.2s ease-out infinite;
+}
+
+@keyframes rework-ping {
+  from {
+    box-shadow: 0 0 0 0 var(--accent-border);
+  }
+  to {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+.rework-elapsed {
+  color: var(--fg-muted);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-call {
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  animation: result-in 200ms ease-out;
+}
+
+.live-call-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 10px;
+  font-size: 0.9em;
+}
+
+.live-call-head .spinner {
+  flex: none;
+}
+
+.live-call-time {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-call pre {
+  max-height: 180px;
+  margin: 0;
+  padding: 6px 10px;
+  overflow: auto;
+  border-top: 1px solid var(--border-muted);
+  font-size: 0.8em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.live-call-empty {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-muted);
+  color: var(--fg-muted);
+  font-size: 0.85em;
+}
+
+.copilot-live {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.copilot-live h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rework-bar.running .rework-bar-fill,
+  .rework-bar.running::after,
+  .rework-steps li.active::before {
+    animation: none;
+  }
 }

@@ -97,13 +97,15 @@ class CopilotClient:
         read_dirs: Sequence[Path] = (),
         cancel: Callable[[], bool] = lambda: False,
         tools: Sequence[str] = EDIT_TOOLS,
+        log: Path | None = None,
     ) -> CopilotResult:
+        """`log`: stdout to `<log>.out` and stderr to `<log>.err` as the call runs, so they can be watched; else a temp dir."""
         started = time.monotonic()
-        result = self._run(cwd, prompt, model, timeout, read_dirs, cancel, tools, started)
+        result = self._run(cwd, prompt, model, timeout, read_dirs, cancel, tools, started, log)
         if self._usage_option and result.status == "failed" and _rejects_usage_option(result.error):
             # The CLI stops while parsing its arguments, before doing anything: run it again without.
             self._usage_option = False
-            result = self._run(cwd, prompt, model, timeout, read_dirs, cancel, tools, started)
+            result = self._run(cwd, prompt, model, timeout, read_dirs, cancel, tools, started, log)
         return result
 
     def _run(
@@ -116,9 +118,12 @@ class CopilotClient:
         cancel: Callable[[], bool],
         tools: Sequence[str],
         started: float,
+        log: Path | None = None,
     ) -> CopilotResult:
         with tempfile.TemporaryDirectory(prefix="aosp-migrator-copilot-") as tmp:
             prompt_file, out_file, err_file, usage_file = (Path(tmp) / name for name in ("prompt", "out", "err", "usage.json"))
+            if log is not None:
+                out_file, err_file = log.with_suffix(".out"), log.with_suffix(".err")
             prompt_file.write_text(prompt)
             args = command(self.binary, cwd, model, read_dirs, usage_file if self._usage_option else None, tools)
             with prompt_file.open() as stdin, out_file.open("w") as stdout, err_file.open("w") as stderr:

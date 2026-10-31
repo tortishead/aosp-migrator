@@ -9,6 +9,7 @@ this file); without a marker the answer is "OK". Scenario keys, all optional:
 - `edits`: [{path, old, new}], `creates`: [{path, text}]; paths relative to the cwd or
   absolute. A write outside the cwd or matching a `--deny-tool write(<dir>/**)` is refused
   and listed in the answer, as the real CLI would refuse it.
+- `progress`: lines written to stderr (flushed) before the sleep, as the real CLI logs as it works
 - `sleep`: seconds to wait first (timeout and cancel tests)
 - `exit`, `stderr`: exit code and error output
 - `usage`: false to write no usage file
@@ -53,6 +54,9 @@ def main() -> int:
         if "rounds" in scenario:
             earlier = sum(marker.group(0) in json.loads(line)["prompt"] for line in Path(log).read_text().splitlines()) - 1 if log else 0
             scenario = scenario["rounds"][min(earlier, len(scenario["rounds"]) - 1)]
+    for line in scenario.get("progress", []):
+        sys.stderr.write(f"{line}\n")
+        sys.stderr.flush()
     time.sleep(scenario.get("sleep", 0))
 
     cwd = Path.cwd().resolve()

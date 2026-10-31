@@ -53,7 +53,7 @@ from aosp_migrator.prescan.chain import chain, current_patches, item_needs, patc
 from aosp_migrator.prescan.patch import Patch
 from aosp_migrator.prescan.runner import current_diffs, diff_scan, read_diff_text
 from aosp_migrator.rework import attempt as attempts
-from aosp_migrator.rework import ladder
+from aosp_migrator.rework import ladder, live
 from aosp_migrator.rework.checks import Finding
 from aosp_migrator.rework.ladder import Budget, Copilot, LadderResult
 from aosp_migrator.rework.scratch import Scratch, ScratchError, touched_files
@@ -419,7 +419,7 @@ class _Job:
         attempt = attempts.start(self.session, self.workspace.id, unit_ids, {p.path: p.head for p in projects}, base_ids, self.job.id)
         attempt.notes = notes
         self._started(attempt)
-        self.copilot.prompts_dir = self.config.workspace_dir(self.workspace.id) / "rework-prompts" / str(attempt.id)
+        self.copilot.prompts_dir = live.prompts_dir(self.config.workspace_dir(self.workspace.id), attempt.id)
         budgets = {item.id: Budget(self.job.options["item_cap"], self.budget) for item, _ in unit}
         status, reason = "error", "unexpected error"
         try:
@@ -490,6 +490,7 @@ class _Job:
                 if n:
                     project.scratch.commit(project.members[n - 1].issue.key)
                 context = attempts.context(self.session, member.item, project.path, before)
+                self.copilot.label = {"key": member.issue.key, "project": project.path}
                 member.result = ladder.run(
                     project.scratch,
                     member.diffs,
@@ -556,6 +557,7 @@ class _Job:
                 assert member.result is not None and project.scratch is not None
                 before = [*base_items, *(m.item for m in project.members[:-1])]
                 context = attempts.context(self.session, member.item, project.path, before)
+                copilot.label = {"key": member.issue.key, "project": project.path}
                 fixed = ladder.fix_build(
                     project.scratch,
                     member.diffs,

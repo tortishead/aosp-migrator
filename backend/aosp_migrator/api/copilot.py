@@ -1,13 +1,14 @@
 from datetime import timedelta
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.copilot.usage import CallRef, summarize
-from aosp_migrator.db.models import Item, JiraIssue, ReworkAttempt, Workspace, utcnow
+from aosp_migrator.db.models import Item, JiraIssue, ReworkAttempt, ReworkJob, Workspace, utcnow
+from aosp_migrator.rework import live
 
 router = APIRouter()
 
@@ -41,3 +42,35 @@ def get_copilot_usage(
         if isinstance(call, dict)
     ]
     return {"workspace_id": workspace_id, "days": days, **summarize(refs, names)}
+
+
+@router.get("/copilot/live")
+def get_copilot_live(request: Request, session: SessionDep, workspace_id: int | None = None) -> list[dict[str, Any]]:
+    """The Copilot calls running now, one per running rework job at most: what `live.read` gives, plus workspace, job and unit keys."""
+    query = select(ReworkJob).where(ReworkJob.status == "running").order_by(ReworkJob.id)
+    if workspace_id is not None:
+        query = query.where(ReworkJob.workspace_id == workspace_id)
+    out: list[dict[str, Any]] = []
+    for job in session.scalars(query):
+        attempt = session.scalar(
+            select(ReworkAttempt).where(ReworkAttempt.job_id == job.id, ReworkAttempt.status == "running").order_by(ReworkAttempt.id.desc()).limit(1)
+        )
+        if attempt is None:
+            continue
+        call = live.read(live.prompts_dir(request.app.state.config.workspace_dir(job.workspace_id), attempt.id))
+        if call is None:
+            continue
+        workspace = session.get(Workspace, job.workspace_id)
+        rows = session.execute(select(Item.id, JiraIssue.key).join(JiraIssue, Item.issue_id == JiraIssue.id).where(Item.id.in_(attempt.item_ids)))
+        keys = {item_id: key for item_id, key in rows}
+        out.append(
+            {
+                **call,
+                "workspace_id": job.workspace_id,
+                "workspace": workspace.name if workspace else None,
+                "job_id": job.id,
+                "attempt_id": attempt.id,
+                "keys": [keys[i] for i in attempt.item_ids if i in keys],
+            }
+        )
+    return out

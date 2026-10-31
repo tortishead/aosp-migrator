@@ -657,6 +657,34 @@ export interface ReworkJob {
   builds: number;
   /** Last lines of that unit's latest build log. */
   log_tail: string | null;
+  /** The Copilot call running now; null between calls. */
+  copilot_call?: CopilotCall | null;
+}
+
+/** A Copilot call running now, as the rework writes it. */
+export interface CopilotCall {
+  key?: string;
+  project?: string;
+  /** `call-<n>`: the prompt file of the attempt. */
+  call: string;
+  rung: string;
+  round: number;
+  build_round: number;
+  model: string | null;
+  started_at: string;
+  /** Seconds since it started, when the server answered. */
+  elapsed: number;
+  /** End of the CLI's stderr, then stdout, so far. */
+  log: string;
+}
+
+/** A running call on the Copilot page: which workspace, job and unit. */
+export interface CopilotLiveCall extends CopilotCall {
+  workspace_id: number;
+  workspace: string | null;
+  job_id: number;
+  attempt_id: number;
+  keys: string[];
 }
 
 export type ReworkPhase = "patching" | "building" | "fixing" | "saving";
@@ -791,6 +819,8 @@ export const api = {
     const query = params.toString();
     return apiFetch<CopilotUsage>(`/copilot/usage${query ? `?${query}` : ""}`);
   },
+  copilotLive: (workspaceId?: number | null) =>
+    apiFetch<CopilotLiveCall[]>(`/copilot/live${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
   workspaces: () => apiFetch<Workspace[]>("/workspaces"),
   workspace: (id: number) => apiFetch<Workspace>(`/workspaces/${id}`),
   createWorkspace: (input: WorkspaceInput) =>

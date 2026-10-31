@@ -33,7 +33,7 @@ from aosp_migrator.copilot.auth import auth_hint
 from aosp_migrator.copilot.client import CopilotClient
 from aosp_migrator.prescan.apply import BINARY
 from aosp_migrator.prescan.patch import Patch
-from aosp_migrator.rework import bundle, checks, intent
+from aosp_migrator.rework import bundle, checks, intent, live
 from aosp_migrator.rework.bundle import Context
 from aosp_migrator.rework.checks import Finding
 from aosp_migrator.rework.locate import Location, locate
@@ -110,6 +110,8 @@ class Copilot:
     settings: CopilotSettings
     prompts_dir: Path
     cap: int = bundle.CAP
+    # What the calls are for (item key, project), shown with the running call.
+    label: dict[str, Any] = field(default_factory=dict)
 
 
 def _file(result: FileResult, **changes: Any) -> dict[str, Any]:
@@ -276,7 +278,12 @@ class _Caller:
         prompt_path.write_text(prompt.prompt)
         model = copilot.settings.models.get(rung)
         read_dirs = [self.target] if self.target is not None else []
-        result = copilot.client.run(self.scratch.path, prompt.prompt, model, copilot.settings.timeout, read_dirs, self.cancel)
+        stem = prompt_path.with_suffix("")
+        live.start(copilot.prompts_dir, stem, {**copilot.label, "call": stem.name, "rung": rung, "round": fix_round, "build_round": self.build_round, "model": model})
+        try:
+            result = copilot.client.run(self.scratch.path, prompt.prompt, model, copilot.settings.timeout, read_dirs, self.cancel, log=stem)
+        finally:
+            live.clear(copilot.prompts_dir)
         out.calls.append(
             Call(
                 rung,

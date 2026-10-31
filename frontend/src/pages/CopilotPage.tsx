@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { api, type CopilotUsage, type CopilotUsageBucket } from "../api";
 import { workspacesKey } from "../queryClient";
+import { LiveCall } from "../rework/LiveCall";
 
 const PERIODS = [
   { days: 7, label: "Last 7 days" },
@@ -98,10 +99,59 @@ export function CopilotPage() {
           ))}
         </div>
       </div>
+      <RunningCalls workspaceId={workspaceId} />
       {usage.isPending && <p>Loading…</p>}
       {usage.isError && <p className="error">{usage.error.message}</p>}
       {usage.data && <Dashboard usage={usage.data} />}
     </>
+  );
+}
+
+const LIVE_POLL_MS = 1000;
+const IDLE_POLL_MS = 5000;
+
+/** The Copilot calls running now, with their output so far; the statistics refresh as each call ends. */
+function RunningCalls({ workspaceId }: { workspaceId: number | null }) {
+  const queryClient = useQueryClient();
+  const live = useQuery({
+    queryKey: ["copilot", "live", workspaceId],
+    queryFn: () => api.copilotLive(workspaceId),
+    refetchInterval: (query) => (query.state.data?.length ? LIVE_POLL_MS : IDLE_POLL_MS),
+  });
+  const calls = live.data ?? [];
+  const ids = calls.map((c) => `${c.attempt_id}:${c.call}`).join(",");
+  const seen = useRef(ids);
+  useEffect(() => {
+    if (ids === seen.current) return;
+    seen.current = ids;
+    // A call started or ended: its numbers are in the usage now.
+    void queryClient.invalidateQueries({ queryKey: ["copilot", "usage"] });
+  }, [ids, queryClient]);
+  if (!calls.length) return null;
+  return (
+    <section className="copilot-live" aria-label="Running now">
+      <h2>
+        <span className="jobs-dot jobs-dot-running" aria-hidden="true" />
+        Running now
+      </h2>
+      {calls.map((call) => (
+        <div key={`${call.attempt_id}:${call.call}`}>
+          <LiveCall
+            call={{ ...call, key: call.key ?? call.keys.join(", ") }}
+            title={workspaceId === null && call.workspace ? `Copilot · ${call.workspace}` : "Copilot"}
+          />
+          <p className="hint">
+            Rework job {call.job_id}, unit{" "}
+            {call.keys.map((key, i) => (
+              <span key={key}>
+                {i > 0 && ", "}
+                <Link to={`/workspaces/${call.workspace_id}/items/${encodeURIComponent(key)}?tab=migration`}>{key}</Link>
+              </span>
+            ))}
+          </p>
+        </div>
+      ))}
+    </section>
   );
 }
 
