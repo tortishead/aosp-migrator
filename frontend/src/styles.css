@@ -1,26 +1,53 @@
+/* Day palette by default; the night palette below applies when <html data-theme="dark">
+   (set by theme.ts from the saved choice or the system preference). */
 :root {
+  color-scheme: light;
   --fg: #1f2328;
   --fg-muted: #59636e;
   --bg: #ffffff;
   --bg-page: #f6f8fa;
   --bg-subtle: #f6f8fa;
   --bg-hover: #eef1f4;
+  --bg-muted: #eaeef2;
   --border: #d0d7de;
   --border-muted: #e5e9ed;
   --accent: #0969da;
   --accent-fg: #ffffff;
   --accent-subtle: #ddf4ff;
+  --accent-strong: #0550ae;
+  --accent-border: rgba(9, 105, 218, 0.25);
+  --accent-solid: #0969da;
   --success: #1a7f37;
   --success-subtle: #dafbe1;
+  --success-border: rgba(26, 127, 55, 0.25);
+  --success-solid: #1a7f37;
   --warn: #9a6700;
   --warn-subtle: #fff8c5;
+  --warn-border: rgba(154, 103, 0, 0.25);
+  --warn-solid: #9a6700;
   --danger: #d1242f;
   --danger-subtle: #ffebe9;
+  --danger-border: rgba(209, 36, 47, 0.25);
+  --danger-solid: #d1242f;
+  --neutral-solid: #59636e;
+  --solid-border: rgba(31, 35, 40, 0.15);
+  --count-bg: rgba(31, 35, 40, 0.08);
   --header-bg: #24292f;
   --header-fg: #f6f8fa;
-  --radius: 6px;
+  --backdrop: rgba(31, 35, 40, 0.35);
   --shadow: 0 1px 3px rgba(31, 35, 40, 0.08);
+  --shadow-button: 0 1px 0 rgba(31, 35, 40, 0.04);
   --shadow-pop: 0 8px 24px rgba(66, 74, 83, 0.18);
+
+  --syn-comment: #6e7781;
+  --syn-keyword: #cf222e;
+  --syn-string: #0a3069;
+  --syn-number: #0550ae;
+  --syn-function: #8250df;
+  --syn-tag: #116329;
+  --syn-attr: #953800;
+
+  --radius: 6px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -28,6 +55,66 @@
   line-height: 1.5;
   color: var(--fg);
   background: var(--bg-page);
+}
+
+/* Night palette. The attribute selector outranks react-diff-view's own :root defaults. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --fg: #e6edf3;
+  --fg-muted: #9198a1;
+  --bg: #151b23;
+  --bg-page: #0d1117;
+  --bg-subtle: #1b2129;
+  --bg-hover: #262c36;
+  --bg-muted: #212830;
+  --border: #3d444d;
+  --border-muted: #2a3038;
+  --accent: #4493f8;
+  --accent-fg: #ffffff;
+  --accent-subtle: rgba(56, 139, 253, 0.15);
+  --accent-strong: #79c0ff;
+  --accent-border: rgba(56, 139, 253, 0.4);
+  --accent-solid: #1f6feb;
+  --success: #3fb950;
+  --success-subtle: rgba(46, 160, 67, 0.15);
+  --success-border: rgba(46, 160, 67, 0.4);
+  --success-solid: #238636;
+  --warn: #d29922;
+  --warn-subtle: rgba(187, 128, 9, 0.15);
+  --warn-border: rgba(187, 128, 9, 0.4);
+  --warn-solid: #9e6a03;
+  --danger: #f85149;
+  --danger-subtle: rgba(248, 81, 73, 0.15);
+  --danger-border: rgba(248, 81, 73, 0.4);
+  --danger-solid: #da3633;
+  --neutral-solid: #656c76;
+  --solid-border: rgba(240, 246, 252, 0.1);
+  --count-bg: rgba(240, 246, 252, 0.1);
+  --header-bg: #010409;
+  --header-fg: #f0f6fc;
+  --backdrop: rgba(1, 4, 9, 0.6);
+  --shadow: 0 1px 3px rgba(1, 4, 9, 0.5);
+  --shadow-button: 0 0 transparent;
+  --shadow-pop: 0 8px 24px rgba(1, 4, 9, 0.6);
+
+  --syn-comment: #9198a1;
+  --syn-keyword: #ff7b72;
+  --syn-string: #a5d6ff;
+  --syn-number: #79c0ff;
+  --syn-function: #d2a8ff;
+  --syn-tag: #7ee787;
+  --syn-attr: #ffa657;
+
+  --diff-selection-background-color: rgba(56, 139, 253, 0.4);
+  --diff-gutter-insert-background-color: rgba(63, 185, 80, 0.3);
+  --diff-gutter-delete-background-color: rgba(248, 81, 73, 0.3);
+  --diff-gutter-selected-background-color: rgba(187, 128, 9, 0.3);
+  --diff-code-insert-background-color: rgba(46, 160, 67, 0.15);
+  --diff-code-delete-background-color: rgba(248, 81, 73, 0.1);
+  --diff-code-insert-edit-background-color: rgba(46, 160, 67, 0.4);
+  --diff-code-delete-edit-background-color: rgba(248, 81, 73, 0.4);
+  --diff-code-selected-background-color: rgba(187, 128, 9, 0.15);
+  --diff-omit-gutter-line-color: #f85149;
 }
 
 body {
@@ -69,7 +156,7 @@ button,
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-subtle);
-  box-shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
+  box-shadow: 0 1px 0 var(--shadow-button);
   font-weight: 500;
   line-height: 20px;
   white-space: nowrap;
@@ -90,14 +177,14 @@ button:disabled {
 
 button[type="submit"],
 .button-link {
-  border-color: rgba(31, 35, 40, 0.15);
-  background: var(--success);
+  border-color: var(--solid-border);
+  background: var(--success-solid);
   color: var(--accent-fg);
 }
 
 button[type="submit"]:hover:not(:disabled),
 .button-link:hover {
-  background: #1c8139;
+  background: var(--success-solid);
   filter: brightness(0.95);
 }
 
@@ -195,8 +282,17 @@ input[type="checkbox"] {
   padding: 24px;
 }
 
-.app-logout {
+.app-header-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
+}
+
+.theme-toggle {
+  justify-content: center;
+  min-width: 32px;
+  padding: 4px 8px;
 }
 
 /* Generic */
@@ -320,8 +416,8 @@ input[type="checkbox"] {
 }
 
 button.danger:hover:not(:disabled) {
-  border-color: var(--danger);
-  background: var(--danger);
+  border-color: var(--danger-solid);
+  background: var(--danger-solid);
   color: var(--accent-fg);
 }
 
@@ -357,7 +453,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .table tbody tr:hover td {
-  background: #f9fafb;
+  background: var(--bg-subtle);
 }
 
 .mono {
@@ -369,10 +465,10 @@ button.danger:hover:not(:disabled) {
   display: inline-block;
   margin-left: 6px;
   padding: 0 8px;
-  border: 1px solid rgba(9, 105, 218, 0.2);
+  border: 1px solid var(--accent-border);
   border-radius: 999px;
   background: var(--accent-subtle);
-  color: #0550ae;
+  color: var(--accent-strong);
   font-size: 0.8em;
   font-weight: 500;
   line-height: 18px;
@@ -380,19 +476,19 @@ button.danger:hover:not(:disabled) {
 }
 
 .tag-warn {
-  border-color: rgba(154, 103, 0, 0.25);
+  border-color: var(--warn-border);
   background: var(--warn-subtle);
   color: var(--warn);
 }
 
 .tag-error {
-  border-color: rgba(209, 36, 47, 0.25);
+  border-color: var(--danger-border);
   background: var(--danger-subtle);
   color: var(--danger);
 }
 
 .tag-ok {
-  border-color: rgba(26, 127, 55, 0.25);
+  border-color: var(--success-border);
   background: var(--success-subtle);
   color: var(--success);
 }
@@ -596,7 +692,7 @@ p.tag {
   --chip-fg: var(--fg-muted);
   --chip-bg: var(--bg);
   --chip-border: var(--border);
-  --chip-solid: var(--fg-muted);
+  --chip-solid: var(--neutral-solid);
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -628,31 +724,31 @@ p.tag {
 }
 
 .chip-info {
-  --chip-fg: #0550ae;
+  --chip-fg: var(--accent-strong);
   --chip-bg: var(--accent-subtle);
-  --chip-border: rgba(9, 105, 218, 0.25);
-  --chip-solid: var(--accent);
+  --chip-border: var(--accent-border);
+  --chip-solid: var(--accent-solid);
 }
 
 .chip-ok {
   --chip-fg: var(--success);
   --chip-bg: var(--success-subtle);
-  --chip-border: rgba(26, 127, 55, 0.3);
-  --chip-solid: var(--success);
+  --chip-border: var(--success-border);
+  --chip-solid: var(--success-solid);
 }
 
 .chip-warn {
   --chip-fg: var(--warn);
   --chip-bg: var(--warn-subtle);
-  --chip-border: rgba(154, 103, 0, 0.3);
-  --chip-solid: var(--warn);
+  --chip-border: var(--warn-border);
+  --chip-solid: var(--warn-solid);
 }
 
 .chip-error {
   --chip-fg: var(--danger);
   --chip-bg: var(--danger-subtle);
-  --chip-border: rgba(209, 36, 47, 0.3);
-  --chip-solid: var(--danger);
+  --chip-border: var(--danger-border);
+  --chip-solid: var(--danger-solid);
 }
 
 .count-bars {
@@ -818,7 +914,7 @@ p.tag {
   align-items: flex-start;
   justify-content: center;
   padding: 64px 16px 16px;
-  background: rgba(31, 35, 40, 0.35);
+  background: var(--backdrop);
 }
 
 .popup {
@@ -854,7 +950,7 @@ p.tag {
   align-items: center;
   gap: 8px;
   padding: 4px 10px;
-  border: 1px solid rgba(9, 105, 218, 0.3);
+  border: 1px solid var(--accent-border);
   border-radius: var(--radius);
   background: var(--accent-subtle);
 }
@@ -889,13 +985,13 @@ p.tag {
 }
 
 .badge-active {
-  border-color: rgba(9, 105, 218, 0.25);
+  border-color: var(--accent-border);
   background: var(--accent-subtle);
-  color: #0550ae;
+  color: var(--accent-strong);
 }
 
 .badge-done {
-  border-color: rgba(26, 127, 55, 0.25);
+  border-color: var(--success-border);
   background: var(--success-subtle);
   color: var(--success);
 }
@@ -990,7 +1086,7 @@ p.tag {
   min-width: 18px;
   padding: 0 6px;
   border-radius: 999px;
-  background: rgba(31, 35, 40, 0.08);
+  background: var(--count-bg);
   font-size: 0.8em;
   font-weight: 500;
   text-align: center;
@@ -1062,7 +1158,7 @@ p.tag {
 .jira-html .codeHeader {
   padding: 4px 12px;
   border-bottom: 1px solid var(--border);
-  background: #eaeef2;
+  background: var(--bg-muted);
   font-weight: 600;
 }
 
@@ -1248,7 +1344,7 @@ p.tag {
 
 .view-toggle button[aria-pressed="true"] {
   background: var(--accent-subtle);
-  color: #0550ae;
+  color: var(--accent-strong);
   font-weight: 600;
 }
 
@@ -1497,41 +1593,41 @@ p.tag {
 .token.comment,
 .token.prolog,
 .token.doctype {
-  color: #6e7781;
+  color: var(--syn-comment);
 }
 
 .token.keyword,
 .token.important {
-  color: #cf222e;
+  color: var(--syn-keyword);
 }
 
 .token.string,
 .token.char,
 .token.attr-value {
-  color: #0a3069;
+  color: var(--syn-string);
 }
 
 .token.number,
 .token.boolean,
 .token.constant {
-  color: #0550ae;
+  color: var(--syn-number);
 }
 
 .token.function,
 .token.class-name {
-  color: #8250df;
+  color: var(--syn-function);
 }
 
 .token.tag,
 .token.annotation,
 .token.macro,
 .token.directive {
-  color: #116329;
+  color: var(--syn-tag);
 }
 
 .token.attr-name,
 .token.property {
-  color: #953800;
+  color: var(--syn-attr);
 }
 
 /* Prism's `tag` token must not pick up the `.tag` pill style. */

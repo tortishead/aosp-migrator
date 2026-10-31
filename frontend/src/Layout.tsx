@@ -4,6 +4,7 @@ import { NavLink, Outlet, useMatch, useNavigate } from "react-router";
 import { api } from "./api";
 import { LoginPage } from "./pages/LoginPage";
 import { authStatusKey, workspacesKey } from "./queryClient";
+import { useTheme } from "./theme";
 
 export function Layout() {
   const queryClient = useQueryClient();
@@ -29,11 +30,10 @@ export function Layout() {
           <NavLink to="/settings">Settings</NavLink>
         </nav>
         <WorkspaceSwitcher />
-        {auth.data.required && (
-          <button className="app-logout" onClick={() => logout.mutate()}>
-            Log out
-          </button>
-        )}
+        <div className="app-header-end">
+          <ThemeToggle />
+          {auth.data.required && <button onClick={() => logout.mutate()}>Log out</button>}
+        </div>
       </header>
       <main className="app-main">
         <Outlet />
@@ -67,5 +67,20 @@ function WorkspaceSwitcher() {
         </option>
       ))}
     </select>
+  );
+}
+
+function ThemeToggle() {
+  const [theme, toggle] = useTheme();
+  const next = theme === "dark" ? "day" : "night";
+  return (
+    <button
+      className="theme-toggle"
+      onClick={toggle}
+      aria-label={`Switch to ${next} mode`}
+      title={`Switch to ${next} mode`}
+    >
+      <span aria-hidden="true">{theme === "dark" ? "☀" : "☾"}</span>
+    </button>
   );
 }
