@@ -82,6 +82,22 @@ def test_large_prompt(client: CopilotClient, scratch: Path, log: Path) -> None:
     assert calls(log)[0]["prompt"] == prompt
 
 
+def test_cli_without_the_usage_option_runs_without_it(scratch: Path, log: Path) -> None:
+    client = CopilotClient(str(FAKE_COPILOT), env={"FAKE_COPILOT_LOG": str(log), "FAKE_COPILOT_UNKNOWN_OPTIONS": "--usage-output-file"})
+    for _ in range(2):
+        result = client.run(scratch, "hi", None, 30)
+        assert (result.status, result.output, result.usage) == ("ok", "OK", None)
+    # The rejected first try stops before the fake logs it; later runs leave the option out.
+    assert [("--usage-output-file" in call["argv"]) for call in calls(log)] == [False, False]
+
+
+def test_other_unknown_options_are_not_retried(scratch: Path, log: Path) -> None:
+    client = CopilotClient(str(FAKE_COPILOT), env={"FAKE_COPILOT_LOG": str(log), "FAKE_COPILOT_UNKNOWN_OPTIONS": "--disallow-temp-dir"})
+    result = client.run(scratch, "hi", None, 30)
+    assert result.status == "failed" and "unknown option '--disallow-temp-dir'" in result.error
+    assert not log.exists()
+
+
 def test_non_zero_exit(client: CopilotClient, scratch: Path) -> None:
     result = client.run(scratch, "@@fake:fail@@", None, 30)
     assert (result.status, result.exit_code, result.error, result.usage) == ("failed", 1, "Error: model not available", None)

@@ -2,7 +2,7 @@
 
 Tool mode (5.2 spike, CLI 1.0.105, see PLAN-MS5.md): the prompt goes in on stdin (no
 argv size limit), `-s` prints only the agent's answer, `--usage-output-file` writes the
-request count, premium request cost and tokens per model as JSON. The model sees only
+request count, premium request cost and tokens per model as JSON (CLIs without that option run without it, and report no usage). The model sees only
 the file tools (`view`, `create`, `edit`, `grep`, `glob`): no shell, web or MCP. File
 access is limited to the cwd plus `read_dirs` (`--add-dir`, the temp dir is refused);
 writes are allowed in the cwd only: `write(<dir>/**)` is denied for each read dir and
@@ -27,6 +27,7 @@ EDIT_TOOLS = ("view", "create", "edit", "grep", "glob")
 POLL = 0.2
 # Characters of stderr kept for the result.
 ERROR_TAIL = 2000
+USAGE_OPTION = "--usage-output-file"
 
 Status = Literal["ok", "failed", "timeout", "canceled"]
 
@@ -44,7 +45,7 @@ class CopilotResult:
     duration: float
 
 
-def command(binary: str, cwd: Path, model: str | None, read_dirs: Sequence[Path], usage_file: Path, tools: Sequence[str] = EDIT_TOOLS) -> list[str]:
+def command(binary: str, cwd: Path, model: str | None, read_dirs: Sequence[Path], usage_file: Path | None, tools: Sequence[str] = EDIT_TOOLS) -> list[str]:
     cwd = cwd.resolve()
     args = [
         binary,
@@ -54,8 +55,7 @@ def command(binary: str, cwd: Path, model: str | None, read_dirs: Sequence[Path]
         "--no-ask-user",
         "--disable-builtin-mcps",
         "--disallow-temp-dir",
-        "--usage-output-file",
-        str(usage_file),
+        *([USAGE_OPTION, str(usage_file)] if usage_file else []),
         # Variadic: the next argument must be an option.
         "--available-tools",
         *tools,
@@ -78,6 +78,8 @@ class CopilotClient:
         # Added to the server's environment (tests point the fake at its scenarios).
         self._env = dict(env or {})
         self._kill_grace = kill_grace
+        # Cleared once the CLI rejects `--usage-output-file` (older and newer versions lack it).
+        self._usage_option = True
 
     def version(self, timeout: float = 30) -> str:
         """`copilot --version`'s first line; raises OSError or subprocess errors when it does not run."""
@@ -97,10 +99,28 @@ class CopilotClient:
         tools: Sequence[str] = EDIT_TOOLS,
     ) -> CopilotResult:
         started = time.monotonic()
+        result = self._run(cwd, prompt, model, timeout, read_dirs, cancel, tools, started)
+        if self._usage_option and result.status == "failed" and _rejects_usage_option(result.error):
+            # The CLI stops while parsing its arguments, before doing anything: run it again without.
+            self._usage_option = False
+            result = self._run(cwd, prompt, model, timeout, read_dirs, cancel, tools, started)
+        return result
+
+    def _run(
+        self,
+        cwd: Path,
+        prompt: str,
+        model: str | None,
+        timeout: float,
+        read_dirs: Sequence[Path],
+        cancel: Callable[[], bool],
+        tools: Sequence[str],
+        started: float,
+    ) -> CopilotResult:
         with tempfile.TemporaryDirectory(prefix="aosp-migrator-copilot-") as tmp:
             prompt_file, out_file, err_file, usage_file = (Path(tmp) / name for name in ("prompt", "out", "err", "usage.json"))
             prompt_file.write_text(prompt)
-            args = command(self.binary, cwd, model, read_dirs, usage_file, tools)
+            args = command(self.binary, cwd, model, read_dirs, usage_file if self._usage_option else None, tools)
             with prompt_file.open() as stdin, out_file.open("w") as stdout, err_file.open("w") as stderr:
                 try:
                     process = subprocess.Popen(args, cwd=cwd, stdin=stdin, stdout=stdout, stderr=stderr, env=self._environment(), start_new_session=True)
@@ -145,6 +165,10 @@ class CopilotClient:
 
     def _environment(self) -> dict[str, str]:
         return {**os.environ, **self._env}
+
+
+def _rejects_usage_option(error: str) -> bool:
+    return f"unknown option '{USAGE_OPTION}'" in error
 
 
 def _usage(path: Path) -> dict[str, Any] | None:
