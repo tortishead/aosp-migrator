@@ -18,8 +18,9 @@ import { ReworkPanel, useLatestRework } from "../rework/ReworkPanel";
 
 type Tab = "overview" | "patches" | "migration";
 
-// Diffs live in their own tab, apart from the ticket itself; the pre-scan verdict leads the overview.
-// Migration holds the builds and what they apply: the patches the pre-scan made from the diffs.
+// The tab bar heads the item; the overview holds the ticket from Jira, the cluster and notes.
+// Diffs live in their own tab, apart from the ticket itself. Migration runs in order: the pre-scan verdict,
+// the builds, the patches the pre-scan made from the diffs, and the rework attempts.
 const TABS: Record<Tab, string> = { overview: "Overview", patches: "Patches", migration: "Migration" };
 
 export const itemKey = (workspaceId: number, key: string) => ["item", workspaceId, key];
@@ -36,7 +37,7 @@ export function ItemPage() {
   const item = useQuery({ queryKey: itemKey(workspaceId, key), queryFn: () => api.item(workspaceId, key) });
   const [search, setSearch] = useSearchParams();
   const requested = search.get("tab");
-  const tab: Tab = requested === "patches" || requested === "migration" ? requested : "overview";
+  const tab: Tab = requested !== null && Object.hasOwn(TABS, requested) ? (requested as Tab) : "overview";
 
   function selectTab(next: Tab) {
     setSearch(
@@ -81,14 +82,11 @@ export function ItemPage() {
           </h1>
         </div>
         <ItemToolbar workspaceId={workspaceId} detail={detail} onShow={selectTab} />
+        {detail.dropped && <p className="tag tag-warn">Dropped: no longer matched by the workspace JQL</p>}
+        {detail.last_import_error && <p className="error">Last import failed: {detail.last_import_error}</p>}
       </div>
       <div className="item-body">
         <div className="item-main">
-          <JiraPanel workspaceId={workspaceId} detail={detail} />
-          {detail.dropped && <p className="tag tag-warn">Dropped: no longer matched by the workspace JQL</p>}
-          {detail.last_import_error && <p className="error">Last import failed: {detail.last_import_error}</p>}
-          <ClusterBox workspaceId={workspaceId} detail={detail} />
-
           <div className="tab-bar page-tabs" role="tablist" aria-label="Item sections">
             {(Object.entries(TABS) as [Tab, string][]).map(([value, label]) => (
               <button
@@ -108,7 +106,8 @@ export function ItemPage() {
           <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
             {tab === "overview" ? (
               <>
-                <PrescanSection workspaceId={workspaceId} itemKey={key} />
+                <JiraPanel workspaceId={workspaceId} detail={detail} />
+                <ClusterBox workspaceId={workspaceId} detail={detail} />
                 <Notes workspaceId={workspaceId} itemKey={key} detail={detail} />
               </>
             ) : tab === "patches" ? (
@@ -118,6 +117,7 @@ export function ItemPage() {
               </section>
             ) : (
               <>
+                <PrescanSection workspaceId={workspaceId} itemKey={key} />
                 <section aria-label="Builds">
                   <h2>Builds</h2>
                   <BuildPanel workspaceId={workspaceId} />
@@ -161,7 +161,7 @@ function loadJiraPanelOpen(): boolean {
   }
 }
 
-/** The ticket's content from Jira, in one panel above the local work (its fields are in the side panel). Collapsible, remembered. */
+/** The ticket's content from Jira, in one panel leading the overview (its fields are in the side panel). Collapsible, remembered. */
 function JiraPanel({ workspaceId, detail }: { workspaceId: number; detail: ItemDetail }) {
   const issue = detail.issue;
   const [open, setOpen] = useState(loadJiraPanelOpen);

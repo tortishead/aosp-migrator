@@ -11,7 +11,7 @@ import { ReworkDialog } from "../rework/ReworkDialog";
 import { useLatestRework } from "../rework/ReworkPanel";
 
 /** Where an action's progress shows, so starting one brings its section into view. */
-export type ToolbarTab = "overview" | "migration";
+export type ToolbarTab = "migration";
 
 interface Props {
   workspaceId: number;
@@ -67,7 +67,7 @@ export function ItemToolbar({ workspaceId, detail, onShow }: Props) {
           <button
             title="Check whether the diffs are already in the target tree and whether they apply"
             disabled={prescanning}
-            onClick={() => prescan.mutate([key], { onSuccess: () => onShow("overview") })}
+            onClick={() => prescan.mutate([key], { onSuccess: () => onShow("migration") })}
           >
             {prescanJob?.status === "running" ? "Pre-scanning…" : "Pre-scan"}
           </button>
