@@ -7,6 +7,7 @@ import { STATE_LABELS } from "../backlog/params";
 import { useLatestBuild, useStartBuild } from "../build/BuildPanel";
 import { itemKey } from "../pages/ItemPage";
 import { useLatestPrescan, useStartPrescan } from "../prescan/PrescanPanel";
+import { confirmReset, RESET_TITLE, useResetItems } from "../backlog/reset";
 import { ReworkDialog } from "../rework/ReworkDialog";
 import { useLatestRework } from "../rework/ReworkPanel";
 
@@ -35,13 +36,14 @@ export function ItemToolbar({ workspaceId, detail, onShow }: Props) {
   const reworkJob = useLatestRework(workspaceId);
   const reimport = useReimport(workspaceId, key);
   const changeState = useChangeState(workspaceId, key);
+  const reset = useResetItems(workspaceId);
 
   // One job of each kind at a time per workspace: the backend refuses a second.
   const prescanning = prescanJob?.status === "running" || prescan.isPending;
   const building = buildJob?.status === "running" || build.isPending;
   const reworking = reworkJob?.status === "running";
 
-  const errors = [changeState, prescan, build, reimport.start].flatMap((m) => (m.isError ? [m.error.message] : []));
+  const errors = [changeState, reset, prescan, build, reimport.start].flatMap((m) => (m.isError ? [m.error.message] : []));
 
   return (
     <>
@@ -62,6 +64,13 @@ export function ItemToolbar({ workspaceId, detail, onShow }: Props) {
               ))}
             </select>
           </label>
+          <button
+            title={RESET_TITLE}
+            disabled={reset.isPending || prescanning || building || reworking}
+            onClick={() => confirmReset([key]) && reset.mutate([key])}
+          >
+            Reset
+          </button>
         </ToolbarGroup>
         <ToolbarGroup label="Migration">
           <button

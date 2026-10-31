@@ -6,6 +6,7 @@ import { api, type Cluster, type ClusterRef, type Item, type LocalState } from "
 import { Filters } from "../backlog/Filters";
 import { facetsKey, ImportButton, itemsKey, useStartImport } from "../backlog/ImportPanel";
 import { JobsPopup } from "../backlog/JobsPopup";
+import { confirmReset, RESET_TITLE, useResetItems } from "../backlog/reset";
 import { apiParams, currentPage, hasFilters, PAGE_SIZE, STATE_LABELS } from "../backlog/params";
 import { BuildBar } from "../build/BuildBar";
 import { BUILD_TEXT } from "../build/build";
@@ -380,6 +381,7 @@ function BulkActions({ workspaceId, keys, items, clusters, onStateChanged, onClu
       onStateChanged();
     },
   });
+  const reset = useResetItems(workspaceId, onStateChanged);
   const reimport = useStartImport(workspaceId);
   const prescan = useStartPrescan(workspaceId);
   const build = useStartBuild(workspaceId);
@@ -413,6 +415,9 @@ function BulkActions({ workspaceId, keys, items, clusters, onStateChanged, onClu
       </select>
       <button onClick={() => state && changeState.mutate(state)} disabled={!state || changeState.isPending}>
         Apply
+      </button>
+      <button onClick={() => confirmReset(keys) && reset.mutate(keys)} disabled={reset.isPending} title={RESET_TITLE}>
+        Reset selected
       </button>
       <button onClick={() => reimport.mutate(keys)} disabled={reimport.isPending}>
         Reimport selected
@@ -465,6 +470,7 @@ function BulkActions({ workspaceId, keys, items, clusters, onStateChanged, onClu
         </>
       )}
       {changeState.isError && <span className="error">{changeState.error.message}</span>}
+      {reset.isError && <span className="error">{reset.error.message}</span>}
       {cluster.isError && <span className="error">{cluster.error.message}</span>}
       {reimport.isError && <span className="error">{reimport.error.message}</span>}
       {prescan.isError && <span className="error">{prescan.error.message}</span>}

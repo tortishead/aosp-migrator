@@ -800,6 +800,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ keys, state }),
     }),
+  resetItems: (workspaceId: number, keys: string[]) =>
+    apiFetch<{ reset: string[] }>(`/workspaces/${workspaceId}/items/reset`, {
+      method: "POST",
+      body: JSON.stringify({ keys }),
+    }),
   item: (workspaceId: number, key: string) =>
     apiFetch<ItemDetail>(`/workspaces/${workspaceId}/items/${encodeURIComponent(key)}`),
   addNote: (workspaceId: number, key: string, text: string) =>

@@ -14,16 +14,24 @@ from aosp_migrator.api.rework import REWORK_STATUSES
 from aosp_migrator.config import JIRA_BASE_URL, Config
 from aosp_migrator.db.models import (
     Attachment,
+    BuildJob,
+    BuildRun,
     Cluster,
     ClusterMember,
     Comment,
+    DiffDependency,
     DiffScan,
     HistoryEvent,
+    ImportJob,
     Item,
     ItemLink,
     JiraIssue,
     LocalState,
+    MigrationPatch,
     Note,
+    PrescanJob,
+    ReworkAttempt,
+    ReworkJob,
     Workspace,
 )
 from aosp_migrator.prescan.chain import stale_items
@@ -114,6 +122,18 @@ class StateChange(BaseModel):
 class StateChangeOut(BaseModel):
     # Keys whose state actually changed; the others already had it.
     changed: list[str]
+
+
+class ResetIn(BaseModel):
+    keys: list[str]
+
+
+class ResetOut(BaseModel):
+    reset: list[str]
+
+
+# History the import writes; a reset keeps these and drops everything done since.
+IMPORT_EVENTS = ("imported", "updated", "import_failed", "dropped", "restored")
 
 
 class CommentOut(BaseModel):
@@ -516,6 +536,64 @@ def change_state(workspace_id: int, body: StateChange, session: SessionDep) -> S
     session.commit()
     return StateChangeOut(changed=changed)
 
+
+@router.post("/reset")
+def reset_items(workspace_id: int, body: ResetIn, session: SessionDep) -> ResetOut:
+    """Put items back as the import left them: state `new`, no pre-scan, build or rework results, and only
+    the import's history. Notes, clusters and the imported Jira data stay.
+    """
+    _workspace(session, workspace_id)
+    keys = list(dict.fromkeys(body.keys))
+    if not keys:
+        raise HTTPException(status_code=422, detail="No ticket keys given")
+    rows = {issue.key: (item, issue) for item, issue in session.execute(_backlog(workspace_id).where(JiraIssue.key.in_(keys)))}
+    if unknown := [key for key in keys if key not in rows]:
+        raise HTTPException(status_code=404, detail=f"Not in this workspace's backlog: {', '.join(unknown)}")
+    _check_idle(session, workspace_id)
+
+    item_ids = {item.id for item, _ in rows.values()}
+    issue_ids = [issue.id for _, issue in rows.values()]
+    attachment_ids = list(session.scalars(select(Attachment.id).where(Attachment.issue_id.in_(issue_ids))))
+
+    session.query(DiffScan).filter(DiffScan.attachment_id.in_(attachment_ids)).delete(synchronize_session=False)
+    session.query(DiffDependency).filter(DiffDependency.attachment_id.in_(attachment_ids)).delete(synchronize_session=False)
+    session.query(MigrationPatch).filter(MigrationPatch.item_id.in_(item_ids)).delete(synchronize_session=False)
+    # Runs and attempts may cover other items too: those keep them, without the reset items.
+    # A run of an attempt goes with it.
+    runs = select(BuildRun).where(BuildRun.attempt_id.is_(None), _covers(BuildRun.item_ids, item_ids))
+    attempts = select(ReworkAttempt).where(ReworkAttempt.workspace_id == workspace_id, _covers(ReworkAttempt.item_ids, item_ids))
+    for record in [*session.scalars(runs), *session.scalars(attempts)]:
+        remaining = [i for i in record.item_ids if i not in item_ids]
+        if remaining:
+            record.item_ids = remaining
+        else:
+            session.delete(record)
+    session.query(HistoryEvent).filter(HistoryEvent.item_id.in_(item_ids), HistoryEvent.type.not_in(IMPORT_EVENTS)).delete(
+        synchronize_session=False
+    )
+    for item, _ in rows.values():
+        item.local_state = "new"
+        item.triage_label = item.triage_reason = item.triaged_at = None
+        item.build_status = item.build_reason = item.built_at = None
+        item.rework_status = item.rework_reason = item.reworked_at = None
+    session.commit()
+    return ResetOut(reset=keys)
+
+
+def _covers(json_column: Any, item_ids: set[int]) -> ColumnElement[bool]:
+    each = func.json_each(json_column).table_valued("value")
+    return exists(select(each.c.value).where(each.c.value.in_(item_ids)))
+
+
+def _check_idle(session: Session, workspace_id: int) -> None:
+    """A reset removes what running jobs work on, and patches may still be in the target tree."""
+    for model, what in ((ImportJob, "An import"), (PrescanJob, "A pre-scan"), (BuildJob, "A build"), (ReworkJob, "A rework")):
+        if session.scalar(select(model.id).where(model.workspace_id == workspace_id, model.status == "running")):
+            raise HTTPException(status_code=409, detail=f"{what} is running for this workspace; reset when it is done")
+    if session.scalar(select(ReworkAttempt.id).where(ReworkAttempt.workspace_id == workspace_id, ReworkAttempt.status == "running")):
+        raise HTTPException(status_code=409, detail="A rework is running for this workspace; reset when it is done")
+    if session.scalar(select(BuildRun.id).where(BuildRun.inflight.is_not(None))):
+        raise HTTPException(status_code=409, detail="Patches are still in the target tree; restore it first")
 
 
 def _local_url(workspace_id: int, attachment: Attachment) -> str | None:

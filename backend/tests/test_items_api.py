@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from test_import import app, client, client_factory, history, jira_config, run_import, session, workspace_id  # noqa: F401
 
-from aosp_migrator.db.models import Attachment, Item, JiraIssue
+from aosp_migrator.db.models import Attachment, BuildJob, BuildRun, DiffScan, HistoryEvent, Item, JiraIssue, MigrationPatch, Note, ReworkAttempt
 
 FILLER = [f"PROJ-{n}" for n in range(105, 126)]
 
@@ -234,3 +234,56 @@ def test_items_are_per_workspace(client: TestClient, imported: int, tmp_path) ->
     assert items(client, other_id)["total"] == 0
     assert client.get(f"/api/workspaces/{other_id}/items/facets").json()["labels"] == []
     assert set_state(client, other_id, "closed", "PROJ-101").status_code == 404
+
+
+def reset(client: TestClient, workspace_id: int, *item_keys: str) -> Any:
+    return client.post(f"/api/workspaces/{workspace_id}/items/reset", json={"keys": list(item_keys)})
+
+
+def test_reset_back_to_after_import(app: FastAPI, client: TestClient, imported: int) -> None:
+    set_state(client, imported, "closed", "PROJ-101", "PROJ-102")
+    client.post(f"/api/workspaces/{imported}/items/PROJ-101/notes", json={"text": "keep me"})
+    with session(app) as s:
+        camera, other = (s.scalars(select(Item).join(JiraIssue).where(JiraIssue.key == k)).one() for k in ("PROJ-101", "PROJ-102"))
+        diff = s.scalars(select(Attachment).where(Attachment.issue_id == camera.issue_id, Attachment.kind == "diff")).first()
+        assert diff is not None
+        s.add(DiffScan(attachment_id=diff.id, project="hardware/camera", candidates=[], presence="not_present", apply="conflicts"))
+        s.add(MigrationPatch(item_id=camera.id, attachment_id=diff.id, project="hardware/camera", source="original", level="plain", diff="x"))
+        job = BuildJob(workspace_id=imported, scope="keys", issue_keys=["PROJ-101"], skipped=[], status="done", total=1, errors=[])
+        s.add(job)
+        s.flush()
+        s.add(BuildRun(job_id=job.id, item_ids=[camera.id], patch_ids=[], modules=[], status="build_failed"))
+        s.add(BuildRun(job_id=job.id, item_ids=[camera.id, other.id], patch_ids=[], modules=[], status="build_failed"))
+        s.add(ReworkAttempt(workspace_id=imported, item_ids=[camera.id], status="failed"))
+        for item in (camera, other):
+            item.triage_label, item.build_status, item.rework_status = "conflicts", "build_failed", "rework_failed"
+            s.add(HistoryEvent(item_id=item.id, type="build_finished", payload={}))
+        s.commit()
+
+    response = reset(client, imported, "PROJ-101")
+    assert (response.status_code, response.json()) == (200, {"reset": ["PROJ-101"]})
+
+    with session(app) as s:
+        camera = s.scalars(select(Item).join(JiraIssue).where(JiraIssue.key == "PROJ-101")).one()
+        assert (camera.local_state, camera.triage_label, camera.build_status, camera.rework_status) == ("new", None, None, None)
+        assert [e.type for e in history(s, "PROJ-101")] == ["imported"]
+        assert s.scalars(select(DiffScan)).all() == []
+        assert s.scalars(select(MigrationPatch)).all() == []
+        assert s.scalars(select(ReworkAttempt)).all() == []
+        # The shared run stays for the other item; the other item is untouched.
+        other = s.scalars(select(Item).join(JiraIssue).where(JiraIssue.key == "PROJ-102")).one()
+        assert [r.item_ids for r in s.scalars(select(BuildRun))] == [[other.id]]
+        assert (other.local_state, other.build_status) == ("closed", "build_failed")
+        assert [e.type for e in history(s, "PROJ-102")] == ["imported", "state_changed", "build_finished"]
+        assert [n.text for n in s.scalars(select(Note))] == ["keep me"]
+
+
+def test_reset_validation(app: FastAPI, client: TestClient, imported: int) -> None:
+    assert reset(client, imported).status_code == 422
+    assert reset(client, imported, "PROJ-101", "PROJ-201").status_code == 404
+    with session(app) as s:
+        s.add(BuildJob(workspace_id=imported, scope="keys", issue_keys=[], skipped=[], status="running", total=1, errors=[]))
+        s.commit()
+    response = reset(client, imported, "PROJ-101")
+    assert response.status_code == 409
+    assert "build is running" in response.json()["detail"]

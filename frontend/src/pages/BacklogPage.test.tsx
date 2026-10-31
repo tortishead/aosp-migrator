@@ -405,6 +405,34 @@ describe("BacklogPage", () => {
     expect(screen.queryByRole("group", { name: "Bulk actions" })).not.toBeInTheDocument();
   });
 
+  it("resets selected items after confirming", async () => {
+    let state: Item["local_state"] = "closed";
+    const calls = backlogApi({
+      "GET /workspaces/1/items": () => page([item("PROJ-101", { local_state: state }), item("PROJ-102")]),
+      "POST /workspaces/1/items/reset": () => {
+        state = "new";
+        return { reset: ["PROJ-101"] };
+      },
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    renderRoute("/workspaces/1");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select PROJ-101" }));
+    const bulk = screen.getByRole("group", { name: "Bulk actions" });
+    await userEvent.click(within(bulk).getByRole("button", { name: "Reset selected" }));
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    await userEvent.click(within(bulk).getByRole("button", { name: "Reset selected" }));
+
+    expect(calls.find((c) => c.method === "POST")).toEqual({
+      method: "POST",
+      path: "/workspaces/1/items/reset",
+      body: { keys: ["PROJ-101"] },
+    });
+    const row = screen.getByRole("link", { name: "PROJ-101" }).closest("tr")!;
+    await waitFor(() => expect(within(row).getByText("New")).toBeInTheDocument());
+    expect(screen.queryByRole("group", { name: "Bulk actions" })).not.toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
   it("selects all rows on the page", async () => {
     backlogApi();
     renderRoute("/workspaces/1");
