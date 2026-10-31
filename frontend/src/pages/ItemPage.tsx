@@ -62,7 +62,7 @@ export function ItemPage() {
 
   return (
     <article className="item">
-      <div className="item-main">
+      <div className="item-head">
         <p>
           <Link to={`/workspaces/${workspaceId}`}>← Backlog</Link>
         </p>
@@ -78,60 +78,68 @@ export function ItemPage() {
             {issue.summary}
           </h1>
         </div>
-        <JiraPanel workspaceId={workspaceId} detail={detail} />
-        {detail.dropped && <p className="tag tag-warn">Dropped: no longer matched by the workspace JQL</p>}
-        {detail.last_import_error && <p className="error">Last import failed: {detail.last_import_error}</p>}
-        <ItemActions workspaceId={workspaceId} detail={detail} />
-        <ClusterBox workspaceId={workspaceId} detail={detail} />
-
-        <div className="tab-bar page-tabs" role="tablist" aria-label="Item sections">
-          {(Object.entries(TABS) as [Tab, string][]).map(([value, label]) => (
-            <button
-              key={value}
-              role="tab"
-              id={`tab-${value}`}
-              aria-selected={tab === value}
-              aria-controls={`panel-${value}`}
-              className={tab === value ? "tab active" : "tab"}
-              onClick={() => selectTab(value)}
-            >
-              {label}
-              {value === "patches" && <span className="count">{diffCount}</span>}
-            </button>
-          ))}
-        </div>
-        <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-          {tab === "overview" ? (
-            <>
-              <PrescanSection workspaceId={workspaceId} itemKey={key} />
-              <Notes workspaceId={workspaceId} itemKey={key} detail={detail} />
-            </>
-          ) : tab === "patches" ? (
-            <section aria-label="Diffs">
-              <h2>Diffs</h2>
-              <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
-            </section>
-          ) : (
-            <>
-              <section aria-label="Builds">
-                <h2>Builds</h2>
-                <BuildActions workspaceId={workspaceId} itemKey={key} />
-                <BuildRuns workspaceId={workspaceId} itemKey={key} />
-              </section>
-              <section aria-label="Migration patches">
-                <h2>Migration patches</h2>
-                <MigrationTab workspaceId={workspaceId} itemKey={key} />
-              </section>
-            </>
-          )}
-        </div>
       </div>
-      <aside className="item-side">
-        <section aria-label="History">
-          <h2>History</h2>
-          <HistoryTimeline events={detail.history} />
-        </section>
-      </aside>
+      <div className="item-body">
+        <div className="item-main">
+          <JiraPanel workspaceId={workspaceId} detail={detail} />
+          {detail.dropped && <p className="tag tag-warn">Dropped: no longer matched by the workspace JQL</p>}
+          {detail.last_import_error && <p className="error">Last import failed: {detail.last_import_error}</p>}
+          <ItemActions workspaceId={workspaceId} detail={detail} />
+          <ClusterBox workspaceId={workspaceId} detail={detail} />
+
+          <div className="tab-bar page-tabs" role="tablist" aria-label="Item sections">
+            {(Object.entries(TABS) as [Tab, string][]).map(([value, label]) => (
+              <button
+                key={value}
+                role="tab"
+                id={`tab-${value}`}
+                aria-selected={tab === value}
+                aria-controls={`panel-${value}`}
+                className={tab === value ? "tab active" : "tab"}
+                onClick={() => selectTab(value)}
+              >
+                {label}
+                {value === "patches" && <span className="count">{diffCount}</span>}
+              </button>
+            ))}
+          </div>
+          <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+            {tab === "overview" ? (
+              <>
+                <PrescanSection workspaceId={workspaceId} itemKey={key} />
+                <Notes workspaceId={workspaceId} itemKey={key} detail={detail} />
+              </>
+            ) : tab === "patches" ? (
+              <section aria-label="Diffs">
+                <h2>Diffs</h2>
+                <DiffTabs workspaceId={workspaceId} attachments={issue.attachments} />
+              </section>
+            ) : (
+              <>
+                <section aria-label="Builds">
+                  <h2>Builds</h2>
+                  <BuildActions workspaceId={workspaceId} itemKey={key} />
+                  <BuildRuns workspaceId={workspaceId} itemKey={key} />
+                </section>
+                <section aria-label="Migration patches">
+                  <h2>Migration patches</h2>
+                  <MigrationTab workspaceId={workspaceId} itemKey={key} />
+                </section>
+              </>
+            )}
+          </div>
+        </div>
+        <aside className="item-side">
+          <section aria-label="Details" className="details-panel">
+            <h2>Details</h2>
+            <IssueFields issue={issue} />
+          </section>
+          <section aria-label="History" className="history-panel">
+            <h2>History</h2>
+            <HistoryTimeline events={detail.history} />
+          </section>
+        </aside>
+      </div>
     </article>
   );
 }
@@ -146,7 +154,7 @@ function loadJiraPanelOpen(): boolean {
   }
 }
 
-/** Everything that comes from the ticket in Jira, in one panel above the local work. Collapsible, remembered. */
+/** The ticket's content from Jira, in one panel above the local work (its fields are in the side panel). Collapsible, remembered. */
 function JiraPanel({ workspaceId, detail }: { workspaceId: number; detail: ItemDetail }) {
   const issue = detail.issue;
   const [open, setOpen] = useState(loadJiraPanelOpen);
@@ -159,7 +167,7 @@ function JiraPanel({ workspaceId, detail }: { workspaceId: number; detail: ItemD
     }
   };
   return (
-    <section aria-label="Jira" className="jira-panel">
+    <section aria-label="Jira" className={open ? "jira-panel" : "jira-panel collapsed"}>
       <div className="panel-header">
         <h2>Jira</h2>
         {issue.browse_url && (
@@ -171,7 +179,6 @@ function JiraPanel({ workspaceId, detail }: { workspaceId: number; detail: ItemD
           {open ? "Hide" : "Show"}
         </button>
       </div>
-      <IssueFields issue={issue} />
       {open && (
         <div className="jira-panel-body">
           <section aria-label="Description">
