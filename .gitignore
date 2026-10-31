@@ -14,3 +14,4 @@ backend/dist/
 e2e/.data/
 e2e/.prescan/
 e2e/.build/
+e2e/.rework/

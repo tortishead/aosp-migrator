@@ -24,4 +24,8 @@ cd backend && PYTHONPATH=tests uv run python -m fake_jira --port 8090
 ```
 
 For pre-scan, add `--prescan-tree /tmp/aosp` (must not exist yet): it builds a matching
-`repo` tree there; use it as the workspace target tree.
+`repo` tree there; use it as the workspace target tree. `--build` sets that tree up for builds
+(fake `build/envsetup.sh`); `--rework` adds conflicting items for rework on top, answered by the
+fake Copilot CLI `backend/tests/fake_copilot/copilot` (set it as the Copilot CLI in Settings and
+start the server with `FAKE_COPILOT_SCENARIOS` naming a directory of `<ticket key>.json` answers;
+see that script and `e2e/tests/rework.spec.ts`).
