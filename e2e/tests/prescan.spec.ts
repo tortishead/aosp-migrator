@@ -41,6 +41,7 @@ test("pre-scan the backlog, pick a project by hand, close present items", async 
   // Item page: pick the project; the item is scanned again right away.
   await rows.filter({ has: page.getByRole("link", { name: "PROJ-110", exact: true }) }).locator("a.summary-link").click();
   await expect(page).toHaveURL(/\/items\/PROJ-110$/);
+  await page.getByRole("tab", { name: "Migration" }).click();
   const section = page.getByRole("region", { name: "Pre-scan" });
   await expect(section).toContainText("Label: Unmapped");
   const picker = section.getByRole("combobox", { name: "Project for 0001-Build-with-OEM-flag.patch" });
