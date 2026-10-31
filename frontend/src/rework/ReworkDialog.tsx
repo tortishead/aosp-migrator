@@ -125,18 +125,20 @@ export function ReworkDialog({ workspaceId, keys, onClose }: Props) {
             {data.prerequisites.length > 0 && (
               <section aria-label="Prerequisites">
                 <h3>Prerequisites outside the selection</h3>
-                <ul className="filter-options">
+                <ul className="check-list">
                   {data.prerequisites.map((p) => (
                     <li key={p.key}>
-                      <label>
+                      <label className="check">
                         <input
                           type="checkbox"
                           aria-label={`Include ${p.key}`}
                           checked={p.included}
                           onChange={(e) => togglePrerequisite(p, e.target.checked)}
                         />
-                        <strong>{p.key}</strong> {p.summary}
-                      </label>{" "}
+                        <span>
+                          <strong>{p.key}</strong> {p.summary}
+                        </span>
+                      </label>
                       {p.warning && <span className="tag tag-warn">{p.warning}</span>}
                       {p.accepted ? (
                         <span className="tag tag-ok">accepted patch</span>
@@ -158,21 +160,21 @@ export function ReworkDialog({ workspaceId, keys, onClose }: Props) {
         )}
 
         <section aria-label="Options" className="form">
-          <label>
-            <input type="checkbox" checked={includeDependents} onChange={(e) => setIncludeDependents(e.target.checked)} /> Also rework the
-            items that need these
+          <label className="check">
+            <input type="checkbox" checked={includeDependents} onChange={(e) => setIncludeDependents(e.target.checked)} />
+            Also rework the items that need these
           </label>
           {keys.length > 1 && (
-            <label>
-              <input type="checkbox" checked={together} onChange={(e) => setTogether(e.target.checked)} /> Rework the selected items
-              together, as one unit
+            <label className="check">
+              <input type="checkbox" checked={together} onChange={(e) => setTogether(e.target.checked)} />
+              Rework the selected items together, as one unit
             </label>
           )}
           <fieldset>
             <legend>Copilot rungs</legend>
             {RUNGS.map((rung) => (
-              <label key={rung} title={RUNG_TEXT[rung].hint}>
-                <input type="checkbox" checked={chosen.includes(rung)} onChange={(e) => toggleRung(rung, e.target.checked)} />{" "}
+              <label key={rung} className="check" title={RUNG_TEXT[rung].hint}>
+                <input type="checkbox" checked={chosen.includes(rung)} onChange={(e) => toggleRung(rung, e.target.checked)} />
                 {RUNG_TEXT[rung].name}
               </label>
             ))}
