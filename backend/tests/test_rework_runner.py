@@ -235,6 +235,27 @@ def test_build_fix_round_fixes_a_compile_error(app: FastAPI, client: TestClient,
     assert (fixed["rung"], fixed["notes"]) == ("port", ["build fix 1"])
 
 
+def test_running_job_reports_its_phase_and_build_log(app: FastAPI, client: TestClient, config: Config, workspace: int, scenarios: Path, log: Path) -> None:
+    threads: list[threading.Thread] = []
+
+    def executor(run: Callable[[], None]) -> None:
+        threads.append(threading.Thread(target=run))
+        threads[-1].start()
+
+    app.state.rework_runner = make_runner(app, config, scenarios, log, executor)
+    # Holds the build-fix call long enough to look at the job.
+    scenario(scenarios, "PROJ-102", {"sleep": 30, **FIX_BUILD})
+    job_id = client.post(f"/api/workspaces/{workspace}/rework", json={"keys": ["PROJ-102"]}).json()["id"]
+    wait_for(lambda: bool(calls(log)))
+    job = client.get(f"/api/rework-jobs/{job_id}").json()
+    assert (job["unit_keys"], job["phase"], job["builds"]) == (["PROJ-102"], "fixing", 1)
+    assert BUILD_ERROR in job["log_tail"]
+    assert client.post(f"/api/rework-jobs/{job_id}/cancel").status_code == 202
+    threads[0].join(30)
+    job = client.get(f"/api/rework-jobs/{job_id}").json()
+    assert (job["status"], job["phase"], job["builds"]) == ("canceled", None, 1)
+
+
 def test_build_fix_without_progress_stops(app: FastAPI, client: TestClient, rework: ReworkRunner, workspace: int, scenarios: Path, log: Path) -> None:
     scenario(scenarios, "PROJ-102", {"reply": "looks fine to me"})
     start(client, workspace, ["PROJ-102"])

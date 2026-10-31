@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from aosp_migrator.api.build import log_tail
 from aosp_migrator.api.deps import get_session
 from aosp_migrator.db.models import BuildRun, Item, JiraIssue, MigrationPatch, ReworkAttempt, ReworkJob, Workspace
 from aosp_migrator.rework import attempt as attempts
@@ -87,6 +88,13 @@ class ReworkJobOut(BaseModel):
     finished_at: datetime | None
     # Keys of the unit being reworked now, or last reworked; None before the first.
     unit_keys: list[str] | None = None
+    # While running, what that unit is doing: `patching` (stack / merge / Copilot rungs), `building`, `fixing` the build with
+    # Copilot, or `saving` the patches.
+    phase: str | None = None
+    # Builds of that unit so far: 1 for the first build, 2 after one build-fix round, ...
+    builds: int = 0
+    # Last lines of that unit's latest build log.
+    log_tail: str | None = None
 
 
 class BuildRunRef(BaseModel):
@@ -158,6 +166,12 @@ def _job_out(session: Session, job: ReworkJob) -> ReworkJobOut:
     if attempt is not None:
         keys = _keys(session, attempt.item_ids)
         out.unit_keys = [keys[i] for i in attempt.item_ids if i in keys]
+        run = session.scalar(select(BuildRun).where(BuildRun.attempt_id == attempt.id).order_by(BuildRun.id.desc()).limit(1))
+        out.builds = len(attempt.build_run_ids) if run is None or run.id in attempt.build_run_ids else len(attempt.build_run_ids) + 1
+        if run is not None and run.log_path and Path(run.log_path).is_file():
+            out.log_tail = log_tail(Path(run.log_path))
+        if job.status == "running" and attempt.status == "running":
+            out.phase = "patching" if run is None else {"running": "building", "build_failed": "fixing"}.get(run.status, "saving")
     return out
 
 

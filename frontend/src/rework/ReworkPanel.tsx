@@ -62,6 +62,12 @@ export function ReworkPanel({ workspaceId }: { workspaceId: number }) {
         <ReworkStatusLine job={job} />
       </div>
       {cancel.isError && <p className="error">{cancel.error.message}</p>}
+      {job.log_tail && (
+        <details className="import-errors build-tail">
+          <summary>{job.phase === "building" ? "Live build log" : "Build log tail"}</summary>
+          <pre aria-label="Rework build log tail">{job.log_tail}</pre>
+        </details>
+      )}
       {job.skipped.length > 0 && (
         <details className="import-errors">
           <summary>{items(job.skipped.length)} not reworked</summary>
@@ -97,13 +103,30 @@ export function reworkStatusText(job: ReworkJob): string {
   const calls = `${job.calls} Copilot ${job.calls === 1 ? "call" : "calls"}`;
   switch (job.status) {
     case "running":
-      return `Reworking ${job.unit_keys?.join(", ") ?? "…"} (${job.done} / ${job.total}, ${calls})` + (job.cancel_requested ? " (canceling)" : "");
+      return (
+        `Reworking ${job.unit_keys?.join(", ") ?? "…"} (${job.done} / ${job.total}, ${calls})` +
+        (job.phase ? `: ${phaseText(job)}` : "") +
+        (job.cancel_requested ? " (canceling)" : "")
+      );
     case "done":
       return job.total === 0 ? "Rework: nothing to rework" : `Rework done: ${units(job.done)}, ${calls}`;
     case "canceled":
       return `Rework canceled after ${job.done} of ${units(job.total)}`;
     case "failed":
       return `Rework failed: ${job.error}`;
+  }
+}
+
+function phaseText(job: ReworkJob): string {
+  switch (job.phase) {
+    case "building":
+      return job.builds > 1 ? `building again (after build-fix round ${job.builds - 1})` : "building";
+    case "fixing":
+      return `fixing the build with Copilot (round ${job.builds})`;
+    case "saving":
+      return "saving the patch";
+    default:
+      return "making the patch";
   }
 }
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { BuildJob, Item, ItemPatch, PlanItem, PrescanJob, ReworkAttempt, ReworkJob, ReworkPlan, ReworkRequest } from "../api";
 import { cameraV2, diffHandlers, itemDetail, PATCH } from "../item/fixtures";
 import { mockApi, renderRoute, type ApiCall } from "../test-utils";
+import { reworkStatusText } from "./ReworkPanel";
 
 const workspace = {
   id: 1,
@@ -117,6 +118,9 @@ function reworkJob(overrides: Partial<ReworkJob> = {}): ReworkJob {
     started_at: "2026-10-30T10:00:00Z",
     finished_at: null,
     unit_keys: ["PROJ-111"],
+    phase: "patching",
+    builds: 0,
+    log_tail: null,
     ...overrides,
   };
 }
@@ -303,7 +307,7 @@ describe("Backlog rework", () => {
     renderRoute("/workspaces/1");
     await userEvent.click(await screen.findByRole("button", { name: /^Job status/ }));
     const panel = within(screen.getByRole("dialog", { name: "Job status" })).getByRole("region", { name: "Rework" });
-    expect(within(panel).getByRole("status")).toHaveTextContent("Reworking PROJ-111 (0 / 2, 2 Copilot calls)");
+    expect(within(panel).getByRole("status")).toHaveTextContent("Reworking PROJ-111 (0 / 2, 2 Copilot calls): making the patch");
     await userEvent.click(within(panel).getByRole("button", { name: "Cancel rework" }));
     expect(calls.some((c) => c.method === "POST" && c.path === "/rework-jobs/3/cancel")).toBe(true);
     await waitFor(() => expect(within(panel).getByRole("status")).toHaveTextContent("(canceling)"));
@@ -584,6 +588,23 @@ describe("Migration tab review", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Rework…" }));
     expect(screen.getByRole("dialog", { name: "Rework" })).toBeInTheDocument();
     await waitFor(() => expect(planCalls(calls)[0]?.keys).toEqual(["PROJ-101"]));
+  });
+
+  it("shows what a running rework of the item is doing, with its build log", async () => {
+    const job = reworkJob({ issue_keys: ["PROJ-101"], units: [["PROJ-101"]], total: 1, unit_keys: ["PROJ-101"], calls: 1 });
+    let current: ReworkJob = { ...job, phase: "building", builds: 2, log_tail: "mmm frameworks/av" };
+    migrationApi(() => [], { "GET /workspaces/1/rework-jobs": () => [current] });
+    renderRoute(MIGRATION);
+    const section = await screen.findByRole("region", { name: "Migration patches" });
+    const panel = await within(section).findByRole("region", { name: "Rework" });
+    expect(within(panel).getByRole("status")).toHaveTextContent(
+      "Reworking PROJ-101 (0 / 1, 1 Copilot call): building again (after build-fix round 1)",
+    );
+    expect(within(panel).getByText("Live build log")).toBeInTheDocument();
+    expect(within(panel).getByLabelText("Rework build log tail")).toHaveTextContent("mmm frameworks/av");
+    expect(within(screen.getByRole("group", { name: "Item actions" })).getByRole("button", { name: "Rework…" })).toBeDisabled();
+    current = { ...current, phase: "fixing", builds: 1 };
+    expect(reworkStatusText(current)).toBe("Reworking PROJ-101 (0 / 1, 1 Copilot call): fixing the build with Copilot (round 1)");
   });
 
   it("describes rework events in the history", async () => {

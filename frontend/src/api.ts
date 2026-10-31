@@ -649,7 +649,15 @@ export interface ReworkJob {
   finished_at: string | null;
   /** Keys of the unit being reworked now, or last reworked. */
   unit_keys: string[] | null;
+  /** While running, what that unit is doing. */
+  phase: ReworkPhase | null;
+  /** Builds of that unit so far: 1 for the first, 2 after one build-fix round, ... */
+  builds: number;
+  /** Last lines of that unit's latest build log. */
+  log_tail: string | null;
 }
+
+export type ReworkPhase = "patching" | "building" | "fixing" | "saving";
 
 export interface ReworkCall {
   project: string;
